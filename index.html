@@ -908,10 +908,78 @@
     select.clinic-select{max-width:60px !important;font-size:9.5px !important;padding:5px 2px !important;}
   }
 </style>
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
+  import {
+    getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut
+  } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
+  import {
+    getFirestore, collection, doc, getDocs, setDoc, deleteDoc, writeBatch,
+    enableIndexedDbPersistence
+  } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyAGoza4ETqjMJug-7royY0pZfpzBgNAPFU",
+    authDomain: "htd-pms.firebaseapp.com",
+    projectId: "htd-pms",
+    storageBucket: "htd-pms.firebasestorage.app",
+    messagingSenderId: "500213236550",
+    appId: "1:500213236550:web:86b6e6c0fb4defa38d1b47"
+  };
+
+  const fbApp = initializeApp(firebaseConfig);
+  const fbAuth = getAuth(fbApp);
+  const fbDb = getFirestore(fbApp);
+  enableIndexedDbPersistence(fbDb).catch(()=>{ /* multiple tabs open, etc — safe to ignore */ });
+
+  // Expose a minimal bridge so the classic (non-module) app script below
+  // can talk to Firebase without itself being a module.
+  window.__fb = {
+    add: async (storeName, obj)=>{ await setDoc(doc(fbDb, storeName, obj.id), obj); return obj; },
+    put: async (storeName, obj)=>{ await setDoc(doc(fbDb, storeName, obj.id), obj); return obj; },
+    getAll: async (storeName)=>{
+      const snap = await getDocs(collection(fbDb, storeName));
+      return snap.docs.map(d=>d.data());
+    },
+    delete: async (storeName, id)=>{ await deleteDoc(doc(fbDb, storeName, String(id))); return true; },
+    clear: async (storeName)=>{
+      const snap = await getDocs(collection(fbDb, storeName));
+      const batch = writeBatch(fbDb);
+      snap.docs.forEach(d=>batch.delete(d.ref));
+      await batch.commit();
+    }
+  };
+
+  window.__fbAuth = {
+    signIn: (email, pw)=>signInWithEmailAndPassword(fbAuth, email, pw),
+    signOut: ()=>signOut(fbAuth)
+  };
+
+  onAuthStateChanged(fbAuth, (user)=>{
+    document.dispatchEvent(new CustomEvent("fbAuthChanged", {detail:{user}}));
+  });
+</script>
 </head>
 <body>
 
-<div id="app">
+<div class="overlay" id="loginOverlay" style="position:fixed;inset:0;z-index:999;background:var(--off-white);display:flex;align-items:center;justify-content:center;">
+  <div style="width:100%;max-width:340px;padding:24px;">
+    <h2 style="text-align:center;margin-bottom:18px;">Healing Touch Dental</h2>
+    <div id="loginError" style="color:var(--red);font-size:12.5px;margin-bottom:10px;display:none;"></div>
+    <div class="field" style="margin-bottom:10px;">
+      <label style="display:block;font-size:11.5px;font-weight:600;color:var(--grey);margin-bottom:4px;">Email</label>
+      <input id="loginEmail" type="email" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--grey-light);" placeholder="you@clinic.com">
+    </div>
+    <div class="field" style="margin-bottom:16px;">
+      <label style="display:block;font-size:11.5px;font-weight:600;color:var(--grey);margin-bottom:4px;">Password</label>
+      <input id="loginPassword" type="password" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--grey-light);" placeholder="••••••••">
+    </div>
+    <button id="btnLogin" class="btn" style="width:100%;padding:11px;border-radius:8px;border:none;background:var(--green);color:#fff;font-weight:700;cursor:pointer;">Sign In</button>
+    <div id="loginStatus" style="text-align:center;font-size:12px;color:var(--grey);margin-top:10px;"></div>
+  </div>
+</div>
+
+<div id="app" style="display:none;">
 
   <header class="topbar">
     <img class="logo-full" id="brandLogo" alt="Healing Touch Dental">
@@ -933,6 +1001,7 @@
       <button class="icon-btn" id="btnDarkModeToggle" title="Dark Mode" data-icon="moon"></button>
       <button class="icon-btn" id="btnRefreshApp" title="Refresh" data-icon="refresh"></button>
       <button class="icon-btn" id="btnSettings" title="Settings" data-icon="settings"></button>
+      <button class="icon-btn" id="btnSignOut" title="Sign Out" data-icon="lock"></button>
     </div>
   </header>
 
@@ -1133,52 +1202,37 @@ const STORE_DEFS = [
   {name:"drafts", keyPath:"id"}
 ];
 
-let db = null;
+let db = null; // kept only so any leftover references don't throw; unused with Firestore
 
 function openDB(){
-  return new Promise((resolve,reject)=>{
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = (e)=>{
-      const _db = e.target.result;
-      STORE_DEFS.forEach(def=>{
-        if(!_db.objectStoreNames.contains(def.name)){
-          const store = _db.createObjectStore(def.name, {keyPath: def.keyPath});
-          (def.indexes||[]).forEach(([idxName, field])=>{
-            store.createIndex(idxName, field, {unique:false});
-          });
-        }
-      });
-    };
-    req.onsuccess = (e)=>{ db = e.target.result; resolve(db); };
-    req.onerror = (e)=>{ reject(e.target.error); };
+  // Data now lives in Firestore (see the __fb bridge set up in the
+  // module script in <head>). This just waits for it to be ready.
+  return new Promise((resolve)=>{
+    if(window.__fb){ resolve(true); return; }
+    document.addEventListener("fbAuthChanged", function h(){
+      document.removeEventListener("fbAuthChanged", h);
+      resolve(true);
+    }, {once:true});
   });
 }
 
-// ---- generic store helpers ----
-function tx(storeName, mode){ return db.transaction(storeName, mode).objectStore(storeName); }
+// ---- generic store helpers (now backed by Firestore) ----
 function dbAdd(storeName, obj){
-  return new Promise((res,rej)=>{
-    const r = tx(storeName,"readwrite").add(obj);
-    r.onsuccess=()=>res(obj); r.onerror=(e)=>rej(e.target.error);
-  });
+  if(!obj.id) obj.id = uid(storeName);
+  return window.__fb.add(storeName, obj);
 }
 function dbPut(storeName, obj){
-  return new Promise((res,rej)=>{
-    const r = tx(storeName,"readwrite").put(obj);
-    r.onsuccess=()=>res(obj); r.onerror=(e)=>rej(e.target.error);
-  });
+  if(!obj.id) obj.id = uid(storeName);
+  return window.__fb.put(storeName, obj);
 }
 function dbGetAll(storeName){
-  return new Promise((res,rej)=>{
-    const r = tx(storeName,"readonly").getAll();
-    r.onsuccess=()=>res(r.result); r.onerror=(e)=>rej(e.target.error);
-  });
+  return window.__fb.getAll(storeName);
 }
 function dbDelete(storeName, id){
-  return new Promise((res,rej)=>{
-    const r = tx(storeName,"readwrite").delete(id);
-    r.onsuccess=()=>res(true); r.onerror=(e)=>rej(e.target.error);
-  });
+  return window.__fb.delete(storeName, id);
+}
+function dbClear(storeName){
+  return window.__fb.clear(storeName);
 }
 function uid(prefix){ return (prefix||"id")+"_"+Date.now().toString(36)+"_"+Math.random().toString(36).slice(2,8); }
 function nowIso(){ return new Date().toISOString(); }
@@ -23918,10 +23972,9 @@ function openRestoreSheet(){
     if(!confirm("This overwrites current data for the stores included in this backup. Continue?")) return;
     for(const [storeName, rows] of Object.entries(parsed.data)){
       if(!STORE_DEFS.find(d=>d.name===storeName)) continue;
-      const store = tx(storeName,"readwrite");
-      await new Promise((res)=>{ const c=store.clear(); c.onsuccess=res; c.onerror=res; });
+      await dbClear(storeName);
       for(const row of rows){
-        await new Promise((res)=>{ const r=tx(storeName,"readwrite").put(row); r.onsuccess=res; r.onerror=res; });
+        await dbPut(storeName, row);
       }
     }
     logActivity("Backup restored from file");
@@ -24166,9 +24219,57 @@ function checkFirstRun(){
 // ---------------------------------------------------------
 // Boot
 // ---------------------------------------------------------
-(async function boot(){
+function setupLogin(startApp){
+  const overlay = document.getElementById("loginOverlay");
+  const appEl = document.getElementById("app");
+  const errEl = document.getElementById("loginError");
+  const statusEl = document.getElementById("loginStatus");
+  const btn = document.getElementById("btnLogin");
+  let started = false;
+
+  document.addEventListener("fbAuthChanged", (e)=>{
+    if(e.detail.user){
+      overlay.style.display = "none";
+      appEl.style.display = "";
+      if(!started){ started = true; startApp(); }
+    } else {
+      overlay.style.display = "flex";
+      appEl.style.display = "none";
+    }
+  });
+
+  btn.addEventListener("click", async ()=>{
+    const email = document.getElementById("loginEmail").value.trim();
+    const pw = document.getElementById("loginPassword").value;
+    errEl.style.display = "none";
+    if(!email || !pw){ errEl.textContent = "Enter your email and password."; errEl.style.display="block"; return; }
+    btn.disabled = true; statusEl.textContent = "Signing in…";
+    try{
+      await window.__fbAuth.signIn(email, pw);
+      statusEl.textContent = "";
+    }catch(err){
+      errEl.textContent = "Sign-in failed. Check your email and password.";
+      errEl.style.display = "block";
+      statusEl.textContent = "";
+    }finally{
+      btn.disabled = false;
+    }
+  });
+  document.getElementById("loginPassword").addEventListener("keydown", (e)=>{
+    if(e.key==="Enter") btn.click();
+  });
+}
+
+setupLogin(async function boot(){
   try{
     hydrateIcons(document);
+    const soBtn = document.getElementById("btnSignOut");
+    if(soBtn && !soBtn._wired){
+      soBtn._wired = true;
+      soBtn.addEventListener("click", ()=>{
+        if(confirm("Sign out?")) window.__fbAuth.signOut();
+      });
+    }
     await openDB();
     await seedDefaults();
     const bootSettings = (await dbGetAll("settings"))[0];
@@ -24204,11 +24305,11 @@ function checkFirstRun(){
     document.getElementById("main").innerHTML = `
       <div class="page">
         <div class="warn-banner" style="border-color:var(--red);color:var(--red);">
-          Could not open the local database (${escapeHtml(err.message||err)}). Try a different browser or check that storage isn't disabled/private-mode.
+          Could not load your data (${escapeHtml(err.message||err)}). Check your internet connection and try again.
         </div>
       </div>`;
   }
-})();
+});
 </script>
 </body>
 </html>
