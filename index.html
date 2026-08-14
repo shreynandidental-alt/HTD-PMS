@@ -932,8 +932,6 @@
   const fbDb = getFirestore(fbApp);
   enableIndexedDbPersistence(fbDb).catch(()=>{ /* multiple tabs open, etc — safe to ignore */ });
 
-  // Expose a minimal bridge so the classic (non-module) app script below
-  // can talk to Firebase without itself being a module.
   window.__fb = {
     add: async (storeName, obj)=>{ await setDoc(doc(fbDb, storeName, obj.id), obj); return obj; },
     put: async (storeName, obj)=>{ await setDoc(doc(fbDb, storeName, obj.id), obj); return obj; },
@@ -959,6 +957,7 @@
     document.dispatchEvent(new CustomEvent("fbAuthChanged", {detail:{user}}));
   });
 </script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
 
@@ -1202,11 +1201,26 @@ const STORE_DEFS = [
   {name:"drafts", keyPath:"id"}
 ];
 
+// Every store that holds patient-specific clinical, financial, or document
+// data — used by "Delete All Patient Data" so it wipes exactly this and
+// nothing else (settings, presets, templates, staff, clinics, and system
+// logs are left untouched).
+const PATIENT_DATA_STORES = [
+  "patients","appointments","treatments","treatmentPlans","orthoDiagnosisRecords",
+  "paymentsDue","pediatricRecords","aiCrsAssessments","voiceNotes","referrals","refunds",
+  "clinicalNotes","patientNotes","dentalCharts","examinations","clinicalSummaries",
+  "endoCases","perioCharts","oralSurgeryCases","oralMedRecords","prosthoCases",
+  "prescriptions","prescriptionItems","invoices","invoiceItems","payments",
+  "insuranceClaims","pharmacySales","balances","estimates","consents","attachments",
+  "xrays","reports","patientDocuments","photos","implantCases","implants",
+  "implantPayments","implantAttachments","prostheticCases","alignerCases",
+  "alignerStages","bracesCases","orthoVisits","pediatricCases","vaccinationsOptional",
+  "recalls","labCases","prePostOpPhotos"
+];
+
 let db = null; // kept only so any leftover references don't throw; unused with Firestore
 
 function openDB(){
-  // Data now lives in Firestore (see the __fb bridge set up in the
-  // module script in <head>). This just waits for it to be ready.
   return new Promise((resolve)=>{
     if(window.__fb){ resolve(true); return; }
     document.addEventListener("fbAuthChanged", function h(){
@@ -2464,7 +2478,17 @@ async function nextPatientCode(){
   const s = (await dbGetAll("settings"))[0] || {};
   const prefix = s.patientIdPrefix!=null && s.patientIdPrefix!=="" ? s.patientIdPrefix : "HTD-";
   const patients = await dbGetAll("patients");
-  const seq = Math.max(patients.length+1, Number(s.patientIdStartAt)||1);
+  // Base the next number on the highest number already in use under this
+  // prefix, not on how many patients currently exist — patient deletions
+  // or gaps otherwise cause a "next" code to collide with one still in use.
+  let maxSeq = 0;
+  patients.forEach(p=>{
+    if(p.code && p.code.startsWith(prefix)){
+      const n = parseInt(p.code.slice(prefix.length), 10);
+      if(!isNaN(n) && n>maxSeq) maxSeq = n;
+    }
+  });
+  const seq = Math.max(maxSeq+1, Number(s.patientIdStartAt)||1);
   return prefix + String(seq).padStart(4,"0");
 }
 async function findPossibleDuplicates(mobile, altMobile, name, excludeId){
@@ -2484,6 +2508,7 @@ async function findPossibleDuplicates(mobile, altMobile, name, excludeId){
 // PHASE 2 — Patients module
 // =========================================================
 let patientFilter = "All";
+let patientSortBy = "recentVisit"; // "recentVisit" | "recentReg" | "alphabetical"
 let patientMembershipFilter = "";
 let patientSearchQuery = "";
 const PAGE_SIZE = 10;
@@ -2531,6 +2556,14 @@ async function renderPatients(){
         <label>Membership / Category</label>
         <select id="patientMembershipSelect"></select>
       </div>
+      <div class="field" style="margin-bottom:10px;">
+        <label>Sort By</label>
+        <select id="patientSortSelect">
+          <option value="recentVisit" ${patientSortBy==="recentVisit"?"selected":""}>Recently Visited</option>
+          <option value="recentReg" ${patientSortBy==="recentReg"?"selected":""}>Recently Registered</option>
+          <option value="alphabetical" ${patientSortBy==="alphabetical"?"selected":""}>Alphabetical (A–Z)</option>
+        </select>
+      </div>
       <button class="btn btn-primary btn-block" id="btnAddPatient" style="margin-bottom:14px;">+ Add Patient</button>
       <div id="patientListWrap"></div>
     </div>
@@ -2545,6 +2578,7 @@ async function renderPatients(){
     membershipSelectEl.onchange = (e)=>{ patientMembershipFilter = e.target.value; patientRenderLimit=1; renderPatientList(); };
   }
   document.getElementById("btnAddPatient").onclick = ()=>openPatientForm(null);
+  document.getElementById("patientSortSelect").onchange = (e)=>{ patientSortBy = e.target.value; patientRenderLimit=1; renderPatientList(); };
   document.getElementById("patientSearch").oninput = (e)=>{ patientSearchQuery = e.target.value; patientRenderLimit=1; renderPatientList(); };
   document.querySelectorAll("#patientFilters [data-filter]").forEach(el=>{
     el.onclick = ()=>{
@@ -2704,7 +2738,25 @@ async function renderPatientList(){
       (p.code||"").toLowerCase().includes(patientSearchQuery.toLowerCase())
     );
   }
-  patients.sort((a,b)=> (a.name||"").localeCompare(b.name||""));
+  const allAppts = await dbGetAll("appointments");
+  const lastVisitByPatient = {};
+  allAppts.filter(a=>a.status==="Completed").forEach(a=>{
+    const when = a.completedAt || a.date;
+    if(!lastVisitByPatient[a.patientId] || when>lastVisitByPatient[a.patientId]) lastVisitByPatient[a.patientId] = when;
+  });
+  if(patientSortBy==="alphabetical"){
+    patients.sort((a,b)=> (a.name||"").localeCompare(b.name||""));
+  }else if(patientSortBy==="recentReg"){
+    patients.sort((a,b)=> (b.createdAt||"").localeCompare(a.createdAt||""));
+  }else{ // recentVisit (default) — patients with no visits yet fall after visited ones, then by registration
+    patients.sort((a,b)=>{
+      const av = lastVisitByPatient[a.id], bv = lastVisitByPatient[b.id];
+      if(av && bv) return bv.localeCompare(av);
+      if(av && !bv) return -1;
+      if(!av && bv) return 1;
+      return (b.createdAt||"").localeCompare(a.createdAt||"");
+    });
+  }
   const totalPages = Math.max(1, Math.ceil(patients.length/PAGE_SIZE));
   if(patientRenderLimit>totalPages) patientRenderLimit = totalPages;
   const startIdx = (patientRenderLimit-1)*PAGE_SIZE;
@@ -2721,6 +2773,8 @@ async function renderPatientList(){
           <div class="pinfo">
             <div class="pname">${escapeHtml(p.name)}</div>
             <div class="pmeta">${escapeHtml(p.mobile||"No mobile")}${p.code? " · "+escapeHtml(p.code):""}</div>
+            ${patientSortBy==="recentVisit"? `<div class="pmeta" style="color:var(--grey);">${lastVisitByPatient[p.id]? "Last visit: "+new Date(lastVisitByPatient[p.id]).toLocaleDateString():"No visits yet"}</div>` : ""}
+            ${patientSortBy==="recentReg"? `<div class="pmeta" style="color:var(--grey);">Registered: ${p.createdAt? new Date(p.createdAt).toLocaleDateString():"—"}</div>` : ""}
           </div>
           <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
             ${membershipBadge(p.membershipTier)}
@@ -2994,10 +3048,13 @@ async function savePatientFromForm(p, clinics, isEdit){
   }
 
   if(!updated.code){ updated.code = await nextPatientCode(); }
-  else{
+  else if(updated.code !== (p.code||"")){
+    // Only check for a clash when the Patient ID field was actually
+    // changed — re-saving a patient without touching their ID should
+    // never be blocked by their own existing ID.
     const others = await dbGetAll("patients");
     const clash = others.find(x=>x.id!==updated.id && x.code && x.code.toLowerCase()===updated.code.toLowerCase());
-    if(clash){ showToast("That Patient ID is already used by "+clash.name); return; }
+    if(clash){ showToast("That Patient ID is already used by "+clash.name+" — change it for that patient first, or choose a different ID."); return; }
   }
   delete updated._dupConfirmed;
   await dbPut("patients", updated);
@@ -4162,6 +4219,7 @@ async function openPatientRowMenu(patientId){
     <h2>${escapeHtml(patient.name)}</h2>
     <p style="margin-bottom:12px;color:var(--grey);">${escapeHtml(patient.mobile||"No mobile")}${patient.code? " · "+escapeHtml(patient.code):""}</p>
     <button class="btn btn-outline btn-block" data-pact="view">${icon('user',16)} View Profile</button>
+    <button class="btn btn-outline btn-block" data-pact="edit" style="margin-top:8px;">${icon('settings',16)} Edit Profile</button>
     <button class="btn btn-outline btn-block" data-pact="appt" style="margin-top:8px;">${icon('calendar',16)} Add Appointment</button>
     <button class="btn btn-outline btn-block" data-pact="call" style="margin-top:8px;">${icon('phone',16)} Call Patient</button>
     <button class="btn btn-outline btn-block" data-pact="whatsapp" style="margin-top:8px;">${icon('message',16)} WhatsApp Patient</button>
@@ -4175,6 +4233,7 @@ async function openPatientRowMenu(patientId){
   `);
   const bind = (act, fn)=>{ const el = document.querySelector(`[data-pact="${act}"]`); if(el) el.onclick = fn; };
   bind("view", ()=>{ closeSheet(); openPatientProfile(patient.id); });
+  bind("edit", ()=>{ closeSheet(); openPatientForm(patient.id); });
   bind("appt", ()=>{ closeSheet(); openAppointmentForm(null, {patientId: patient.id, patientName: patient.name}); });
   bind("call", ()=>{ closeSheet(); callNumber(patient.mobile, patient.name); });
   bind("whatsapp", ()=>{
@@ -5968,36 +6027,19 @@ const CommunicationService = {
 };
 
 // ---- Online Booking Widget (Admin) ----
-// This screen configures a public, embeddable booking widget for an external
-// website. IMPORTANT limitation, stated plainly rather than hidden behind a
-// working-looking toggle: this app runs entirely inside this browser's local
-// storage, with no server reachable from the internet. A website visitor's
-// browser has no way to read this app's data or write a new appointment into
-// it directly — that requires an actual backend (a small hosted API with a
-// shared database) sitting between the widget and this app. What's built
-// here is everything that CAN be done without one: the settings that will
-// drive the widget, and the widget itself (downloadable as a standalone
-// file), pre-wired to call that backend the moment one exists — enabling the
-// toggle below only turns on showing the embed code, not live syncing.
-// Polls the configured backend for new bookings made through the public
-// widget, and shows a prominent on-screen popup (not just the quiet bell
-// icon) with the patient's details so staff notice it right away. This can
-// only ever do anything once Online Booking is enabled AND pointed at a real
-// backend — see openOnlineBookingSettingsSheet for that limitation. Expects
-// GET {apiUrl}/new-bookings?since=<ISO timestamp> -> { bookings: [ { id, name, phone, email, reason, date, time } ] }
+// The public booking widget writes new requests straight into a Firestore
+// collection called "onlineBookings" (patients can only ever create new
+// documents there — see the security rules note in the widget settings
+// sheet). This just reads that same collection and surfaces anything not
+// yet seen.
 async function checkForNewOnlineBookings(){
   const s = (await dbGetAll("settings"))[0] || {};
-  if(!s.onlineBookingEnabled || !s.onlineBookingApiUrl) return;
-  const since = s.onlineBookingLastCheck || new Date(Date.now()-24*60*60*1000).toISOString();
-  let bookings = [];
+  if(!s.onlineBookingEnabled) return;
+  let all = [];
   try{
-    const res = await fetch(s.onlineBookingApiUrl.replace(/\/$/,"")+"/new-bookings?since="+encodeURIComponent(since));
-    if(!res.ok) return;
-    const data = await res.json();
-    bookings = data.bookings || [];
-  }catch(e){ return; } // silently skip this cycle — likely no backend reachable yet
-  s.onlineBookingLastCheck = new Date().toISOString();
-  await dbPut("settings", s);
+    all = await dbGetAll("onlineBookings");
+  }catch(e){ return; } // silently skip this cycle — e.g. offline
+  const bookings = all.filter(b=>!b.processed);
   if(!bookings.length) return;
   for(const b of bookings){
     await createLoggedNotification({
@@ -6006,6 +6048,8 @@ async function checkForNewOnlineBookings(){
       message: (b.name||"A patient")+" requested "+(b.date?new Date(b.date).toLocaleDateString():"")+(b.time?" at "+b.time:"")+" via your website.",
       read:false, createdAt: nowIso()
     });
+    b.processed = true;
+    await dbPut("onlineBookings", b);
   }
   refreshNotificationBell();
   showNewBookingPopup(bookings);
@@ -6061,7 +6105,7 @@ async function openOnlineBookingSettingsSheet(){
   openSheet(`
     <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
     <h2>Online Booking Widget</h2>
-    <div class="warn-banner" style="margin-bottom:12px;">This needs a backend server to actually go live — see the note below. What you configure here is saved and ready for that day, including a popup that shows patient details on screen the moment someone books through your website.</div>
+    <div class="warn-banner" style="margin-bottom:12px;">This widget writes new booking requests directly into your Firestore database (a collection called <code>onlineBookings</code>) — no separate server needed. Make sure your Firestore security rules allow public <code>create</code> on that collection (see note below) before sharing it on your website.</div>
     <label class="ai-crs-check" style="margin-bottom:10px;"><input type="checkbox" id="obEnabled" ${s.onlineBookingEnabled?'checked':''}> Enable Online Booking Widget</label>
     <div class="field"><label>Clinic to Show</label>
       <select id="obClinic">${clinics.map(c=>`<option value="${c.id}" ${s.onlineBookingClinicId===c.id?'selected':''}>${escapeHtml(c.name.replace('Healing Touch Dental – ',''))}</option>`).join("")}</select>
@@ -6074,11 +6118,10 @@ async function openOnlineBookingSettingsSheet(){
       <div class="field"><label>Day Starts At</label><input type="time" id="obStartTime" value="${s.onlineBookingStartTime||'09:00'}"></div>
       <div class="field"><label>Day Ends At</label><input type="time" id="obEndTime" value="${s.onlineBookingEndTime||'19:00'}"></div>
     </div>
-    <div class="field"><label>Backend API URL (once you have one)</label><input id="obApiUrl" value="${escapeAttr(s.onlineBookingApiUrl)}" placeholder="https://yourbackend.example.com/api"></div>
     <button class="btn btn-primary btn-block" id="btnSaveOnlineBooking" style="margin-bottom:8px;">Save Settings</button>
     <button class="btn btn-outline btn-block" id="btnDownloadWidget" style="margin-bottom:8px;">Download Embeddable Widget File</button>
     <button class="btn btn-outline btn-block" id="btnCopyEmbedCode">Copy Embed Code</button>
-    <p style="margin-top:10px;">To actually go live: host the downloaded widget file (or its code) somewhere reachable, stand up a small backend that knows your real appointment slots and can accept new bookings, point the Backend API URL above at it, then embed it on your site with the code below.</p>
+    <p style="margin-top:10px;">To go live: host the downloaded widget file anywhere (any static file host works — it needs no server of its own), and embed it on your site with the code below. It writes new requests straight into your Firestore database.</p>
   `);
   document.getElementById("btnSaveOnlineBooking").onclick = async ()=>{
     s.onlineBookingEnabled = document.getElementById("obEnabled").checked;
@@ -6087,14 +6130,12 @@ async function openOnlineBookingSettingsSheet(){
     s.onlineBookingDaysAhead = parseInt(document.getElementById("obDaysAhead").value)||14;
     s.onlineBookingStartTime = document.getElementById("obStartTime").value;
     s.onlineBookingEndTime = document.getElementById("obEndTime").value;
-    s.onlineBookingApiUrl = document.getElementById("obApiUrl").value.trim();
     await dbPut("settings", s);
     showToast("Saved");
   };
   document.getElementById("btnDownloadWidget").onclick = generateBookingWidgetFile;
   document.getElementById("btnCopyEmbedCode").onclick = async ()=>{
-    const apiUrl = document.getElementById("obApiUrl").value.trim() || "https://yourbackend.example.com/api";
-    const embed = `<iframe src="https://your-hosted-widget-url.example.com/booking.html?api=${encodeURIComponent(apiUrl)}" style="width:100%;max-width:480px;height:640px;border:0;border-radius:12px;" title="Book an Appointment"></iframe>`;
+    const embed = `<iframe src="https://your-hosted-widget-url.example.com/booking.html" style="width:100%;max-width:480px;height:640px;border:0;border-radius:12px;" title="Book an Appointment"></iframe>`;
     try{
       await navigator.clipboard.writeText(embed);
       showToast("Embed code copied");
@@ -6135,7 +6176,6 @@ async function openLiveMessageSyncSettingsSheet(){
 // grid, booking form — but has no backend to call yet, so it runs in a clearly
 // labeled "not connected" demo mode until API_BASE_URL points at a real one.
 function generateBookingWidgetFile(){
-  const apiUrl = (document.getElementById("obApiUrl")?.value.trim()) || "";
   const slotDuration = document.getElementById("obSlotDuration")?.value || "30";
   const startTime = document.getElementById("obStartTime")?.value || "09:00";
   const endTime = document.getElementById("obEndTime")?.value || "19:00";
@@ -6147,13 +6187,12 @@ function generateBookingWidgetFile(){
   *{box-sizing:border-box;}
   body{font-family:-apple-system,Arial,sans-serif;margin:0;padding:16px;background:#F7F5F2;color:#14171A;}
   h2{font-size:17px;margin:0 0 12px;}
-  .notice{background:#FFF3CD;border:1px solid #F0D888;border-radius:8px;padding:10px 12px;font-size:12.5px;margin-bottom:14px;color:#6B5300;}
+  .notice{background:#EAF3EF;border:1px solid #BEDBCE;border-radius:8px;padding:10px 12px;font-size:12.5px;margin-bottom:14px;color:#1F6F54;}
   .date-row{display:flex;gap:6px;overflow-x:auto;padding-bottom:8px;margin-bottom:12px;}
   .date-chip{flex-shrink:0;padding:8px 12px;border-radius:8px;background:#fff;border:1px solid #E3E3E3;cursor:pointer;text-align:center;font-size:12px;}
   .date-chip.active{background:#1F6F54;color:#fff;border-color:#1F6F54;}
   .slot-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px;}
   .slot{padding:10px;border-radius:8px;text-align:center;font-size:12.5px;cursor:pointer;border:1px solid #E3E3E3;background:#fff;}
-  .slot.booked{background:#F0F0F0;color:#B0B0B0;cursor:not-allowed;text-decoration:line-through;}
   .slot.selected{background:#1F6F54;color:#fff;border-color:#1F6F54;}
   .field{margin-bottom:10px;}
   label{display:block;font-size:11.5px;font-weight:600;color:#5A5F66;margin-bottom:4px;}
@@ -6164,7 +6203,7 @@ function generateBookingWidgetFile(){
 </style></head>
 <body>
   <h2>Book an Appointment</h2>
-  <div class="notice" id="connNotice">Demo mode — this widget isn't connected to a live backend yet, so slots shown below are illustrative, not real. See the comments in this file's script for the two endpoints it expects.</div>
+  <div class="notice">Choose a preferred date and time below — our team will confirm your appointment shortly after you submit.</div>
   <div class="date-row" id="dateRow"></div>
   <div class="slot-grid" id="slotGrid"></div>
   <div id="formWrap" style="display:none;">
@@ -6176,27 +6215,31 @@ function generateBookingWidgetFile(){
     <div id="status"></div>
   </div>
 
-<script>
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
+  import { getFirestore, collection, addDoc } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+
   // ---- Configuration (set from Admin > Online Booking Widget when downloaded) ----
-  const API_BASE_URL = ${JSON.stringify(apiUrl)}; // e.g. "https://yourbackend.example.com/api" — empty = demo mode
   const SLOT_DURATION_MIN = ${JSON.stringify(slotDuration)};
   const DAY_START = ${JSON.stringify(startTime)};
   const DAY_END = ${JSON.stringify(endTime)};
   const DAYS_AHEAD = ${JSON.stringify(daysAhead)};
 
-  // ---- Expected backend contract ----
-  // GET  \${API_BASE_URL}/availability?date=YYYY-MM-DD
-  //      -> { slots: [ { time: "09:00", available: true }, { time: "09:30", available: false }, ... ] }
-  //      Only true/false per slot is ever sent — no patient names or details.
-  // POST \${API_BASE_URL}/book
-  //      body: { date, time, name, phone, email, reason }
-  //      -> { success: true } or { success: false, error: "..." }
-  // The clinic's own app polls this same backend at:
-  // GET  \${API_BASE_URL}/new-bookings?since=<ISO timestamp>
-  //      -> { bookings: [ { id, name, phone, email, reason, date, time }, ... ] }
-  //      This is what makes the on-screen "New Online Booking" popup work —
-  //      whatever a POST /book here creates, that endpoint should return
-  //      until the clinic has seen it.
+  // Public Firebase config — safe to expose in client code. Access is
+  // controlled by Firestore security rules, not by hiding this. This widget
+  // only ever WRITES new documents to the "onlineBookings" collection; it
+  // never reads patient data, so a rule limited to "create" for the public
+  // is all that's needed for this file to work.
+  const firebaseConfig = {
+    apiKey: "AIzaSyAGoza4ETqjMJug-7royY0pZfpzBgNAPFU",
+    authDomain: "htd-pms.firebaseapp.com",
+    projectId: "htd-pms",
+    storageBucket: "htd-pms.firebasestorage.app",
+    messagingSenderId: "500213236550",
+    appId: "1:500213236550:web:86b6e6c0fb4defa38d1b47"
+  };
+  const fbApp = initializeApp(firebaseConfig);
+  const fbDb = getFirestore(fbApp);
 
   let selectedDate = null, selectedTime = null;
 
@@ -6214,58 +6257,36 @@ function generateBookingWidgetFile(){
         document.querySelectorAll('.date-chip').forEach(c=>c.classList.remove('active'));
         chip.classList.add('active');
         selectedDate = dateKey(d);
-        loadSlots(selectedDate);
+        loadSlots();
       };
       row.appendChild(chip);
       if(i===0) selectedDate = dateKey(d);
     }
   }
 
-  function demoSlots(){
-    // Illustrative only — used when no backend is connected yet.
-    const slots = [];
+  // These are offered time slots, not a live availability check — since the
+  // widget only ever creates a request (never reads other patients' data),
+  // your team confirms the actual time when they see the request.
+  function loadSlots(){
+    const grid = document.getElementById('slotGrid');
+    grid.innerHTML = '';
     let [h,m] = DAY_START.split(':').map(Number);
     const [endH,endM] = DAY_END.split(':').map(Number);
     while(h < endH || (h===endH && m<endM)){
       const time = String(h).padStart(2,'0')+':'+String(m).padStart(2,'0');
-      slots.push({ time, available: Math.random() > 0.35 });
+      const el = document.createElement('div');
+      el.className = 'slot';
+      el.textContent = time;
+      el.onclick = ()=>{
+        document.querySelectorAll('.slot').forEach(x=>x.classList.remove('selected'));
+        el.classList.add('selected');
+        selectedTime = time;
+        document.getElementById('formWrap').style.display = '';
+      };
+      grid.appendChild(el);
       m += parseInt(SLOT_DURATION_MIN);
       while(m>=60){ m-=60; h++; }
     }
-    return slots;
-  }
-
-  async function loadSlots(date){
-    const grid = document.getElementById('slotGrid');
-    grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#888;">Loading…</div>';
-    let slots;
-    if(API_BASE_URL){
-      try{
-        const res = await fetch(API_BASE_URL + '/availability?date=' + date);
-        const data = await res.json();
-        slots = data.slots || [];
-      }catch(e){
-        grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#B00;">Could not load availability. Please try again shortly.</div>';
-        return;
-      }
-    }else{
-      slots = demoSlots();
-    }
-    grid.innerHTML = '';
-    slots.forEach(s=>{
-      const el = document.createElement('div');
-      el.className = 'slot' + (s.available? '' : ' booked');
-      el.textContent = s.time;
-      if(s.available){
-        el.onclick = ()=>{
-          document.querySelectorAll('.slot').forEach(x=>x.classList.remove('selected'));
-          el.classList.add('selected');
-          selectedTime = s.time;
-          document.getElementById('formWrap').style.display = '';
-        };
-      }
-      grid.appendChild(el);
-    });
   }
 
   document.getElementById('btnBook').onclick = async ()=>{
@@ -6274,25 +6295,18 @@ function generateBookingWidgetFile(){
     const statusEl = document.getElementById('status');
     if(!name || !phone){ statusEl.textContent = 'Please enter your name and mobile number.'; statusEl.style.color = '#B00'; return; }
     if(!selectedDate || !selectedTime){ statusEl.textContent = 'Please select a date and time.'; statusEl.style.color = '#B00'; return; }
-    if(!API_BASE_URL){ statusEl.textContent = 'Demo mode — connect a backend to accept real bookings.'; statusEl.style.color = '#B00'; return; }
     const btn = document.getElementById('btnBook');
     btn.disabled = true;
     try{
-      const res = await fetch(API_BASE_URL + '/book', {
-        method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ date: selectedDate, time: selectedTime, name, phone,
-          email: document.getElementById('fEmail').value.trim(),
-          reason: document.getElementById('fReason').value.trim() })
+      await addDoc(collection(fbDb, "onlineBookings"), {
+        date: selectedDate, time: selectedTime, name, phone,
+        email: document.getElementById('fEmail').value.trim(),
+        reason: document.getElementById('fReason').value.trim(),
+        processed: false,
+        createdAt: new Date().toISOString()
       });
-      const data = await res.json();
-      if(data.success){
-        statusEl.textContent = 'Appointment requested! We will confirm shortly.';
-        statusEl.style.color = '#1F6F54';
-      }else{
-        statusEl.textContent = data.error || 'Could not book that slot — please try another.';
-        statusEl.style.color = '#B00';
-        btn.disabled = false;
-      }
+      statusEl.textContent = 'Appointment requested! We will confirm shortly.';
+      statusEl.style.color = '#1F6F54';
     }catch(e){
       statusEl.textContent = 'Something went wrong. Please try again.';
       statusEl.style.color = '#B00';
@@ -6301,7 +6315,7 @@ function generateBookingWidgetFile(){
   };
 
   buildDates();
-  loadSlots(selectedDate);
+  loadSlots();
 <\/script>
 </body></html>`;
   const blob = new Blob([widgetHtml], {type:"text/html"});
@@ -14630,6 +14644,7 @@ async function renderPediatricTab(body, patient){
       <div class="filter-chip ${clinicalPediatricSubTab==='Sedation'?'active':''}" data-sub="Sedation">Sedation</div>
       <div class="filter-chip ${clinicalPediatricSubTab==='CariesRisk'?'active':''}" data-sub="CariesRisk">Caries Risk</div>
       <div class="filter-chip ${clinicalPediatricSubTab==='Trauma'?'active':''}" data-sub="Trauma">Trauma Record</div>
+      <div class="filter-chip ${clinicalPediatricSubTab==='PulpTherapy'?'active':''}" data-sub="PulpTherapy">Pulpectomy/Pulpotomy</div>
       <div class="filter-chip ${clinicalPediatricSubTab==='SpaceMaintainer'?'active':''}" data-sub="SpaceMaintainer">Space Maintainer</div>
       <div class="filter-chip ${clinicalPediatricSubTab==='ToothEruption'?'active':''}" data-sub="ToothEruption">Tooth Eruption</div>
       <div class="filter-chip ${clinicalPediatricSubTab==='GrowthAssessment'?'active':''}" data-sub="GrowthAssessment">Growth Assessment</div>
@@ -14645,6 +14660,7 @@ async function renderPediatricTab(body, patient){
   else if(clinicalPediatricSubTab==="Behavioral") await renderPedBehavioralTab(subBody, patient, body);
   else if(clinicalPediatricSubTab==="Sedation") await renderPedSedationTab(subBody, patient, body);
   else if(clinicalPediatricSubTab==="Trauma") await renderPedTraumaTab(subBody, patient, body);
+  else if(clinicalPediatricSubTab==="PulpTherapy") await renderPedPulpTherapyTab(subBody, patient, body);
   else if(clinicalPediatricSubTab==="SpaceMaintainer") await renderPedSpaceMaintainerTab(subBody, patient, body);
   else if(clinicalPediatricSubTab==="ToothEruption") await renderPedToothEruptionTab(subBody, patient, body);
   else if(clinicalPediatricSubTab==="GrowthAssessment") await renderPedGrowthTab(subBody, patient, body);
@@ -15453,6 +15469,292 @@ async function openGrowthForm(patient, id, tabBody){
     closeSheetOrReturn();
     clinicalPediatricSubTab = "GrowthAssessment";
     renderPediatricTab(tabBody, patient);
+  };
+}
+
+// ---- Pulpectomy / Pulpotomy ----
+const PULP_PROCEDURE_TYPES = ["— Select —","Pulpotomy","Pulpectomy"];
+const PULP_INDICATIONS = ["— Select —","Deep Caries with Pulp Exposure","Reversible Pulpitis","Irreversible Pulpitis","Pulp Necrosis","Traumatic Pulp Exposure"];
+const PULP_MEDICAMENTS = ["— Select —","Formocresol","Ferric Sulfate","Mineral Trioxide Aggregate (MTA)","Calcium Hydroxide","Zinc Oxide Eugenol (ZOE)","Sodium Hypochlorite Irrigation"];
+const PULP_OBTURATION_MATERIALS = ["— Not Applicable —","Zinc Oxide Eugenol (ZOE) Paste","Vitapex / Metapex","Calcium Hydroxide-Iodoform Paste"];
+const PULP_RESTORATIONS = ["— Select —","Stainless Steel Crown (SSC)","Composite Restoration","Glass Ionomer Restoration","Strip Crown","Bioflx Crown","Zirconia Crown","Pending — Temporary Dressing Only"];
+const PULP_RADIOGRAPH_TYPES = ["Pre-operative","Working Length","Post-obturation","Follow-up","Other"];
+
+async function renderPedPulpTherapyTab(subBody, patient, tabBody){
+  const records = (await dbGetAll("pediatricRecords")).filter(r=>r.patientId===patient.id && r.type==="PulpTherapy").sort((a,b)=> new Date(b.date)-new Date(a.date));
+  subBody.innerHTML = `
+    <div style="display:flex;gap:8px;margin-bottom:12px;">
+      <button class="btn btn-primary btn-block" id="btnAddPulpTherapy" style="margin-bottom:0;">+ Add Pulpectomy/Pulpotomy Record</button>
+      <button class="icon-btn" id="btnPrintPulpTherapyMulti" title="Print" style="background:var(--off-white);color:var(--charcoal-2);flex-shrink:0;">${icon('print',16)}</button>
+    </div>
+    ${records.length? `<div class="list-card">${records.map(r=>`
+      <div class="note-card" data-pulptx="${r.id}" style="cursor:pointer;">
+        <div class="note-head"><b>${escapeHtml(r.procedureType||"")}</b>${r.tooth? `<span class="status-pill prio-Normal">Tooth ${escapeHtml(r.tooth)}</span>`:""}</div>
+        <div class="note-meta">${new Date(r.date).toLocaleDateString()}${r.indication? " · "+escapeHtml(r.indication):""}</div>
+        ${r.restoration? `<div style="font-size:12.5px;margin-top:4px;color:var(--charcoal-2);">Restoration: ${escapeHtml(r.restoration)}</div>`:""}
+        <div style="display:flex;gap:12px;margin-top:5px;font-size:11.5px;color:var(--grey);">
+          <span>${icon('calendar',12)} ${(r.visits||[]).length} visit${(r.visits||[]).length===1?"":"s"}</span>
+          <span>${icon('image',12)} ${(r.radiographs||[]).length} radiograph${(r.radiographs||[]).length===1?"":"s"}</span>
+        </div>
+      </div>
+    `).join("")}</div>` : `<div class="empty-card">No pulpectomy/pulpotomy records yet</div>`}
+  `;
+  document.getElementById("btnAddPulpTherapy").onclick = ()=> openPulpTherapyForm(patient, null, tabBody);
+  document.getElementById("btnPrintPulpTherapyMulti").onclick = ()=> openMultiSelectPrintSheet(
+    "Print Pulpectomy/Pulpotomy Records",
+    records.map(r=>({label: (r.procedureType||"")+(r.tooth?" — Tooth "+r.tooth:""), sublabel: new Date(r.date).toLocaleDateString()+(r.indication?" · "+r.indication:""), record: r})),
+    (selected)=> printSelectedPedRecords(selected, patient, "Pulpectomy/Pulpotomy Records", [["tooth","Tooth"],["procedureType","Procedure"],["indication","Diagnosis / Indication"],["anesthesia","Anesthesia"],["isolation","Isolation"],["medicament","Pulp Dressing / Medicament"],["obturationMaterial","Obturation Material"],["restoration","Permanent Restoration"],["radiographTaken","Radiograph Taken"],["followUpDate","Follow-up Date"],["notes","Notes"]],
+      { visits: { field:"visits", fieldDefs: [["procedureType","Procedure"],["indication","Diagnosis / Indication"],["anesthesia","Anesthesia"],["isolation","Isolation"],["medicament","Pulp Dressing / Medicament"],["obturationMaterial","Obturation Material"],["restoration","Permanent Restoration"],["radiographTaken","Radiograph Taken"],["notes","Notes"]] } }
+    )
+  );
+  subBody.querySelectorAll("[data-pulptx]").forEach(el=> el.onclick = ()=> openPulpTherapyForm(patient, el.dataset.pulptx, tabBody));
+}
+
+async function openPulpTherapyForm(patient, id, tabBody){
+  const isEdit = !!id;
+  const r = isEdit ? (await dbGetAll("pediatricRecords")).find(x=>x.id===id) : {
+    id: uid("pedrec"), patientId: patient.id, type:"PulpTherapy", date: nowIso(),
+    tooth:"", procedureType: PULP_PROCEDURE_TYPES[0], indication: PULP_INDICATIONS[0], anesthesia:"",
+    isolation:"Rubber Dam", medicament: PULP_MEDICAMENTS[0], obturationMaterial: PULP_OBTURATION_MATERIALS[0],
+    restoration: PULP_RESTORATIONS[0], radiographTaken:"Yes", followUpDate:"", notes:"",
+    visits: [], radiographs: [], createdAt: nowIso()
+  };
+  r.visits = r.visits || [];
+  r.radiographs = r.radiographs || [];
+  renderPulpTherapySheet(r, isEdit, patient, tabBody);
+}
+
+function renderPulpTherapySheet(r, isEdit, patient, tabBody){
+  const visits = (r.visits||[]).slice().sort((a,b)=> new Date(a.date||0)-new Date(b.date||0));
+  const radiographs = r.radiographs||[];
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>${isEdit?"Edit":"Add"} Pulpectomy/Pulpotomy</h2>
+    <div class="field-row">
+      <div class="field"><label>Date</label><input type="date" id="ptDate" value="${toDateKey(new Date(r.date))}"></div>
+      <div class="field"><label>Tooth</label><input id="ptTooth" value="${escapeAttr(r.tooth)}" placeholder="e.g. 84"></div>
+    </div>
+    <div class="field"><label>Procedure</label><select id="ptProcedure">${PULP_PROCEDURE_TYPES.map(t=>`<option ${r.procedureType===t?'selected':''}>${t}</option>`).join("")}</select></div>
+    <div class="field"><label>Diagnosis / Indication</label><select id="ptIndication">${PULP_INDICATIONS.map(t=>`<option ${r.indication===t?'selected':''}>${t}</option>`).join("")}</select></div>
+    <div class="field"><label>Anesthesia</label><input id="ptAnesthesia" value="${escapeAttr(r.anesthesia)}" placeholder="e.g. 2% Lignocaine with adrenaline, IANB"></div>
+    <div class="field"><label>Isolation</label><select id="ptIsolation">${["Rubber Dam","Cotton Roll Isolation"].map(t=>`<option ${r.isolation===t?'selected':''}>${t}</option>`).join("")}</select></div>
+    <div class="field"><label>Pulp Dressing / Medicament</label><select id="ptMedicament">${PULP_MEDICAMENTS.map(t=>`<option ${r.medicament===t?'selected':''}>${t}</option>`).join("")}</select></div>
+    <div class="field"><label>Obturation Material (Pulpectomy)</label><select id="ptObturation">${PULP_OBTURATION_MATERIALS.map(t=>`<option ${r.obturationMaterial===t?'selected':''}>${t}</option>`).join("")}</select></div>
+    <div class="field"><label>Permanent Restoration</label><select id="ptRestoration">${PULP_RESTORATIONS.map(t=>`<option ${r.restoration===t?'selected':''}>${t}</option>`).join("")}</select></div>
+    <div class="field"><label>Radiograph Taken</label><select id="ptRadiograph">${["Yes","No"].map(t=>`<option ${r.radiographTaken===t?'selected':''}>${t}</option>`).join("")}</select></div>
+    <div class="field"><label>Follow-up Date</label><input type="date" id="ptFollowUp" value="${r.followUpDate?toDateKey(new Date(r.followUpDate)):''}"></div>
+    <div class="field"><label>Notes</label><textarea id="ptNotes" rows="2">${escapeHtml(r.notes)}</textarea></div>
+
+    <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border,#eee);">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+        <label style="margin:0;">Visits</label>
+        <button type="button" class="btn btn-outline" id="btnAddPulpVisit" style="padding:5px 10px;font-size:12.5px;">+ Add Visit</button>
+      </div>
+      ${visits.length? `<div class="list-card">${visits.map((v,i)=>`
+        <div class="note-card" data-ptvisit="${v.id}" style="cursor:pointer;">
+          <div class="note-head"><b>Visit ${i+1} — ${v.date? new Date(v.date).toLocaleDateString():""}</b>${v.status? `<span class="status-pill ${v.status==='Completed'?'st-Completed':'st-Confirmed'}">${escapeHtml(v.status)}</span>`:""}</div>
+          <div class="note-meta">${[v.procedureType,v.indication,v.medicament,v.obturationMaterial,v.restoration].filter(t=>t&&t!=="— Select —"&&t!=="— Not Applicable —").map(escapeHtml).join(" · ")||"No details yet"}</div>
+          ${v.notes? `<div style="font-size:12px;margin-top:2px;color:var(--charcoal-2);">${escapeHtml(v.notes)}</div>`:""}
+        </div>
+      `).join("")}</div>` : `<div class="empty-card" style="padding:12px;">No visits recorded yet</div>`}
+    </div>
+
+    <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border,#eee);">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+        <label style="margin:0;">Radiographs</label>
+        <button type="button" class="btn btn-outline" id="btnAddPulpRadiograph" style="padding:5px 10px;font-size:12.5px;">${icon('camera',13)} Add</button>
+      </div>
+      ${radiographs.length? `<div style="display:flex;flex-wrap:wrap;gap:10px;">${radiographs.map(rad=>`
+        <div style="text-align:center;position:relative;">
+          <img data-ptrad="${rad.id}" src="${rad.imageData}" style="width:96px;height:96px;object-fit:cover;border-radius:6px;border:1px solid #ddd;cursor:pointer;">
+          <button type="button" data-ptrad-del="${rad.id}" style="position:absolute;top:-6px;right:-6px;width:20px;height:20px;border-radius:50%;background:#c0392b;color:#fff;border:none;font-size:12px;line-height:1;cursor:pointer;">×</button>
+          <div style="font-size:10.5px;color:var(--grey);margin-top:3px;max-width:96px;">${escapeHtml(rad.type)}</div>
+        </div>
+      `).join("")}</div>` : `<div class="empty-card" style="padding:12px;">No radiographs uploaded yet</div>`}
+    </div>
+
+    ${isEdit? `<button class="btn btn-outline btn-block" id="btnDeletePulpTherapy" style="margin-top:16px;">Delete</button>`:""}
+    <button class="btn btn-primary btn-block" id="btnSavePulpTherapy" style="margin-top:10px;">Save</button>
+  `);
+
+  const syncFieldsIntoR = ()=>{
+    Object.assign(r, {
+      date: new Date(document.getElementById("ptDate").value).toISOString(),
+      tooth: document.getElementById("ptTooth").value.trim(),
+      procedureType: document.getElementById("ptProcedure").value,
+      indication: document.getElementById("ptIndication").value,
+      anesthesia: document.getElementById("ptAnesthesia").value.trim(),
+      isolation: document.getElementById("ptIsolation").value,
+      medicament: document.getElementById("ptMedicament").value,
+      obturationMaterial: document.getElementById("ptObturation").value,
+      restoration: document.getElementById("ptRestoration").value,
+      radiographTaken: document.getElementById("ptRadiograph").value,
+      followUpDate: document.getElementById("ptFollowUp").value ? new Date(document.getElementById("ptFollowUp").value).toISOString() : "",
+      notes: document.getElementById("ptNotes").value.trim()
+    });
+  };
+
+  document.getElementById("btnSavePulpTherapy").onclick = async ()=>{
+    syncFieldsIntoR();
+    r.updatedAt = nowIso();
+    await upsertFollowupReminder(r, patient, "Pulp Therapy Review — Tooth "+r.tooth, r.followUpDate);
+    await dbPut("pediatricRecords", r);
+    logActivity((isEdit?"Updated":"Recorded")+" "+(r.procedureType||"pulp therapy")+" record for "+patient.name, {patientId: patient.id});
+    showToast(r.followUpDate? "Saved — reminder set" : "Saved");
+    closeSheetOrReturn();
+    clinicalPediatricSubTab = "PulpTherapy";
+    renderPediatricTab(tabBody, patient);
+  };
+  const delBtn = document.getElementById("btnDeletePulpTherapy");
+  if(delBtn) delBtn.onclick = async ()=>{
+    if(!confirm("Delete this record?")) return;
+    if(r.followupReminderId) await dbDelete("reminders", r.followupReminderId).catch(()=>{});
+    await dbDelete("pediatricRecords", r.id);
+    showToast("Deleted");
+    closeSheetOrReturn();
+    clinicalPediatricSubTab = "PulpTherapy";
+    renderPediatricTab(tabBody, patient);
+  };
+
+  // Persist base record (creating it if new) before attaching visits/radiographs to it
+  const ensureSaved = async ()=>{
+    syncFieldsIntoR();
+    r.updatedAt = nowIso();
+    await dbPut("pediatricRecords", r);
+    isEdit = true;
+  };
+
+  document.getElementById("btnAddPulpVisit").onclick = async ()=>{
+    await ensureSaved();
+    openPulpVisitForm(r, null, patient, tabBody);
+  };
+  document.getElementById("btnAddPulpRadiograph").onclick = async ()=>{
+    await ensureSaved();
+    openPulpRadiographForm(r, patient, tabBody);
+  };
+  document.querySelectorAll("[data-ptvisit]").forEach(el=> el.onclick = async ()=>{
+    await ensureSaved();
+    openPulpVisitForm(r, el.dataset.ptvisit, patient, tabBody);
+  });
+  document.querySelectorAll("[data-ptrad]").forEach(el=> el.onclick = ()=> openImageViewer(el.src, {patient, fileName:"pulp_radiograph.jpg", label:"Pulp Therapy Radiograph"}));
+  document.querySelectorAll("[data-ptrad-del]").forEach(el=> el.onclick = async (e)=>{
+    e.stopPropagation();
+    if(!confirm("Delete this radiograph?")) return;
+    r.radiographs = (r.radiographs||[]).filter(x=>x.id!==el.dataset.ptradDel);
+    r.updatedAt = nowIso();
+    await dbPut("pediatricRecords", r);
+    renderPulpTherapySheet(r, isEdit, patient, tabBody);
+  });
+}
+
+async function openPulpVisitForm(r, visitId, patient, tabBody){
+  const isEdit = !!visitId;
+  const v = isEdit ? (r.visits||[]).find(x=>x.id===visitId) : {
+    id: uid("ptvisit"), date: nowIso(), status:"Completed",
+    procedureType: PULP_PROCEDURE_TYPES[0], indication: PULP_INDICATIONS[0], anesthesia:"",
+    isolation:"Rubber Dam", medicament: PULP_MEDICAMENTS[0], obturationMaterial: PULP_OBTURATION_MATERIALS[0],
+    restoration: PULP_RESTORATIONS[0], radiographTaken:"Yes", notes:""
+  };
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>${isEdit?"Edit":"Add"} Visit</h2>
+    <div class="field-row">
+      <div class="field"><label>Date</label><input type="date" id="ptvDate" value="${toDateKey(new Date(v.date))}"></div>
+      <div class="field"><label>Status</label><select id="ptvStatus">${["Completed","Pending"].map(t=>`<option ${v.status===t?'selected':''}>${t}</option>`).join("")}</select></div>
+    </div>
+    <div class="field"><label>Procedure</label><select id="ptvProcedure">${PULP_PROCEDURE_TYPES.map(t=>`<option ${v.procedureType===t?'selected':''}>${t}</option>`).join("")}</select></div>
+    <div class="field"><label>Diagnosis / Indication</label><select id="ptvIndication">${PULP_INDICATIONS.map(t=>`<option ${v.indication===t?'selected':''}>${t}</option>`).join("")}</select></div>
+    <div class="field"><label>Anesthesia</label><input id="ptvAnesthesia" value="${escapeAttr(v.anesthesia)}" placeholder="e.g. 2% Lignocaine with adrenaline, IANB"></div>
+    <div class="field"><label>Isolation</label><select id="ptvIsolation">${["Rubber Dam","Cotton Roll Isolation"].map(t=>`<option ${v.isolation===t?'selected':''}>${t}</option>`).join("")}</select></div>
+    <div class="field"><label>Pulp Dressing / Medicament</label><select id="ptvMedicament">${PULP_MEDICAMENTS.map(t=>`<option ${v.medicament===t?'selected':''}>${t}</option>`).join("")}</select></div>
+    <div class="field"><label>Obturation Material (Pulpectomy)</label><select id="ptvObturation">${PULP_OBTURATION_MATERIALS.map(t=>`<option ${v.obturationMaterial===t?'selected':''}>${t}</option>`).join("")}</select></div>
+    <div class="field"><label>Permanent Restoration</label><select id="ptvRestoration">${PULP_RESTORATIONS.map(t=>`<option ${v.restoration===t?'selected':''}>${t}</option>`).join("")}</select></div>
+    <div class="field"><label>Radiograph Taken</label><select id="ptvRadiograph">${["Yes","No"].map(t=>`<option ${v.radiographTaken===t?'selected':''}>${t}</option>`).join("")}</select></div>
+    <div class="field"><label>Notes</label><textarea id="ptvNotes" rows="3" placeholder="e.g. Medicament changed, symptoms resolved, obturation completed">${escapeHtml(v.notes)}</textarea></div>
+    ${isEdit? `<button class="btn btn-outline btn-block" id="btnDeletePulpVisit" style="margin-top:10px;">Delete Visit</button>`:""}
+    <button class="btn btn-primary btn-block" id="btnSavePulpVisit" style="margin-top:10px;">Save</button>
+  `);
+  document.getElementById("btnSavePulpVisit").onclick = async ()=>{
+    const newVisit = Object.assign({}, v, {
+      date: new Date(document.getElementById("ptvDate").value).toISOString(),
+      status: document.getElementById("ptvStatus").value,
+      procedureType: document.getElementById("ptvProcedure").value,
+      indication: document.getElementById("ptvIndication").value,
+      anesthesia: document.getElementById("ptvAnesthesia").value.trim(),
+      isolation: document.getElementById("ptvIsolation").value,
+      medicament: document.getElementById("ptvMedicament").value,
+      obturationMaterial: document.getElementById("ptvObturation").value,
+      restoration: document.getElementById("ptvRestoration").value,
+      radiographTaken: document.getElementById("ptvRadiograph").value,
+      notes: document.getElementById("ptvNotes").value.trim()
+    });
+    r.visits = r.visits || [];
+    if(isEdit){ const idx = r.visits.findIndex(x=>x.id===visitId); r.visits[idx] = newVisit; }
+    else r.visits.push(newVisit);
+    r.updatedAt = nowIso();
+    await dbPut("pediatricRecords", r);
+    logActivity("Recorded pulp therapy visit for tooth "+r.tooth+" — "+patient.name, {patientId: patient.id});
+    showToast("Saved");
+    closeSheetOrReturn();
+    renderPulpTherapySheet(r, true, patient, tabBody);
+  };
+  const delBtn = document.getElementById("btnDeletePulpVisit");
+  if(delBtn) delBtn.onclick = async ()=>{
+    if(!confirm("Delete this visit?")) return;
+    r.visits = (r.visits||[]).filter(x=>x.id!==visitId);
+    r.updatedAt = nowIso();
+    await dbPut("pediatricRecords", r);
+    showToast("Deleted");
+    closeSheetOrReturn();
+    renderPulpTherapySheet(r, true, patient, tabBody);
+  };
+}
+
+async function openPulpRadiographForm(r, patient, tabBody){
+  let pendingFile = null;
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>Add Radiograph</h2>
+    <div class="field"><label>Type</label>
+      <select id="ptRadType">${PULP_RADIOGRAPH_TYPES.map(t=>`<option value="${t}">${t}</option>`).join("")}</select>
+    </div>
+    <div class="field"><label>Image</label>
+      <div id="ptRadPreviewWrap" style="display:none;margin-bottom:8px;">
+        <img id="ptRadPreview" style="width:110px;height:110px;object-fit:cover;border-radius:6px;border:1px solid #ddd;">
+      </div>
+      <input type="file" accept="image/*" capture="environment" id="ptRadCameraInput" style="display:none;">
+      <input type="file" accept="image/*" id="ptRadGalleryInput" style="display:none;">
+      <div style="display:flex;gap:8px;">
+        <button type="button" class="btn btn-outline" style="flex:1;" id="btnPtRadCamera">${icon('camera',15)} Take Photo</button>
+        <button type="button" class="btn btn-outline" style="flex:1;" id="btnPtRadGallery">${icon('image',15)} Choose from Gallery</button>
+      </div>
+    </div>
+    <button class="btn btn-primary btn-block" id="btnSavePtRad" style="margin-top:10px;">Save</button>
+  `);
+  document.getElementById("btnPtRadCamera").onclick = ()=> document.getElementById("ptRadCameraInput").click();
+  document.getElementById("btnPtRadGallery").onclick = ()=> document.getElementById("ptRadGalleryInput").click();
+  const handlePick = async (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    try{
+      pendingFile = await compressImageFile(file, 1200);
+      document.getElementById("ptRadPreview").src = pendingFile;
+      document.getElementById("ptRadPreviewWrap").style.display = "block";
+    }catch(err){ showToast("Couldn't read that image — please try again"); }
+    e.target.value = "";
+  };
+  document.getElementById("ptRadCameraInput").onchange = handlePick;
+  document.getElementById("ptRadGalleryInput").onchange = handlePick;
+  document.getElementById("btnSavePtRad").onclick = async ()=>{
+    if(!pendingFile){ showToast("Take a photo or choose an image first"); return; }
+    r.radiographs = r.radiographs || [];
+    r.radiographs.push({ id: uid("ptrad"), type: document.getElementById("ptRadType").value, imageData: pendingFile, date: nowIso() });
+    r.updatedAt = nowIso();
+    await dbPut("pediatricRecords", r);
+    logActivity("Added pulp therapy radiograph for tooth "+r.tooth+" — "+patient.name, {patientId: patient.id});
+    showToast("Saved");
+    closeSheetOrReturn();
+    renderPulpTherapySheet(r, true, patient, tabBody);
   };
 }
 
@@ -19335,6 +19637,8 @@ async function openQuickBillForm(patient){
   const cur = await finCurrency();
   const goBack = ()=> renderHome();
   let qbToothValue = "";
+  let qbToothCount = 0;
+  let qbMultiply = false;
   renderFormAsPage(`
     <h2>Add Quick Bill — ${escapeHtml(patient.name)}</h2>
     <p style="margin-bottom:12px;">For when there's no time for the full Treatment Done → Invoice → Receipt flow. This records the completed treatment, generates the invoice, and records the payment — all in one step, with a receipt number exactly like the regular flow would produce.</p>
@@ -19368,25 +19672,31 @@ async function openQuickBillForm(patient){
   wireTreatmentPresetAutofill(document.getElementById("qbTreatment"), document.getElementById("qbFee"));
 
   document.getElementById("btnQbAddTooth").onclick = ()=>{
-    openToothPicker(qbToothValue, (value)=>{
+    openToothPicker(qbToothValue, (value, count, multiply)=>{
       qbToothValue = value;
-      document.getElementById("qbToothDisplay").textContent = value || "Tap Add Tooth to select";
+      qbToothCount = count;
+      qbMultiply = multiply;
+      const qty = (qbMultiply && qbToothCount>1) ? qbToothCount : 1;
+      document.getElementById("qbToothDisplay").textContent = value ? (qty>1 ? `${value} (× ${qty} teeth)` : value) : "Tap Add Tooth to select";
+      recalc();
     });
   };
 
   function recalc(){
-    const fee = parseFloat(document.getElementById("qbFee").value)||0;
+    const feePerUnit = parseFloat(document.getElementById("qbFee").value)||0;
+    const qty = (qbMultiply && qbToothCount>1) ? qbToothCount : 1;
+    const gross = feePerUnit*qty;
     const discount = parseFloat(document.getElementById("qbDiscount").value)||0;
     const discountType = document.getElementById("qbDiscountType").value;
-    const discountAmt = discountType==="flat" ? Math.min(fee, discount) : fee*(discount/100);
-    const net = Math.max(0, fee - discountAmt);
+    const discountAmt = discountType==="flat" ? Math.min(gross, discount) : gross*(discount/100);
+    const net = Math.max(0, gross - discountAmt);
     document.getElementById("qbTotalsBox").innerHTML = `
-      <div class="row"><span>Fee</span><span>${finMoney(fee,cur)}</span></div>
+      <div class="row"><span>${qty>1? `Fee × ${qty} teeth`:'Fee'}</span><span>${finMoney(gross,cur)}</span></div>
       <div class="row"><span>Discount</span><span>${finMoney(discountAmt,cur)}</span></div>
       <div class="row final"><span>Net Total</span><span>${finMoney(net,cur)}</span></div>
     `;
     document.getElementById("qbAmountPaid").value = net;
-    return {fee, discount, discountType, discountAmt, net};
+    return {feePerUnit, qty, gross, discount, discountType, discountAmt, net};
   }
   document.getElementById("qbFee").addEventListener("input", recalc);
   document.getElementById("qbDiscount").addEventListener("input", recalc);
@@ -19396,8 +19706,8 @@ async function openQuickBillForm(patient){
   document.getElementById("btnGenerateQuickBill").onclick = async ()=>{
     const treatment = document.getElementById("qbTreatment").value.trim();
     if(!treatment){ showToast("Please enter a treatment name"); return; }
-    const {fee, discount, discountType, net} = recalc();
-    if(fee<=0){ showToast("Please enter a fee"); return; }
+    const {feePerUnit, qty, gross, discount, discountType, net} = recalc();
+    if(gross<=0){ showToast("Please enter a fee"); return; }
     const clinicId = document.getElementById("qbClinic").value;
     const doctor = getDoctorSelectValue("qbDoctor");
     const amountPaid = parseFloat(document.getElementById("qbAmountPaid").value)||0;
@@ -19408,14 +19718,14 @@ async function openQuickBillForm(patient){
     const plan = {
       id: uid("plan"), patientId: patient.id, clinicId, doctor, createdDate: nowTs,
       items: [{ id: uid("planitem"), treatmentDate: nowTs, tooth: qbToothValue, diagnosis:"", treatment,
-        qty:1, fee, discount, discountType, priority:"Normal", status:"Completed", performedBy: doctor }],
+        qty, fee: feePerUnit, discount, discountType, priority:"Normal", status:"Completed", performedBy: doctor }],
       overallDiscount:0, overallDiscountType:"percent", quickBill:true, createdAt: nowTs
     };
     await dbAdd("treatmentPlans", plan);
 
     // 2. Invoice — numbered exactly like the traditional flow
     const allInvoices = await dbGetAll("invoices");
-    const invItems = [{ description: treatment, qty:1, unitPrice: fee, discount, discountType }];
+    const invItems = [{ description: treatment, qty, unitPrice: feePerUnit, discount, discountType }];
     const totals = computeInvoiceTotals(invItems, 0, cur);
     const invoice = {
       id: uid("inv"), patientId: patient.id, clinicId,
@@ -20813,13 +21123,23 @@ async function printSelectedProstho(selected, patient){
   logActivity("Printed prosthodontic record for "+patient.name, {patientId: patient.id});
 }
 
-async function printSelectedPedRecords(selected, patient, title, fieldDefs){
+async function printSelectedPedRecords(selected, patient, title, fieldDefs, opts){
   const clinics = await dbGetAll("clinics");
   const clinic = clinics.find(c=>c.id===patient.preferredClinicId);
   selected.sort((a,b)=> new Date(a.date)-new Date(b.date));
+  const visitOpt = opts && opts.visits;
   const bodyHtml = `<h2 style="margin:0 0 10px;">${escapeHtml(title)}</h2>` + selected.map((r,i)=>`
     <div class="row"><b>${new Date(r.date).toLocaleDateString()}</b></div>
     ${fieldDefs.filter(([k])=>r[k]).map(([k,label])=>`<div class="row"><b>${label}</b>${escapeHtml(String(r[k]))}</div>`).join("")}
+    ${visitOpt && (r[visitOpt.field]||[]).length ? `
+      <div style="margin-top:6px;font-size:12.5px;"><b>Visits:</b>
+        <ul style="margin:4px 0 0;padding-left:18px;">${(r[visitOpt.field]||[]).slice().sort((a,b)=>new Date(a.date)-new Date(b.date)).map((v,vi)=>`
+          <li style="margin-bottom:5px;"><b>Visit ${vi+1} — ${v.date? new Date(v.date).toLocaleDateString():""}${v.status? " ("+escapeHtml(v.status)+")":""}</b>
+            ${visitOpt.fieldDefs.filter(([k])=>v[k] && v[k]!=="— Select —" && v[k]!=="— Not Applicable —").map(([k,label])=>`<br>${label}: ${escapeHtml(String(v[k]))}`).join("")}
+          </li>
+        `).join("")}</ul>
+      </div>
+    `:""}
     ${i<selected.length-1? `<div style="border-top:1px solid #eee;margin:10px 0;"></div>`:""}
   `).join("");
   printDocument({ title, patient, clinic, docDate: new Date().toLocaleDateString(), bodyHtml, signHtml: await buildSignBlock(patient.treatingDoctor) });
@@ -23984,18 +24304,375 @@ function openRestoreSheet(){
     goTo("home");
   };
 }
+// ---- Delete All Patient Data (Factory Reset) ----
+// Wipes every store in PATIENT_DATA_STORES only — settings, staff, clinics,
+// and all presets/templates are left exactly as they are.
+function openFactoryResetSheet(){
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2 style="color:var(--red);">Delete All Patient Data</h2>
+    <div class="warn-banner" style="border-color:var(--red);color:var(--red);margin-bottom:12px;">
+      This permanently deletes ALL patients and everything linked to them — appointments, treatments, invoices, payments, prescriptions, X-rays, clinical notes, and more. Software settings, staff logins, clinics, and templates stay untouched. There is no undo. Make sure you have a recent backup before continuing.
+    </div>
+    <div class="field">
+      <label>Type <b>DELETE</b> to confirm</label>
+      <input id="frConfirmText" placeholder="DELETE" autocomplete="off">
+    </div>
+    <button class="btn btn-block" style="background:var(--red);color:#fff;border:none;" id="btnConfirmFactoryReset" disabled>Delete All Patient Data</button>
+  `);
+  const input = document.getElementById("frConfirmText");
+  const btn = document.getElementById("btnConfirmFactoryReset");
+  input.addEventListener("input", ()=>{ btn.disabled = input.value.trim().toUpperCase()!=="DELETE"; });
+  btn.onclick = async ()=>{
+    btn.disabled = true;
+    btn.textContent = "Deleting…";
+    try{
+      for(const storeName of PATIENT_DATA_STORES){
+        await dbClear(storeName);
+      }
+      logActivity("Factory reset: all patient data deleted");
+      showToast("All patient data deleted");
+      closeSheet();
+      refreshClinicSelector();
+      goTo("home");
+    }catch(err){
+      console.error(err);
+      showToast("Something went wrong — some data may not have been deleted");
+      btn.disabled = false;
+      btn.textContent = "Delete All Patient Data";
+    }
+  };
+}
+
+// ---- Patient Data Restore via Excel (multi-sheet .xlsx) ----
+// One workbook with sheets: Patients, Appointments, Treatments, Invoices,
+// Payments, Prescriptions. Rows are linked to a patient by mobile number —
+// a patient is created if no existing one matches. Uses the SheetJS library
+// loaded in <head>.
+function downloadPatientExcelTemplate(){
+  const wb = XLSX.utils.book_new();
+  const sheets = {
+    Patients: [
+      ["Name","Mobile","AltMobile","Email","DOB (YYYY-MM-DD)","Gender","Address","City","Occupation","ReferredBy","RegisteredOn (YYYY-MM-DD)","Status"],
+      ["Jane Doe","9876543210","","jane@example.com","1990-05-14","Female","123 Main St","Gurugram","Teacher","Walk-in","2024-01-10","Active"]
+    ],
+    Appointments: [
+      ["PatientMobile","Date (YYYY-MM-DD)","StartTime (HH:MM)","DurationMinutes","Doctor","Chair","TreatmentType","Status","Notes"],
+      ["9876543210","2024-02-01","10:00","30","Dr. Sharma","Operatory 1","Consultation","Completed",""]
+    ],
+    Treatments: [
+      ["PatientMobile","TreatmentDate (YYYY-MM-DD)","Treatment","Tooth","Diagnosis","Qty","Fee","Discount","DiscountType (flat/percent)","Status","PerformedBy","Notes"],
+      ["9876543210","2024-02-01","Root Canal","46","Irreversible Pulpitis","1","8000","0","flat","Completed","Dr. Sharma",""]
+    ],
+    Invoices: [
+      ["PatientMobile","InvoiceNumber","Date (YYYY-MM-DD)","ItemDescription","Qty","UnitPrice","Discount","DiscountType (flat/percent)","TaxPercent","AmountPaid"],
+      ["9876543210","INV-0001","2024-02-01","Root Canal (Tooth 46)","1","8000","0","flat","0","8000"]
+    ],
+    Payments: [
+      ["PatientMobile","InvoiceNumber","ReceiptNumber","Date (YYYY-MM-DD)","Amount","Mode (Cash/Card/UPI/etc)","Notes"],
+      ["9876543210","INV-0001","RCPT-0001","2024-02-01","8000","Cash",""]
+    ],
+    Prescriptions: [
+      ["PatientMobile","Date (YYYY-MM-DD)","Doctor","Diagnosis","Advice","FollowUpDate (YYYY-MM-DD)","DrugName","Strength","Form","Dose","Frequency","Duration","Instructions"],
+      ["9876543210","2024-02-01","Dr. Sharma","Irreversible Pulpitis","Rest and hydration","2024-02-08","Amoxicillin","500mg","Tablet","1","Twice daily","5 days","After food"]
+    ]
+  };
+  Object.entries(sheets).forEach(([name, rows])=>{
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    XLSX.utils.book_append_sheet(wb, ws, name);
+  });
+  XLSX.writeFile(wb, "HealingTouchDental-PatientData-Template.xlsx");
+  showToast("Template downloaded");
+}
+
+function openPatientExcelRestoreSheet(){
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>Restore Patient Data from Excel</h2>
+    <p>Upload the filled-in template (Patients, Appointments, Treatments, Invoices, Payments, Prescriptions sheets). Rows are matched to a patient by mobile number — a new patient is created automatically if none matches.</p>
+    <div class="field"><input type="file" id="peFile" accept=".xlsx,.xls"></div>
+    <div id="peSummary"></div>
+    <button class="btn btn-primary btn-block" id="btnConfirmPatientExcelRestore" disabled>Import Data</button>
+  `);
+  let workbook = null;
+  document.getElementById("peFile").addEventListener("change",(e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = ()=>{
+      try{
+        const data = new Uint8Array(reader.result);
+        workbook = XLSX.read(data, {type:"array"});
+        const counts = workbook.SheetNames.map(name=>{
+          const rows = XLSX.utils.sheet_to_json(workbook.Sheets[name], {defval:""});
+          return `${name}: ${rows.length}`;
+        });
+        document.getElementById("peSummary").innerHTML = `<div class="warn-banner">Rows found — ${counts.join(", ")}.</div>`;
+        document.getElementById("btnConfirmPatientExcelRestore").disabled = false;
+      }catch(err){
+        document.getElementById("peSummary").innerHTML = `<div class="warn-banner" style="border-color:var(--red);color:var(--red);">Could not read this file — make sure it's a valid .xlsx file.</div>`;
+        workbook = null;
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  });
+  document.getElementById("btnConfirmPatientExcelRestore").onclick = async ()=>{
+    if(!workbook) return;
+    if(!confirm("This will create/update patient records from this file. Continue?")) return;
+    const btn = document.getElementById("btnConfirmPatientExcelRestore");
+    btn.disabled = true; btn.textContent = "Importing…";
+    try{
+      const result = await importPatientDataWorkbook(workbook);
+      logActivity(`Patient data imported from Excel (${result.patients} patients, ${result.appointments} appointments, ${result.treatments} treatments, ${result.invoices} invoices, ${result.payments} payments, ${result.prescriptions} prescriptions)`);
+      showToast("Import complete");
+      closeSheet();
+      refreshClinicSelector();
+      goTo("patients");
+    }catch(err){
+      console.error(err);
+      showToast("Import failed — see console for details");
+      btn.disabled = false; btn.textContent = "Import Data";
+    }
+  };
+}
+
+function sheetRows(workbook, name){
+  if(!workbook.SheetNames.includes(name)) return [];
+  return XLSX.utils.sheet_to_json(workbook.Sheets[name], {defval:""});
+}
+function excelCellStr(v){
+  if(v==null) return "";
+  if(v instanceof Date) return toDateKey(v);
+  return String(v).trim();
+}
+function excelDateKey(v){
+  if(v==null || v==="") return "";
+  if(v instanceof Date) return toDateKey(v);
+  const s = String(v).trim();
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? s : toDateKey(d);
+}
+
+async function importPatientDataWorkbook(workbook){
+  const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived);
+  const defaultClinicId = selectedClinicId!=="ALL" ? selectedClinicId : (clinics[0]?.id||"");
+  let patients = await dbGetAll("patients");
+  const byMobile = {};
+  patients.forEach(p=>{ if(p.mobile) byMobile[p.mobile] = p; });
+
+  async function findOrCreatePatient(mobile, extra){
+    mobile = excelCellStr(mobile);
+    if(!mobile) return null;
+    if(byMobile[mobile]) return byMobile[mobile];
+    const p = Object.assign({
+      id: uid("pat"), code: await nextPatientCode(), name: extra?.name || ("Patient "+mobile),
+      mobile, altMobile:"", email:"", dob:"", gender:"", address:"", city:"", occupation:"",
+      referredBy:"", preferredClinicId: defaultClinicId, treatingDoctor:"", medicalAlerts:"",
+      allergies:"", currentMedications:"", generalNotes:"", status:"Active", createdAt: nowIso()
+    }, extra||{});
+    await dbAdd("patients", p);
+    byMobile[mobile] = p;
+    patients.push(p);
+    return p;
+  }
+
+  let counts = {patients:0, appointments:0, treatments:0, invoices:0, payments:0, prescriptions:0};
+
+  // Patients
+  for(const row of sheetRows(workbook, "Patients")){
+    const mobile = excelCellStr(row["Mobile"]);
+    if(!mobile) continue;
+    const extra = {
+      name: excelCellStr(row["Name"]) || ("Patient "+mobile),
+      altMobile: excelCellStr(row["AltMobile"]),
+      email: excelCellStr(row["Email"]),
+      dob: excelDateKey(row["DOB (YYYY-MM-DD)"]),
+      gender: excelCellStr(row["Gender"]),
+      address: excelCellStr(row["Address"]),
+      city: excelCellStr(row["City"]),
+      occupation: excelCellStr(row["Occupation"]),
+      referredBy: excelCellStr(row["ReferredBy"]),
+      status: excelCellStr(row["Status"]) || "Active",
+      createdAt: (()=>{ const dk = excelDateKey(row["RegisteredOn (YYYY-MM-DD)"]); return dk ? new Date(dk).toISOString() : nowIso(); })()
+    };
+    if(byMobile[mobile]){
+      Object.assign(byMobile[mobile], extra);
+      await dbPut("patients", byMobile[mobile]);
+    }else{
+      await findOrCreatePatient(mobile, extra);
+    }
+    counts.patients++;
+  }
+
+  // Appointments
+  for(const row of sheetRows(workbook, "Appointments")){
+    const patient = await findOrCreatePatient(row["PatientMobile"]);
+    if(!patient) continue;
+    const a = {
+      id: uid("appt"), patientId: patient.id, patientName: patient.name,
+      clinicId: patient.preferredClinicId || defaultClinicId,
+      doctor: excelCellStr(row["Doctor"]),
+      date: excelDateKey(row["Date (YYYY-MM-DD)"]) || toDateKey(new Date()),
+      startTime: excelCellStr(row["StartTime (HH:MM)"]) || "10:00",
+      durationMinutes: parseInt(row["DurationMinutes"])||30,
+      treatmentType: excelCellStr(row["TreatmentType"]),
+      chair: excelCellStr(row["Chair"]),
+      notes: excelCellStr(row["Notes"]),
+      status: excelCellStr(row["Status"]) || "Scheduled",
+      createdAt: nowIso()
+    };
+    await dbAdd("appointments", a);
+    counts.appointments++;
+  }
+
+  // Treatments (as a treatment plan with one item, matching how the app creates them)
+  for(const row of sheetRows(workbook, "Treatments")){
+    const patient = await findOrCreatePatient(row["PatientMobile"]);
+    if(!patient) continue;
+    const treatmentDate = excelDateKey(row["TreatmentDate (YYYY-MM-DD)"]);
+    const item = {
+      id: uid("planitem"),
+      treatmentDate: treatmentDate ? new Date(treatmentDate).toISOString() : nowIso(),
+      tooth: excelCellStr(row["Tooth"]),
+      diagnosis: excelCellStr(row["Diagnosis"]),
+      treatment: excelCellStr(row["Treatment"]) || "Treatment",
+      qty: parseFloat(row["Qty"])||1,
+      fee: parseFloat(row["Fee"])||0,
+      discount: parseFloat(row["Discount"])||0,
+      discountType: excelCellStr(row["DiscountType (flat/percent)"]) || "flat",
+      priority: "Medium",
+      status: excelCellStr(row["Status"]) || "Completed",
+      performedBy: excelCellStr(row["PerformedBy"]),
+      notes: excelCellStr(row["Notes"])
+    };
+    const plan = {
+      id: uid("plan"), patientId: patient.id,
+      clinicId: patient.preferredClinicId || defaultClinicId,
+      doctor: excelCellStr(row["PerformedBy"]) || patient.treatingDoctor || "",
+      createdDate: item.treatmentDate,
+      items: [item]
+    };
+    await dbPut("treatmentPlans", plan);
+    counts.treatments++;
+  }
+
+  // Invoices
+  const invoiceByNumber = {};
+  for(const row of sheetRows(workbook, "Invoices")){
+    const patient = await findOrCreatePatient(row["PatientMobile"]);
+    if(!patient) continue;
+    const invoiceNumber = excelCellStr(row["InvoiceNumber"]) || await nextInvoiceNumber();
+    let inv = invoiceByNumber[invoiceNumber];
+    const items = [{
+      id: uid("invitem"),
+      description: excelCellStr(row["ItemDescription"]) || "Treatment",
+      qty: parseFloat(row["Qty"])||1,
+      unitPrice: parseFloat(row["UnitPrice"])||0,
+      discount: parseFloat(row["Discount"])||0,
+      discountType: excelCellStr(row["DiscountType (flat/percent)"]) || "flat"
+    }];
+    if(inv){
+      inv.items.push(items[0]);
+    }else{
+      const cur = await finCurrency();
+      const totals = computeInvoiceTotals(items, parseFloat(row["TaxPercent"])||0, cur);
+      inv = {
+        id: uid("inv"), patientId: patient.id, clinicId: patient.preferredClinicId || defaultClinicId,
+        invoiceNumber, date: excelDateKey(row["Date (YYYY-MM-DD)"]) || toDateKey(new Date()),
+        items, taxPercent: parseFloat(row["TaxPercent"])||0,
+        totalGross: totals.gross, totalDiscount: totals.discount, totalTax: totals.tax, totalNet: totals.net,
+        amountPaid: parseFloat(row["AmountPaid"])||0, balance: Math.max(0, totals.net-(parseFloat(row["AmountPaid"])||0))
+      };
+      invoiceByNumber[invoiceNumber] = inv;
+    }
+    counts.invoices++;
+  }
+  for(const inv of Object.values(invoiceByNumber)){
+    const cur = await finCurrency();
+    const totals = computeInvoiceTotals(inv.items, inv.taxPercent, cur);
+    inv.totalGross = totals.gross; inv.totalDiscount = totals.discount; inv.totalTax = totals.tax; inv.totalNet = totals.net;
+    inv.balance = Math.max(0, totals.net - (inv.amountPaid||0));
+    await dbPut("invoices", inv);
+  }
+
+  // Payments
+  for(const row of sheetRows(workbook, "Payments")){
+    const patient = await findOrCreatePatient(row["PatientMobile"]);
+    if(!patient) continue;
+    const invoiceNumber = excelCellStr(row["InvoiceNumber"]);
+    const linkedInv = invoiceNumber ? invoiceByNumber[invoiceNumber] : null;
+    const payment = {
+      id: uid("pmt"), patientId: patient.id, invoiceId: linkedInv? linkedInv.id : "",
+      receiptNumber: excelCellStr(row["ReceiptNumber"]) || await nextReceiptNumber(linkedInv? linkedInv.id : ""),
+      amount: parseFloat(row["Amount"])||0,
+      mode: excelCellStr(row["Mode (Cash/Card/UPI/etc)"]) || "Cash",
+      notes: excelCellStr(row["Notes"]),
+      date: excelDateKey(row["Date (YYYY-MM-DD)"]) || toDateKey(new Date())
+    };
+    await dbAdd("payments", payment);
+    counts.payments++;
+  }
+
+  // Prescriptions
+  const rxByPatientDate = {};
+  for(const row of sheetRows(workbook, "Prescriptions")){
+    const patient = await findOrCreatePatient(row["PatientMobile"]);
+    if(!patient) continue;
+    const date = excelDateKey(row["Date (YYYY-MM-DD)"]) || toDateKey(new Date());
+    const key = patient.id+"|"+date;
+    let rx = rxByPatientDate[key];
+    const item = {
+      id: uid("rxitem"),
+      drugName: excelCellStr(row["DrugName"]),
+      strength: excelCellStr(row["Strength"]),
+      form: excelCellStr(row["Form"]) || "Tablet",
+      dose: excelCellStr(row["Dose"]),
+      frequency: excelCellStr(row["Frequency"]),
+      duration: excelCellStr(row["Duration"]),
+      instructions: excelCellStr(row["Instructions"])
+    };
+    if(rx){
+      rx.items.push(item);
+    }else{
+      rx = {
+        id: uid("rx"), patientId: patient.id, clinicId: patient.preferredClinicId || defaultClinicId,
+        doctor: excelCellStr(row["Doctor"]) || patient.treatingDoctor || "",
+        date, diagnosis: excelCellStr(row["Diagnosis"]), advice: excelCellStr(row["Advice"]),
+        followUpDate: excelDateKey(row["FollowUpDate (YYYY-MM-DD)"]), items:[item]
+      };
+      rxByPatientDate[key] = rx;
+    }
+    counts.prescriptions++;
+  }
+  for(const rx of Object.values(rxByPatientDate)){
+    await dbPut("prescriptions", rx);
+  }
+
+  return counts;
+}
+
 function openBackupSheet(){
   openSheet(`
     <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
     <h2>Backup &amp; Restore</h2>
-    <p>Your data lives only in this browser. Back up regularly and store the file somewhere safe (Drive, email to yourself, external disk).</p>
+    <p>Your data lives in your clinic's Firestore database. Back up regularly and store the file somewhere safe (Drive, email to yourself, external disk).</p>
     <button class="btn btn-primary btn-block" id="bkNow">Backup Now</button>
     <button class="btn btn-outline btn-block" style="margin-top:8px;" id="bkRestore">Restore from Backup</button>
     <button class="btn btn-outline btn-block" style="margin-top:8px;" id="bkImportExcel">Import Patients from Excel / CSV</button>
+    <div class="section-title" style="margin-top:18px;">Patient Data (Excel)</div>
+    <p style="margin-bottom:8px;">Restore patient records together with their treatments, invoices, payments, prescriptions, and appointments from one Excel workbook.</p>
+    <button class="btn btn-outline btn-block" id="bkDownloadExcelTemplate">Download Excel Template</button>
+    <button class="btn btn-outline btn-block" style="margin-top:8px;" id="bkRestorePatientExcel">Restore Patient Data from Excel</button>
+    <div class="section-title" style="margin-top:18px;color:var(--red);">Danger Zone</div>
+    <div class="warn-banner" style="border-color:var(--red);color:var(--red);margin-bottom:8px;">Permanently deletes every patient, appointment, treatment, invoice, payment, prescription, and clinical record. Software settings, staff accounts, clinics, and templates are kept. This cannot be undone — back up first.</div>
+    <button class="btn btn-block" style="background:var(--red);color:#fff;border:none;" id="bkFactoryReset">Delete All Patient Data (Factory Reset)</button>
   `);
   document.getElementById("bkNow").onclick = doBackup;
   document.getElementById("bkRestore").onclick = openRestoreSheet;
   document.getElementById("bkImportExcel").onclick = openExcelImportSheet;
+  document.getElementById("bkDownloadExcelTemplate").onclick = downloadPatientExcelTemplate;
+  document.getElementById("bkRestorePatientExcel").onclick = openPatientExcelRestoreSheet;
+  document.getElementById("bkFactoryReset").onclick = openFactoryResetSheet;
 }
 
 // ---- Import Patients from Excel/CSV ----
