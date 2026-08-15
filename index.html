@@ -22580,8 +22580,10 @@ document.getElementById("btnTeamChat").addEventListener("click", openTeamChat);
 // ---- Direct Messages: private 1-to-1 chat between logins, synced live via
 // Firestore — works across separate devices, not just same-device tabs. ----
 let activeChatUnsub = null;
+let activeChatConvoId = null;
 function stopActiveChatListenerIfAny(){
   if(activeChatUnsub){ activeChatUnsub(); activeChatUnsub = null; }
+  activeChatConvoId = null;
 }
 
 function directConvoId(emailA, emailB){
@@ -22615,6 +22617,7 @@ async function openDirectMessagesContactsSheet(){
 function openDirectChatThread(otherEmail, otherName){
   const convoId = directConvoId(fbCurrentUserEmail, otherEmail);
   const myEmail = fbCurrentUserEmail;
+  activeChatConvoId = convoId;
   openSheet(`
     <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
     <button class="sheet-close" id="btnDmBack" style="right:44px;" title="Back to contacts">${icon('chevron',18)}</button>
@@ -22658,6 +22661,52 @@ function openDirectChatThread(otherEmail, otherName){
   document.getElementById("btnDmSend").onclick = send;
   document.getElementById("dmMessageInput").addEventListener("keydown", (e)=>{
     if(e.key==="Enter"){ e.preventDefault(); send(); }
+  });
+}
+
+// Short two-tone beep, generated entirely in-browser (no audio file needed).
+function playMessageBeep(){
+  try{
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    const ctx = new AudioCtx();
+    [880, 660].forEach((freq, i)=>{
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      const start = ctx.currentTime + i*0.14;
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(0.25, start+0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start+0.13);
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.start(start); osc.stop(start+0.14);
+    });
+    setTimeout(()=>ctx.close(), 500);
+  }catch(e){ /* Web Audio unsupported/blocked — fail silently */ }
+}
+
+// Global listener: whenever a new Direct Message arrives for the logged-in
+// user, beep and pop the chat thread open automatically — regardless of
+// which screen they're currently on. Ignores messages that already existed
+// when the listener first attached (only reacts to genuinely new arrivals).
+let dmGlobalSeenIds = null;
+function startGlobalDirectMessageListener(){
+  if(!fbCurrentUserEmail) return;
+  window.__fb.listenQuery("directMessages", "toEmail", fbCurrentUserEmail, "createdAt", async (messages)=>{
+    if(dmGlobalSeenIds===null){
+      // First snapshot after login/reload — just record what already exists, don't notify.
+      dmGlobalSeenIds = new Set(messages.map(m=>m.id));
+      return;
+    }
+    const fresh = messages.filter(m=> !dmGlobalSeenIds.has(m.id));
+    fresh.forEach(m=> dmGlobalSeenIds.add(m.id));
+    if(!fresh.length) return;
+    playMessageBeep();
+    const latest = fresh[fresh.length-1];
+    if(activeChatConvoId===latest.convoId) return; // already viewing this exact thread
+    const contacts = await getNotifiableUsers();
+    const sender = contacts.find(u=>(u.email||"").toLowerCase()===(latest.fromEmail||"").toLowerCase());
+    openDirectChatThread(latest.fromEmail, sender? sender.name : latest.fromEmail);
   });
 }
 
@@ -24768,6 +24817,7 @@ async function openSettingsSheet(){
     s.pharmacyBillPrefix = document.getElementById("sPharmacyPrefix").value.trim();
     s.pharmacyBillStartAt = parseInt(document.getElementById("sPharmacyStartAt").value)||0;
     await dbPut("settings", s);
+    if(s.teamChatMode==="direct" && dmGlobalSeenIds===null) startGlobalDirectMessageListener();
     showToast("Settings saved");
     closeSheet();
   };
@@ -25516,6 +25566,7 @@ setupLogin(async function boot(){
     await checkLowStockNotifications();
     await checkForNewOnlineBookings();
     await checkChecklistNotifications();
+    if(bootSettings && bootSettings.teamChatMode==="direct") startGlobalDirectMessageListener();
     await refreshClinicSelector();
     await initStickyNote();
     await refreshTreatmentPresetsDatalist();
