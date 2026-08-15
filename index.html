@@ -511,6 +511,13 @@
   .appt-main .am{font-size:11.5px;color:var(--grey);margin-top:1px;}
   .appt-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;}
   .mini-btn{font-size:11px;font-weight:600;padding:5px 9px;border-radius:6px;border:1px solid var(--grey-light);background:var(--white);cursor:pointer;color:var(--charcoal-2);display:inline-flex;align-items:center;gap:4px;}
+  .notice-board-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;}
+  .notice-card{background:#FFF9E6;border:1px solid #F0E4B0;border-radius:10px;padding:12px;box-shadow:0 1px 3px rgba(0,0,0,0.06);}
+  .notice-card.urgent{background:#FFF0EE;border-color:var(--red);}
+  .notice-card.done{background:var(--off-white);border-color:var(--grey-light);opacity:0.75;}
+  .notice-card-text{font-size:13.5px;font-weight:600;margin-bottom:6px;}
+  .notice-card-meta{font-size:11px;color:var(--grey);display:flex;align-items:center;gap:4px;margin-bottom:10px;}
+  .notice-card-actions{display:flex;gap:6px;flex-wrap:wrap;align-items:center;}
   .status-pill{font-size:10px;font-weight:700;padding:3px 8px;border-radius:999px;text-transform:uppercase;letter-spacing:0.3px;flex-shrink:0;}
   .st-Scheduled{background:var(--grey-light);color:var(--charcoal-2);}
   .st-Confirmed{background:var(--green-mist);color:var(--green);}
@@ -909,13 +916,14 @@
   }
 </style>
 <script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
+  import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
   import {
-    getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut
+    getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut,
+    createUserWithEmailAndPassword, sendPasswordResetEmail
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
   import {
     getFirestore, collection, doc, getDocs, setDoc, deleteDoc, writeBatch,
-    enableIndexedDbPersistence
+    enableIndexedDbPersistence, query, where, orderBy, onSnapshot
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
   const firebaseConfig = {
@@ -945,12 +953,33 @@
       const batch = writeBatch(fbDb);
       snap.docs.forEach(d=>batch.delete(d.ref));
       await batch.commit();
+    },
+    // Live-updates a callback whenever documents matching storeName+field==value
+    // change, ordered by orderField. Returns an unsubscribe function. Used for
+    // real-time chat between devices — no polling needed.
+    listenQuery: (storeName, field, value, orderField, callback)=>{
+      const q = query(collection(fbDb, storeName), where(field, "==", value), orderBy(orderField));
+      return onSnapshot(q, (snap)=>{ callback(snap.docs.map(d=>d.data())); }, ()=>{ /* ignore transient listener errors */ });
     }
   };
 
   window.__fbAuth = {
     signIn: (email, pw)=>signInWithEmailAndPassword(fbAuth, email, pw),
-    signOut: ()=>signOut(fbAuth)
+    signOut: ()=>signOut(fbAuth),
+    // Creates a new login (e.g. reception staff) without disturbing the
+    // admin's own signed-in session — done via a throwaway secondary app
+    // instance, per Firebase's standard client-side pattern for this.
+    createStaffAccount: async (email, password)=>{
+      const secondary = initializeApp(firebaseConfig, "secondary-"+Date.now());
+      const secondaryAuth = getAuth(secondary);
+      try{
+        await createUserWithEmailAndPassword(secondaryAuth, email, password);
+        await signOut(secondaryAuth);
+      }finally{
+        await deleteApp(secondary);
+      }
+    },
+    resetPassword: (email)=>sendPasswordResetEmail(fbAuth, email)
   };
 
   onAuthStateChanged(fbAuth, (user)=>{
@@ -1167,6 +1196,9 @@ const STORE_DEFS = [
   {name:"vendors", keyPath:"id"},
   {name:"inventoryItemPresets", keyPath:"id"},
   {name:"teamChatMessages", keyPath:"id", indexes:[["createdAt","createdAt"]]},
+  {name:"directMessages", keyPath:"id", indexes:[["convoId","convoId"]]},
+  {name:"assistantChecklist", keyPath:"id"},
+  {name:"staffUsers", keyPath:"id"},
   {name:"whatsappTemplates", keyPath:"id"},
   {name:"prePostOpPhotos", keyPath:"id", indexes:[["patientId","patientId"]]},
   {name:"financeCategories", keyPath:"id"},
@@ -1613,6 +1645,53 @@ async function seedDefaults(){
 // ---------------------------------------------------------
 let currentPage = "home";
 let selectedClinicId = "ALL";
+let fbCurrentUserEmail = "";
+let currentUserIsAdmin = true;
+let currentUserPermissions = {};
+
+// Modules a reception/staff login can be given access to via
+// Admin Panel > Manage Users. Admin Panel, Settings, Backup & Restore,
+// Clinics, Doctors, Consultants, and Trash are always Admin-only —
+// not toggle-able — since they can affect the whole practice or wipe data.
+const PERMISSION_MODULES = [
+  {key:"patients", label:"Patients"},
+  {key:"appointments", label:"Appointments"},
+  {key:"clinical", label:"Clinical"},
+  {key:"assist", label:"Assist / Checklist"},
+  {key:"financial", label:"Billing & Finance"},
+  {key:"inventory", label:"Inventory"},
+  {key:"reports", label:"Reports"},
+  {key:"communication", label:"Communication"},
+  {key:"pharmacy", label:"Pharmacy"},
+  {key:"labcases", label:"Lab Cases"}
+];
+
+async function loadCurrentUserAccess(){
+  const s = (await dbGetAll("settings"))[0] || {};
+  const email = (fbCurrentUserEmail||"").toLowerCase();
+  if(!s.adminEmail || s.adminEmail.toLowerCase()===email){
+    currentUserIsAdmin = true;
+    currentUserPermissions = {};
+    return;
+  }
+  const staffUsers = await dbGetAll("staffUsers");
+  const match = staffUsers.find(u=> (u.email||"").toLowerCase()===email);
+  currentUserIsAdmin = false;
+  currentUserPermissions = match ? (match.permissions||{}) : {};
+}
+
+function canAccessModule(key){
+  return currentUserIsAdmin || !!currentUserPermissions[key];
+}
+
+function applyNavPermissions(){
+  document.querySelectorAll('.nav-item[data-page]').forEach(el=>{
+    const page = el.dataset.page;
+    if(PERMISSION_MODULES.some(m=>m.key===page)){
+      el.style.display = canAccessModule(page) ? "" : "none";
+    }
+  });
+}
 
 const PAGE_RENDERERS = {
   home: renderHome,
@@ -1632,6 +1711,14 @@ const PAGE_RENDERERS = {
 };
 
 function goTo(page){
+  if(PERMISSION_MODULES.some(m=>m.key===page) && !canAccessModule(page)){
+    showToast("You don't have access to this section");
+    page = "home";
+  }
+  if(page==="admin" && !currentUserIsAdmin){
+    showToast("Only the admin account can open Admin Panel");
+    page = "home";
+  }
   currentPage = page;
   document.querySelectorAll(".nav-item").forEach(el=>{
     el.classList.toggle("active", el.dataset.page===page);
@@ -4742,7 +4829,7 @@ async function renderAssist(){
   main.innerHTML = `
     <div class="page">
       <div class="view-tabs" id="assistViewTabs">
-        ${["Today","Commitments","Lab"].map(v=>`<div class="tab-btn ${assistView===v?'active':''}" data-view="${v}">${v}</div>`).join("")}
+        ${["Today","Commitments","Lab","Checklist"].map(v=>`<div class="tab-btn ${assistView===v?'active':''}" data-view="${v}">${v}</div>`).join("")}
       </div>
       <div id="assistBody"></div>
     </div>
@@ -4758,7 +4845,8 @@ async function renderAssistBody(){
   if(!body) return;
   if(assistView==="Today") await renderAssistToday(body);
   else if(assistView==="Commitments") await renderAssistCommitments(body);
-  else await renderAssistLab(body);
+  else if(assistView==="Lab") await renderAssistLab(body);
+  else await renderAssistChecklist(body);
 }
 
 async function renderAssistToday(body){
@@ -5229,6 +5317,276 @@ async function renderAssistLab(body){
   document.getElementById("labCaseDateToInput").onchange = (e)=>{ labCaseDateTo = e.target.value; labCasePage=1; renderAssistLab(body); };
   body.querySelectorAll("[data-lab]").forEach(el=> el.onclick = ()=>openLabCaseActionMenu(el.dataset.lab));
   wirePaginationBar("labCase", cases.length, labCasePage, PAGE_SIZE, (newPage)=>{ labCasePage = newPage; renderAssistLab(body); });
+}
+
+// =========================================================
+// ASSISTANT CHECKLIST — a notice-board style to-do list for staff.
+// Tasks show a date/time, urgent ones are styled red, and each has
+// Done / Snooze / Edit / Delete. Marking Done swaps the row for a single
+// green tick (click to undo); done items are auto-removed 12 hours later.
+// =========================================================
+function checklistTaskDueTs(t){
+  if(!t.dueDate) return Infinity;
+  return new Date(`${t.dueDate}T${t.dueTime||"23:59"}`).getTime();
+}
+
+async function purgeExpiredChecklistTasks(){
+  const tasks = await dbGetAll("assistantChecklist");
+  const now = Date.now();
+  const expired = tasks.filter(t=> t.status==="done" && t.doneAt && (now - new Date(t.doneAt).getTime()) > 12*60*60*1000);
+  for(const t of expired){ await dbDelete("assistantChecklist", t.id); }
+  return tasks.filter(t=> !(t.status==="done" && t.doneAt && (now - new Date(t.doneAt).getTime()) > 12*60*60*1000));
+}
+
+async function getNotifiableUsers(){
+  const s = (await dbGetAll("settings"))[0] || {};
+  const staffUsers = await dbGetAll("staffUsers");
+  const list = [];
+  if(s.adminEmail) list.push({email: s.adminEmail, name: "Admin ("+s.adminEmail+")"});
+  staffUsers.forEach(u=> list.push({email: u.email, name: u.displayName || u.email}));
+  return list;
+}
+
+async function renderAssistChecklist(body){
+  const tasks = await purgeExpiredChecklistTasks();
+  tasks.sort((a,b)=>{
+    if((a.status==="done") !== (b.status==="done")) return a.status==="done" ? 1 : -1;
+    return checklistTaskDueTs(a) - checklistTaskDueTs(b);
+  });
+  const notifiable = await getNotifiableUsers();
+  const now = Date.now();
+  body.innerHTML = `
+    <div class="card" style="margin-bottom:14px;">
+      <div class="field"><label>New Task</label><input id="clTaskText" placeholder="e.g. Call lab about Mr. Verma's crown"></div>
+      <div style="display:flex;gap:8px;">
+        <div class="field" style="flex:1;"><label>Date</label><input type="date" id="clTaskDate" value="${toDateKey(new Date())}"></div>
+        <div class="field" style="flex:1;"><label>Time</label><input type="time" id="clTaskTime" value="${new Date().toTimeString().slice(0,5)}"></div>
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:10px;cursor:pointer;">
+        <input type="checkbox" id="clTaskUrgent" style="width:16px;height:16px;"> Mark as urgent
+      </label>
+      ${notifiable.length? `
+        <label style="display:block;font-size:11.5px;font-weight:600;color:var(--grey);margin-bottom:6px;">Pop up a reminder for</label>
+        <div style="margin-bottom:12px;">
+          ${notifiable.map(u=>`
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:6px;cursor:pointer;">
+              <input type="checkbox" class="clNotifyUser" data-email="${escapeAttr(u.email)}" style="width:16px;height:16px;flex-shrink:0;"> ${escapeHtml(u.name)}
+            </label>
+          `).join("")}
+        </div>
+      ` : ""}
+      <button class="btn btn-primary btn-block" id="btnAddChecklistTask">+ Add Task</button>
+    </div>
+    <div id="clBoard" class="notice-board-grid">
+      ${tasks.length? tasks.map(t=>checklistTaskCardHtml(t, now)).join("") : `<div class="empty-card">No tasks yet — add one above.</div>`}
+    </div>
+  `;
+  document.getElementById("btnAddChecklistTask").onclick = async ()=>{
+    const text = document.getElementById("clTaskText").value.trim();
+    if(!text){ showToast("Enter a task first"); return; }
+    const notifyUsers = Array.from(document.querySelectorAll(".clNotifyUser:checked")).map(cb=>cb.dataset.email);
+    const task = {
+      id: uid("cltask"),
+      text,
+      dueDate: document.getElementById("clTaskDate").value || toDateKey(new Date()),
+      dueTime: document.getElementById("clTaskTime").value || "23:59",
+      urgent: document.getElementById("clTaskUrgent").checked,
+      notifyUsers,
+      status: "pending",
+      createdAt: nowIso(),
+      doneAt: null
+    };
+    await dbAdd("assistantChecklist", task);
+    showToast("Task added");
+    renderAssistChecklist(body);
+  };
+  wireChecklistCardActions(body);
+}
+
+function checklistTaskCardHtml(t, now){
+  const isDone = t.status==="done";
+  const isUrgent = !!t.urgent && !isDone;
+  const isOverdue = !isDone && checklistTaskDueTs(t) < now;
+  const dueLabel = t.dueDate ? new Date(`${t.dueDate}T${t.dueTime||"00:00"}`).toLocaleString(undefined,{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : "No due time";
+  return `
+    <div class="notice-card ${isUrgent?'urgent':''} ${isDone?'done':''}" data-cltask="${t.id}">
+      <div class="notice-card-text" style="${isDone?'text-decoration:line-through;color:var(--grey);':''}">${escapeHtml(t.text)}</div>
+      <div class="notice-card-meta" style="${isUrgent||isOverdue?'color:var(--red);font-weight:600;':''}">
+        ${icon('calendar',13)} ${dueLabel}${isUrgent? " · URGENT" : ""}${isOverdue? " · Overdue" : ""}
+      </div>
+      ${t.notifyUsers && t.notifyUsers.length? `<div class="notice-card-meta" style="color:var(--grey);">${icon('user',13)} Notifies: ${t.notifyUsers.map(e=>escapeHtml(e)).join(", ")}</div>` : ""}
+      <div class="notice-card-actions">
+        ${isDone? `
+          <button class="mini-btn" data-clact="undone" data-id="${t.id}" title="Click to undo" style="color:var(--green);">${icon('check',16)}</button>
+        ` : `
+          <button class="mini-btn" data-clact="done" data-id="${t.id}">${icon('check',13)} Done</button>
+          <button class="mini-btn" data-clact="snooze" data-id="${t.id}">${icon('calendar',13)} Snooze</button>
+          <button class="mini-btn" data-clact="edit" data-id="${t.id}">${icon('edit',13)} Edit</button>
+          <button class="mini-btn" data-clact="delete" data-id="${t.id}" style="color:var(--red);">${icon('trash',13)} Delete</button>
+        `}
+      </div>
+    </div>
+  `;
+}
+
+function wireChecklistCardActions(body){
+  body.querySelectorAll("[data-clact]").forEach(btn=>{
+    btn.addEventListener("click", async (e)=>{
+      e.stopPropagation();
+      const action = btn.dataset.clact;
+      const id = btn.dataset.id;
+      const tasks = await dbGetAll("assistantChecklist");
+      const t = tasks.find(x=>x.id===id);
+      if(!t) return;
+      if(action==="done"){
+        t.status = "done"; t.doneAt = nowIso();
+        await dbPut("assistantChecklist", t);
+        renderAssistChecklist(body);
+      }else if(action==="undone"){
+        t.status = "pending"; t.doneAt = null;
+        await dbPut("assistantChecklist", t);
+        renderAssistChecklist(body);
+      }else if(action==="delete"){
+        if(confirm("Delete this task?")){
+          await dbDelete("assistantChecklist", id);
+          renderAssistChecklist(body);
+        }
+      }else if(action==="edit"){
+        openChecklistTaskEditSheet(t, body);
+      }else if(action==="snooze"){
+        openChecklistSnoozeMenu(t, body);
+      }
+    });
+  });
+}
+
+async function openChecklistTaskEditSheet(t, body){
+  const notifiable = await getNotifiableUsers();
+  const currentNotify = t.notifyUsers || [];
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>Edit Task</h2>
+    <div class="field"><label>Task</label><input id="clEditText" value="${escapeAttr(t.text)}"></div>
+    <div style="display:flex;gap:8px;">
+      <div class="field" style="flex:1;"><label>Date</label><input type="date" id="clEditDate" value="${escapeAttr(t.dueDate||"")}"></div>
+      <div class="field" style="flex:1;"><label>Time</label><input type="time" id="clEditTime" value="${escapeAttr(t.dueTime||"")}"></div>
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:14px;cursor:pointer;">
+      <input type="checkbox" id="clEditUrgent" ${t.urgent?"checked":""} style="width:16px;height:16px;"> Mark as urgent
+    </label>
+    ${notifiable.length? `
+      <label style="display:block;font-size:11.5px;font-weight:600;color:var(--grey);margin-bottom:6px;">Pop up a reminder for</label>
+      <div style="margin-bottom:14px;">
+        ${notifiable.map(u=>`
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:6px;cursor:pointer;">
+            <input type="checkbox" class="clEditNotifyUser" data-email="${escapeAttr(u.email)}" ${currentNotify.includes(u.email)?"checked":""} style="width:16px;height:16px;flex-shrink:0;"> ${escapeHtml(u.name)}
+          </label>
+        `).join("")}
+      </div>
+    ` : ""}
+    <button class="btn btn-primary btn-block" id="btnSaveChecklistEdit">Save Changes</button>
+  `);
+  document.getElementById("btnSaveChecklistEdit").onclick = async ()=>{
+    const text = document.getElementById("clEditText").value.trim();
+    if(!text){ showToast("Task can't be empty"); return; }
+    t.text = text;
+    t.dueDate = document.getElementById("clEditDate").value || t.dueDate;
+    t.dueTime = document.getElementById("clEditTime").value || t.dueTime;
+    t.urgent = document.getElementById("clEditUrgent").checked;
+    t.notifyUsers = Array.from(document.querySelectorAll(".clEditNotifyUser:checked")).map(cb=>cb.dataset.email);
+    await dbPut("assistantChecklist", t);
+    closeSheet();
+    renderAssistChecklist(body);
+  };
+}
+
+// Tracks which task IDs already popped up in this browser session, so the
+// same reminder doesn't reappear every time the periodic check runs.
+let checklistNotifiedIds = new Set();
+
+async function checkChecklistNotifications(){
+  if(!fbCurrentUserEmail) return;
+  const tasks = await dbGetAll("assistantChecklist");
+  const now = Date.now();
+  const myEmail = fbCurrentUserEmail.toLowerCase();
+  const due = tasks.filter(t=>
+    t.status!=="done" &&
+    Array.isArray(t.notifyUsers) &&
+    t.notifyUsers.some(e=>(e||"").toLowerCase()===myEmail) &&
+    checklistTaskDueTs(t) <= now &&
+    checklistTaskDueTs(t) > now - 30*60*1000 && // ignore anything more than 30 min overdue when the app (re)loads
+    !checklistNotifiedIds.has(t.id)
+  );
+  due.forEach(t=>{ checklistNotifiedIds.add(t.id); showChecklistTaskPopup(t); });
+}
+
+function showChecklistTaskPopup(t){
+  const wrap = document.createElement("div");
+  wrap.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:900;display:flex;align-items:center;justify-content:center;padding:20px;";
+  wrap.innerHTML = `
+    <div style="background:#fff;border-radius:14px;padding:20px;max-width:360px;width:100%;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+        <span style="color:${t.urgent?'var(--red)':'var(--green)'};">${icon('calendar',20)}</span>
+        <h2 style="margin:0;font-size:17px;">${t.urgent? "Urgent Task Due" : "Task Reminder"}</h2>
+      </div>
+      <p style="margin:6px 0 14px;font-size:14px;font-weight:600;${t.urgent?'color:var(--red);':''}">${escapeHtml(t.text)}</p>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-outline" id="btnClPopSnooze" style="flex:1;">Snooze 15 min</button>
+        <button class="btn btn-primary" id="btnClPopDone" style="flex:1;">Mark Done</button>
+      </div>
+      <button class="btn btn-outline btn-block" id="btnClPopClose" style="margin-top:8px;">Dismiss</button>
+    </div>
+  `;
+  wrap.querySelector("#btnClPopClose").onclick = ()=> wrap.remove();
+  wrap.querySelector("#btnClPopDone").onclick = async ()=>{
+    const tasks = await dbGetAll("assistantChecklist");
+    const fresh = tasks.find(x=>x.id===t.id);
+    if(fresh){ fresh.status = "done"; fresh.doneAt = nowIso(); await dbPut("assistantChecklist", fresh); }
+    wrap.remove();
+    showToast("Task marked done");
+    if(currentPage==="assist") renderAssist();
+  };
+  wrap.querySelector("#btnClPopSnooze").onclick = async ()=>{
+    const tasks = await dbGetAll("assistantChecklist");
+    const fresh = tasks.find(x=>x.id===t.id);
+    if(fresh){
+      const newTs = Date.now() + 15*60*1000;
+      const newDate = new Date(newTs);
+      fresh.dueDate = toDateKey(newDate);
+      fresh.dueTime = newDate.toTimeString().slice(0,5);
+      await dbPut("assistantChecklist", fresh);
+      checklistNotifiedIds.delete(t.id);
+    }
+    wrap.remove();
+    showToast("Snoozed 15 minutes");
+    if(currentPage==="assist") renderAssist();
+  };
+  document.body.appendChild(wrap);
+}
+
+function openChecklistSnoozeMenu(t, body){
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>Snooze Task</h2>
+    <div class="list-row" data-snz="15"><span class="txt">15 minutes</span><span class="chev">${icon('chevron',16)}</span></div>
+    <div class="list-row" data-snz="60"><span class="txt">1 hour</span><span class="chev">${icon('chevron',16)}</span></div>
+    <div class="list-row" data-snz="180"><span class="txt">3 hours</span><span class="chev">${icon('chevron',16)}</span></div>
+    <div class="list-row" data-snz="1440"><span class="txt">Tomorrow, same time</span><span class="chev">${icon('chevron',16)}</span></div>
+  `);
+  document.querySelectorAll("[data-snz]").forEach(el=>{
+    el.onclick = async ()=>{
+      const mins = parseInt(el.dataset.snz);
+      const base = t.dueDate ? new Date(`${t.dueDate}T${t.dueTime||"09:00"}`) : new Date();
+      const newTs = (isNaN(base.getTime())? Date.now() : base.getTime()) + mins*60*1000;
+      const newDate = new Date(newTs);
+      t.dueDate = toDateKey(newDate);
+      t.dueTime = newDate.toTimeString().slice(0,5);
+      await dbPut("assistantChecklist", t);
+      showToast("Task snoozed");
+      closeSheet();
+      renderAssistChecklist(body);
+    };
+  });
 }
 
 async function openLabCaseActionMenu(caseId){
@@ -21324,10 +21682,7 @@ function renderPlaceholderPage(title, desc, iconName){
 
 async function renderMore(){
   const clinics = await dbGetAll("clinics");
-  document.getElementById("main").innerHTML = `
-    <div class="page">
-      <div class="section-title">Practice</div>
-      <div class="list-card more-list">
+  const practiceRows = currentUserIsAdmin ? `
         <div class="list-row" id="rowAdmin"><span class="row-ico">${icon('settings',18)}</span><span class="txt">Admin Panel</span><span class="meta">Clinic, doctors, masters &amp; more</span><span class="chev">${icon('chevron',16)}</span></div>
         <div class="list-row" id="rowClinics"><span class="row-ico">${icon('clinic',18)}</span><span class="txt">Clinic Locations</span><span class="meta">${clinics.filter(c=>!c.archived).length} active</span><span class="chev">${icon('chevron',16)}</span></div>
         <div class="list-row" id="rowDoctors"><span class="row-ico">${icon('user',18)}</span><span class="txt">Doctors</span><span class="meta">Signatures &amp; stamps</span><span class="chev">${icon('chevron',16)}</span></div>
@@ -21335,40 +21690,45 @@ async function renderMore(){
         <div class="list-row" id="rowSettings"><span class="row-ico">${icon('settings',18)}</span><span class="txt">Settings</span><span class="meta"></span><span class="chev">${icon('chevron',16)}</span></div>
         <div class="list-row" id="rowBackup"><span class="row-ico">${icon('backup',18)}</span><span class="txt">Backup &amp; Restore</span><span class="meta"></span><span class="chev">${icon('chevron',16)}</span></div>
         <div class="list-row" id="rowTrash"><span class="row-ico">${icon('trash',18)}</span><span class="txt">Trash</span><span class="meta"></span><span class="chev">${icon('chevron',16)}</span></div>
-      </div>
-      <div class="section-title">Business</div>
-      <div class="list-card more-list">
-        <div class="list-row" id="rowFinancial"><span class="row-ico">${icon('wallet',18)}</span><span class="txt">Financial</span><span class="meta">Income, expenses, budgets</span><span class="chev">${icon('chevron',16)}</span></div>
-        <div class="list-row" id="rowInventory"><span class="row-ico">${icon('box',18)}</span><span class="txt">Inventory</span><span class="meta">Materials, stock, alerts</span><span class="chev">${icon('chevron',16)}</span></div>
-        <div class="list-row" id="rowPharmacy"><span class="row-ico">${icon('pill',18)}</span><span class="txt">Pharmacy</span><span class="meta">Products, stock &amp; billing</span><span class="chev">${icon('chevron',16)}</span></div>
-        <div class="list-row" id="rowLabCases"><span class="row-ico">${icon('flask',18)}</span><span class="txt">Lab Cases</span><span class="meta">Track lab work by patient</span><span class="chev">${icon('chevron',16)}</span></div>
-        <div class="list-row" id="rowReports"><span class="row-ico">${icon('reports',18)}</span><span class="txt">Reports</span><span class="meta">Generate &amp; export PDF/Excel</span><span class="chev">${icon('chevron',16)}</span></div>
+  ` : "";
+  const businessRows = `
+        ${canAccessModule("financial")? `<div class="list-row" id="rowFinancial"><span class="row-ico">${icon('wallet',18)}</span><span class="txt">Financial</span><span class="meta">Income, expenses, budgets</span><span class="chev">${icon('chevron',16)}</span></div>` : ""}
+        ${canAccessModule("inventory")? `<div class="list-row" id="rowInventory"><span class="row-ico">${icon('box',18)}</span><span class="txt">Inventory</span><span class="meta">Materials, stock, alerts</span><span class="chev">${icon('chevron',16)}</span></div>` : ""}
+        ${canAccessModule("pharmacy")? `<div class="list-row" id="rowPharmacy"><span class="row-ico">${icon('pill',18)}</span><span class="txt">Pharmacy</span><span class="meta">Products, stock &amp; billing</span><span class="chev">${icon('chevron',16)}</span></div>` : ""}
+        ${canAccessModule("labcases")? `<div class="list-row" id="rowLabCases"><span class="row-ico">${icon('flask',18)}</span><span class="txt">Lab Cases</span><span class="meta">Track lab work by patient</span><span class="chev">${icon('chevron',16)}</span></div>` : ""}
+        ${canAccessModule("reports")? `<div class="list-row" id="rowReports"><span class="row-ico">${icon('reports',18)}</span><span class="txt">Reports</span><span class="meta">Generate &amp; export PDF/Excel</span><span class="chev">${icon('chevron',16)}</span></div>` : ""}
         <div class="list-row" id="rowKiosk"><span class="row-ico">${icon('kiosk',18)}</span><span class="txt">Kiosk Mode</span><span class="meta">Patient self check-in</span><span class="chev">${icon('chevron',16)}</span></div>
-      </div>
-      <div class="section-title">Outreach</div>
-      <div class="list-card more-list">
+  `;
+  const outreachRows = canAccessModule("communication") ? `
         <div class="list-row" id="rowComms"><span class="row-ico">${icon('sms',18)}</span><span class="txt">Communication</span><span class="meta">WhatsApp, SMS, Email</span><span class="chev">${icon('chevron',16)}</span></div>
-      </div>
+  ` : "";
+  document.getElementById("main").innerHTML = `
+    <div class="page">
+      ${practiceRows? `<div class="section-title">Practice</div><div class="list-card more-list">${practiceRows}</div>` : ""}
+      <div class="section-title">Business</div>
+      <div class="list-card more-list">${businessRows}</div>
+      ${outreachRows? `<div class="section-title">Outreach</div><div class="list-card more-list">${outreachRows}</div>` : ""}
       <div class="section-title">Upcoming modules</div>
       <div class="empty-card">
         Billing, prescriptions, X-rays, implants, aligners, braces, pediatric, and Clinical charting will each appear here as they're built in later phases.
       </div>
     </div>
   `;
-  document.getElementById("rowAdmin").onclick = ()=> goTo("admin");
-  document.getElementById("rowClinics").onclick = openClinicsSheet;
-  document.getElementById("rowDoctors").onclick = openDoctorsSheet;
-  document.getElementById("rowConsultants").onclick = openConsultantsSheet;
-  document.getElementById("rowSettings").onclick = openSettingsSheet;
-  document.getElementById("rowBackup").onclick = ()=>{ openBackupSheet(); };
-  document.getElementById("rowTrash").onclick = openTrashSheet;
-  document.getElementById("rowComms").onclick = ()=> goTo("communication");
-  document.getElementById("rowFinancial").onclick = ()=> goTo("financial");
-  document.getElementById("rowInventory").onclick = ()=> goTo("inventory");
-  document.getElementById("rowPharmacy").onclick = ()=> goTo("pharmacy");
-  document.getElementById("rowLabCases").onclick = ()=> goTo("labcases");
-  document.getElementById("rowReports").onclick = ()=> goTo("reports");
-  document.getElementById("rowKiosk").onclick = ()=> confirmEnterKiosk();
+  const wire = (id, fn)=>{ const el=document.getElementById(id); if(el) el.onclick = fn; };
+  wire("rowAdmin", ()=> goTo("admin"));
+  wire("rowClinics", openClinicsSheet);
+  wire("rowDoctors", openDoctorsSheet);
+  wire("rowConsultants", openConsultantsSheet);
+  wire("rowSettings", openSettingsSheet);
+  wire("rowBackup", ()=>{ openBackupSheet(); });
+  wire("rowTrash", openTrashSheet);
+  wire("rowComms", ()=> goTo("communication"));
+  wire("rowFinancial", ()=> goTo("financial"));
+  wire("rowInventory", ()=> goTo("inventory"));
+  wire("rowPharmacy", ()=> goTo("pharmacy"));
+  wire("rowLabCases", ()=> goTo("labcases"));
+  wire("rowReports", ()=> goTo("reports"));
+  wire("rowKiosk", ()=> confirmEnterKiosk());
   hydrateIcons(document.getElementById("main"));
 }
 
@@ -21388,13 +21748,118 @@ function adminTileHtml(t, idx){
   </div>`;
 }
 
+// =========================================================
+// MANAGE USERS — Admin can create logins for reception/staff and choose
+// exactly which sections of the app each one can see. The account that
+// opens this screen first is recorded as the permanent Admin account;
+// everyone else needs an explicit entry here or they see nothing but Home.
+// =========================================================
+async function openManageUsersSheet(){
+  if(!currentUserIsAdmin){ showToast("Only the admin account can manage users"); return; }
+  const s = (await dbGetAll("settings"))[0] || {id:"main"};
+  if(!s.adminEmail){ s.adminEmail = fbCurrentUserEmail; await dbPut("settings", s); }
+  const staffUsers = await dbGetAll("staffUsers");
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>Manage Users</h2>
+    <p style="margin-bottom:10px;">Your login (<b>${escapeHtml(s.adminEmail)}</b>) is the Admin account and always has full access. Add a login for reception or other staff and choose exactly what they can see.</p>
+    <button class="btn btn-primary btn-block" id="btnAddStaffUser" style="margin-bottom:14px;">+ Add Staff Login</button>
+    <div class="list-card">
+      ${staffUsers.length? staffUsers.map(u=>`
+        <div class="clinic-row" data-staffuser="${u.id}" style="cursor:pointer;">
+          <div><div class="name">${escapeHtml(u.displayName||u.email)}</div><div class="addr">${escapeHtml(u.email)} · ${PERMISSION_MODULES.filter(m=>u.permissions&&u.permissions[m.key]).length} sections</div></div>
+          <span class="chev">${icon('chevron',16)}</span>
+        </div>
+      `).join("") : `<div class="empty-card">No staff logins yet — add one above.</div>`}
+    </div>
+  `);
+  document.getElementById("btnAddStaffUser").onclick = ()=> openStaffUserForm(null);
+  document.querySelectorAll("[data-staffuser]").forEach(el=>{
+    el.onclick = ()=> openStaffUserForm(staffUsers.find(u=>u.id===el.dataset.staffuser));
+  });
+}
+
+function openStaffUserForm(existing){
+  const isEdit = !!existing;
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>${isEdit? "Edit" : "Add"} Staff Login</h2>
+    <div class="field"><label>Name</label><input id="suName" value="${escapeAttr(existing?.displayName||'')}" placeholder="Staff member's name"></div>
+    <div class="field"><label>Email</label><input id="suEmail" type="email" value="${escapeAttr(existing?.email||'')}" ${isEdit?"disabled":""} placeholder="reception@clinic.com"></div>
+    ${isEdit? "" : `<div class="field"><label>Password</label><input id="suPassword" type="password" placeholder="At least 6 characters"></div>`}
+    <div class="section-title" style="margin-top:14px;">What can they see?</div>
+    ${PERMISSION_MODULES.map(m=>`
+      <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;margin-bottom:8px;cursor:pointer;">
+        <input type="checkbox" class="suPerm" data-perm="${m.key}" ${existing?.permissions?.[m.key]?"checked":""} style="width:16px;height:16px;flex-shrink:0;"> ${escapeHtml(m.label)}
+      </label>
+    `).join("")}
+    <p style="margin:6px 0 14px;color:var(--grey);">Admin Panel, Settings, Backup &amp; Restore, Clinics, Doctors, and Trash always stay Admin-only.</p>
+    <button class="btn btn-primary btn-block" id="btnSaveStaffUser">${isEdit? "Save Changes" : "Create Login"}</button>
+    ${isEdit? `
+      <button class="btn btn-outline btn-block" id="btnResetStaffPassword" style="margin-top:8px;">Send Password Reset Email</button>
+      <button class="btn btn-block" id="btnRemoveStaffUser" style="margin-top:8px;background:var(--red);color:#fff;border:none;">Remove Access</button>
+    ` : ""}
+  `);
+  document.getElementById("btnSaveStaffUser").onclick = async ()=>{
+    const name = document.getElementById("suName").value.trim();
+    const email = document.getElementById("suEmail").value.trim();
+    if(!email){ showToast("Enter an email"); return; }
+    const permissions = {};
+    document.querySelectorAll(".suPerm").forEach(cb=>{ permissions[cb.dataset.perm] = cb.checked; });
+    const btn = document.getElementById("btnSaveStaffUser");
+    btn.disabled = true; btn.textContent = "Saving…";
+    try{
+      if(isEdit){
+        existing.displayName = name;
+        existing.permissions = permissions;
+        await dbPut("staffUsers", existing);
+        logActivity("Updated access for "+email);
+      }else{
+        const password = document.getElementById("suPassword").value;
+        if(!password || password.length<6){ showToast("Password must be at least 6 characters"); btn.disabled=false; btn.textContent="Create Login"; return; }
+        await window.__fbAuth.createStaffAccount(email, password);
+        await dbAdd("staffUsers", { id: uid("staff"), email, displayName: name, permissions, createdAt: nowIso() });
+        logActivity("Added staff login: "+email);
+      }
+      showToast(isEdit? "Updated" : "Login created");
+      closeSheet();
+      openManageUsersSheet();
+    }catch(err){
+      console.error(err);
+      const msg = (err.code==="auth/email-already-in-use") ? "That email is already registered" :
+                  (err.code==="auth/invalid-email") ? "Enter a valid email address" : "Something went wrong";
+      showToast(msg);
+      btn.disabled = false; btn.textContent = isEdit?"Save Changes":"Create Login";
+    }
+  };
+  if(isEdit){
+    document.getElementById("btnResetStaffPassword").onclick = async ()=>{
+      try{ await window.__fbAuth.resetPassword(existing.email); showToast("Password reset email sent"); }
+      catch(e){ showToast("Could not send reset email"); }
+    };
+    document.getElementById("btnRemoveStaffUser").onclick = async ()=>{
+      if(!confirm("Remove this login's access? They'll still be able to sign in, but won't see any section until you add them again.")) return;
+      await dbDelete("staffUsers", existing.id);
+      logActivity("Removed staff access: "+existing.email);
+      showToast("Access removed");
+      closeSheet();
+      openManageUsersSheet();
+    };
+  }
+}
+
 async function renderAdminPanel(){
   const main = document.getElementById("main");
+  if(!currentUserIsAdmin){
+    showToast("Only the admin account can open this");
+    goTo("home");
+    return;
+  }
 
   const sections = [
     { title:"User Management", tiles:[
       { label:"Manage Clinic", icon:"clinic", action: openClinicsSheet },
-      { label:"Manage Users", icon:"user", action: null },
+      { label:"Manage Users", icon:"user", action: openManageUsersSheet },
       { label:"Manage Doctors", icon:"user", action: openDoctorsSheet },
       { label:"User Role Access", icon:"shield", action: null },
     ]},
@@ -21942,6 +22407,7 @@ function openSheet(html){
 }
 function closeSheet(){
   if(typeof stopVoiceRecordingIfActive==="function") stopVoiceRecordingIfActive();
+  if(typeof stopActiveChatListenerIfAny==="function") stopActiveChatListenerIfAny();
   document.getElementById("sheetOverlay").classList.add("hidden");
 }
 function closeSheetOrReturn(){
@@ -22090,11 +22556,97 @@ async function openTeamChat(){
       toName: "Team", toNumber: s.teamChatWaNumber,
       message: ""
     });
+  }else if(mode==="direct"){
+    openDirectMessagesContactsSheet();
   }else{
     openNoticeBoardSheet(s);
   }
 }
 document.getElementById("btnTeamChat").addEventListener("click", openTeamChat);
+
+// ---- Direct Messages: private 1-to-1 chat between logins, synced live via
+// Firestore — works across separate devices, not just same-device tabs. ----
+let activeChatUnsub = null;
+function stopActiveChatListenerIfAny(){
+  if(activeChatUnsub){ activeChatUnsub(); activeChatUnsub = null; }
+}
+
+function directConvoId(emailA, emailB){
+  return [emailA.toLowerCase(), emailB.toLowerCase()].sort().join("|");
+}
+
+async function openDirectMessagesContactsSheet(){
+  const all = await getNotifiableUsers();
+  const contacts = all.filter(u=> u.email.toLowerCase() !== (fbCurrentUserEmail||"").toLowerCase());
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>Direct Messages</h2>
+    <p style="margin-bottom:10px;">Chat privately with anyone on your team — syncs instantly, even across separate devices.</p>
+    <div class="list-card">
+      ${contacts.length? contacts.map(u=>`
+        <div class="clinic-row" data-dmcontact="${escapeAttr(u.email)}" style="cursor:pointer;">
+          <div><div class="name">${escapeHtml(u.name)}</div><div class="addr">${escapeHtml(u.email)}</div></div>
+          <span class="chev">${icon('chevron',16)}</span>
+        </div>
+      `).join("") : `<div class="empty-card">No other logins yet — add staff via Admin Panel &gt; Manage Users first.</div>`}
+    </div>
+  `);
+  document.querySelectorAll("[data-dmcontact]").forEach(el=>{
+    el.onclick = ()=>{
+      const u = contacts.find(c=>c.email===el.dataset.dmcontact);
+      openDirectChatThread(u.email, u.name);
+    };
+  });
+}
+
+function openDirectChatThread(otherEmail, otherName){
+  const convoId = directConvoId(fbCurrentUserEmail, otherEmail);
+  const myEmail = fbCurrentUserEmail;
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <button class="sheet-close" id="btnDmBack" style="right:44px;" title="Back to contacts">${icon('chevron',18)}</button>
+    <h2>${escapeHtml(otherName)}</h2>
+    <p style="margin-bottom:10px;color:var(--grey);">${escapeHtml(otherEmail)}</p>
+    <div id="dmMessages" class="ncb-messages"></div>
+    <div class="ncb-input-row">
+      <input id="dmMessageInput" placeholder="Type a message...">
+      <button class="btn btn-primary btn-sm" id="btnDmSend">Send</button>
+    </div>
+  `);
+  document.getElementById("btnDmBack").onclick = ()=> openDirectMessagesContactsSheet();
+  const wrap = document.getElementById("dmMessages");
+  wrap.innerHTML = `<div class="empty-card">Loading…</div>`;
+
+  stopActiveChatListenerIfAny();
+  activeChatUnsub = window.__fb.listenQuery("directMessages", "convoId", convoId, "createdAt", (messages)=>{
+    const target = document.getElementById("dmMessages");
+    if(!target) return; // sheet closed since listener fired
+    target.innerHTML = messages.length? messages.map(m=>{
+      const mine = (m.fromEmail||"").toLowerCase()===myEmail.toLowerCase();
+      return `
+        <div class="ncb-msg ${mine?'mine':''}">
+          <div class="ncb-msg-meta">${mine? "You" : escapeHtml(otherName)} · ${new Date(m.createdAt).toLocaleString(undefined,{hour:'2-digit',minute:'2-digit',day:'numeric',month:'short'})}</div>
+          <div class="ncb-msg-bubble">${escapeHtml(m.text)}</div>
+        </div>
+      `;
+    }).join("") : `<div class="empty-card">No messages yet — say hello.</div>`;
+    target.scrollTop = target.scrollHeight;
+  });
+
+  const send = async ()=>{
+    const input = document.getElementById("dmMessageInput");
+    const text = input.value.trim();
+    if(!text) return;
+    input.value = "";
+    await dbAdd("directMessages", {
+      id: uid("dm"), convoId, fromEmail: myEmail, toEmail: otherEmail, text, createdAt: nowIso()
+    });
+  };
+  document.getElementById("btnDmSend").onclick = send;
+  document.getElementById("dmMessageInput").addEventListener("keydown", (e)=>{
+    if(e.key==="Enter"){ e.preventDefault(); send(); }
+  });
+}
 
 async function openNoticeBoardSheet(s){
   const myName = (s && s.teamChatDisplayName) ? s.teamChatDisplayName.trim() : "";
@@ -24142,12 +24694,16 @@ async function openSettingsSheet(){
     <div class="field"><label>Chat Mode</label>
       <select id="sTeamChatMode">
         <option value="whatsapp" ${(s.teamChatMode||"whatsapp")==="whatsapp"?"selected":""}>WhatsApp (works across devices)</option>
+        <option value="direct" ${s.teamChatMode==="direct"?"selected":""}>Direct Messages (works across devices)</option>
         <option value="noticeboard" ${s.teamChatMode==="noticeboard"?"selected":""}>Same-Device Notice Board</option>
       </select>
     </div>
     <div id="sTeamChatWaWrap" style="${(s.teamChatMode||"whatsapp")==="whatsapp"?"":"display:none;"}">
       <div class="field"><label>Team WhatsApp Number</label><input id="sTeamChatWaNumber" value="${escapeAttr(s.teamChatWaNumber)}" placeholder="e.g. 91XXXXXXXXXX" inputmode="tel"></div>
       <p style="margin-top:-8px;">The chat icon in the header will open WhatsApp to this number — works between separate devices, since WhatsApp handles the delivery.</p>
+    </div>
+    <div id="sTeamChatDirectWrap" style="${s.teamChatMode==="direct"?"":"display:none;"}">
+      <p style="margin-top:-8px;">The chat icon opens a list of your team's logins (Admin and any staff you've added) — tap one to open a private 1-to-1 chat that syncs instantly across separate devices, since it's stored in your clinic's Firestore database.</p>
     </div>
     <div id="sTeamChatNbWrap" style="${s.teamChatMode==="noticeboard"?"":"display:none;"}">
       <div class="field"><label>Your Name (for the notice board)</label><input id="sTeamChatDisplayName" value="${escapeAttr(s.teamChatDisplayName)}" placeholder="e.g. Front Desk, Dr. Shrey"></div>
@@ -24176,6 +24732,7 @@ async function openSettingsSheet(){
   `);
   document.getElementById("sTeamChatMode").addEventListener("change", (e)=>{
     document.getElementById("sTeamChatWaWrap").style.display = e.target.value==="whatsapp" ? "" : "none";
+    document.getElementById("sTeamChatDirectWrap").style.display = e.target.value==="direct" ? "" : "none";
     document.getElementById("sTeamChatNbWrap").style.display = e.target.value==="noticeboard" ? "" : "none";
   });
   document.getElementById("btnSaveSettings").onclick = async ()=>{
@@ -24906,10 +25463,12 @@ function setupLogin(startApp){
 
   document.addEventListener("fbAuthChanged", (e)=>{
     if(e.detail.user){
+      fbCurrentUserEmail = e.detail.user.email || "";
       overlay.style.display = "none";
       appEl.style.display = "";
       if(!started){ started = true; startApp(); }
     } else {
+      fbCurrentUserEmail = "";
       overlay.style.display = "flex";
       appEl.style.display = "none";
     }
@@ -24949,6 +25508,8 @@ setupLogin(async function boot(){
     }
     await openDB();
     await seedDefaults();
+    await loadCurrentUserAccess();
+    applyNavPermissions();
     const bootSettings = (await dbGetAll("settings"))[0];
     if(bootSettings && bootSettings.darkMode){ document.body.classList.add("dark-mode"); }
     applyDarkModeIcon();
@@ -24956,6 +25517,7 @@ setupLogin(async function boot(){
     await checkPaymentDueReminders();
     await checkLowStockNotifications();
     await checkForNewOnlineBookings();
+    await checkChecklistNotifications();
     await refreshClinicSelector();
     await initStickyNote();
     await refreshTreatmentPresetsDatalist();
@@ -24976,6 +25538,7 @@ setupLogin(async function boot(){
       await checkPaymentDueReminders();
       await checkLowStockNotifications();
       await checkForNewOnlineBookings();
+      await checkChecklistNotifications();
     }, 60000);
   }catch(err){
     console.error(err);
