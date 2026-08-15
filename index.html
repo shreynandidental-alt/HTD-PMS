@@ -955,11 +955,17 @@
       await batch.commit();
     },
     // Live-updates a callback whenever documents matching storeName+field==value
-    // change, ordered by orderField. Returns an unsubscribe function. Used for
-    // real-time chat between devices — no polling needed.
+    // change, sorted by orderField. Returns an unsubscribe function. Used for
+    // real-time chat between devices — no polling needed. Sorting is done
+    // client-side (not via Firestore orderBy) specifically so this never
+    // requires creating a composite index in the Firestore console.
     listenQuery: (storeName, field, value, orderField, callback)=>{
-      const q = query(collection(fbDb, storeName), where(field, "==", value), orderBy(orderField));
-      return onSnapshot(q, (snap)=>{ callback(snap.docs.map(d=>d.data())); }, ()=>{ /* ignore transient listener errors */ });
+      const q = query(collection(fbDb, storeName), where(field, "==", value));
+      return onSnapshot(q, (snap)=>{
+        const rows = snap.docs.map(d=>d.data());
+        rows.sort((a,b)=> (a[orderField]||"") < (b[orderField]||"") ? -1 : (a[orderField]||"") > (b[orderField]||"") ? 1 : 0);
+        callback(rows);
+      }, (err)=>{ console.error("listenQuery error:", err); });
     }
   };
 
@@ -1080,19 +1086,7 @@
   </nav>
 </div>
 
-<!-- First run overlay -->
-<div class="overlay hidden" id="firstRunOverlay">
-  <div class="sheet">
-    <h2 class="brand-serif">Welcome to Healing Touch Dental PMS</h2>
-    <p>This application stores patient and clinical information locally in this browser/device unless an external service is explicitly configured. Regular encrypted backups are strongly recommended.</p>
-    <p style="color:var(--red);font-weight:600;">Data lives only in this browser profile. Clearing browser data, switching devices, or using a different browser will not show your records unless you restore from a backup.</p>
-    <label class="checkbox-row">
-      <input type="checkbox" id="firstRunCheck">
-      <span>I understand that regular backups are essential, and that this app does not sync across devices on its own.</span>
-    </label>
-    <button class="btn btn-primary btn-block" id="btnFirstRunContinue" disabled>Continue</button>
-  </div>
-</div>
+
 
 <!-- Generic sheet overlay (quick actions, settings, forms) -->
 <div class="overlay hidden" id="sheetOverlay">
@@ -1823,13 +1817,13 @@ async function renderHome(){
   const statGrid = document.getElementById("statGrid");
   statGrid.innerHTML = [
     {label:"Today's Appointments", val:counts.apptsToday, cls:"accent"},
-    {label:"Patients Waiting", val:counts.patientsWaiting, cls: counts.patientsWaiting>0?"warn":""},
-    {label:"Treatment Due", val:0, cls:""},
-    {label:"Follow-ups Due", val:0, cls:"warn"},
+    {label:"Today's Reminder", val:counts.remindersToday, cls: counts.remindersToday>0?"warn":""},
+    {label:"Treatment Due", val:counts.treatmentDueToday, cls:""},
+    {label:"Follow-ups Due", val:counts.followUpsDue, cls:"warn"},
     {label:"Overdue Reminders", val:counts.overdueReminders, cls:"risk"},
-    {label:"Pending Prescriptions", val:0, cls:""},
-    {label:"Outstanding Balance", val: settings.currency+"0", cls:"warn"},
-    {label:"Today's Collection", val: settings.currency+"0", cls:"accent"},
+    {label:"To Do Task Today", val:counts.todoTasksToday, cls: counts.todoTasksToday>0?"warn":""},
+    {label:"Outstanding Balance", val: settings.currency+counts.outstandingBalance.toLocaleString(), cls:"warn"},
+    {label:"Today's Collection", val: settings.currency+counts.todaysCollection.toLocaleString(), cls:"accent"},
   ].map(c=>`
     <div class="stat-card ${c.cls}">
       <div class="num">${c.val}</div>
@@ -2249,10 +2243,33 @@ async function getDashboardCounts(){
   const todayAppts = appts.filter(a=> a.date===todayKey);
   const apptsToday = todayAppts.length;
   const patientsWaiting = todayAppts.filter(a=> a.status==="Arrived" || a.status==="InChair").length;
+
   const reminders = await dbGetAll("reminders");
   const nowTs = Date.now();
   const overdueReminders = reminders.filter(r=> r.status==="Pending" && r.dueDate && new Date(r.dueDate).getTime()<nowTs).length;
-  return {apptsToday, overdueReminders, patientsWaiting, todayAppts};
+  const remindersToday = reminders.filter(r=> r.status==="Pending" && r.dueDate && toDateKey(new Date(r.dueDate))===todayKey).length;
+
+  const checklistTasks = await dbGetAll("assistantChecklist");
+  const todoTasksToday = checklistTasks.filter(t=> t.status!=="done" && t.dueDate===todayKey).length;
+
+  const commitments = await dbGetAll("commitments");
+  const followUpsDue = commitments.filter(c=> c.followUpDate && c.status!=="Cancelled" && c.status!=="Done" && toDateKey(new Date(c.followUpDate))===todayKey).length;
+
+  const treatmentPlans = await dbGetAll("treatmentPlans");
+  let treatmentDueToday = 0;
+  treatmentPlans.forEach(plan=>{
+    (plan.items||[]).forEach(item=>{
+      if(item.status!=="Completed" && item.treatmentDate && toDateKey(new Date(item.treatmentDate))===todayKey) treatmentDueToday++;
+    });
+  });
+
+  const invoices = await dbGetAll("invoices");
+  const outstandingBalance = invoices.reduce((sum,inv)=> sum + (inv.balance||0), 0);
+
+  const payments = await dbGetAll("payments");
+  const todaysCollection = payments.filter(p=> p.date===todayKey).reduce((sum,p)=> sum + (p.amount||0), 0);
+
+  return {apptsToday, overdueReminders, patientsWaiting, todayAppts, remindersToday, todoTasksToday, treatmentDueToday, outstandingBalance, todaysCollection, followUpsDue};
 }
 
 
@@ -21708,10 +21725,6 @@ async function renderMore(){
       <div class="section-title">Business</div>
       <div class="list-card more-list">${businessRows}</div>
       ${outreachRows? `<div class="section-title">Outreach</div><div class="list-card more-list">${outreachRows}</div>` : ""}
-      <div class="section-title">Upcoming modules</div>
-      <div class="empty-card">
-        Billing, prescriptions, X-rays, implants, aligners, braces, pediatric, and Clinical charting will each appear here as they're built in later phases.
-      </div>
     </div>
   `;
   const wire = (id, fn)=>{ const el=document.getElementById(id); if(el) el.onclick = fn; };
@@ -25436,21 +25449,6 @@ function patientDisplayName(patient){
 }
 
 // ---------------------------------------------------------
-// First-run notice
-// ---------------------------------------------------------
-function checkFirstRun(){
-  if(localStorage.getItem("htd_first_run_done")==="1") return;
-  document.getElementById("firstRunOverlay").classList.remove("hidden");
-  const check = document.getElementById("firstRunCheck");
-  const btn = document.getElementById("btnFirstRunContinue");
-  check.addEventListener("change",()=>{ btn.disabled = !check.checked; });
-  btn.addEventListener("click", ()=>{
-    localStorage.setItem("htd_first_run_done","1");
-    document.getElementById("firstRunOverlay").classList.add("hidden");
-  });
-}
-
-// ---------------------------------------------------------
 // Boot
 // ---------------------------------------------------------
 function setupLogin(startApp){
@@ -25523,7 +25521,6 @@ setupLogin(async function boot(){
     await refreshTreatmentPresetsDatalist();
     await refreshMedicinePresetsDatalist();
     await refreshRxFieldDatalists();
-    checkFirstRun();
     goTo("home");
 
     // periodic overdue/backup check while app stays open
