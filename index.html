@@ -540,6 +540,7 @@
   .tp-Completed{background:#1F6E42;color:#FFFFFF;}
   .ins-Pending{background:#FCF0C4;color:#8A6D00;}
   .ins-Reimbursed{background:#1F6E42;color:#FFFFFF;}
+  .ins-Rejected{background:#F8D7DA;color:#B00020;}
   .mem-Gold{background:#FCEBB6;color:#8A6D00;}
   .mem-Silver{background:#E4E4E4;color:#444;}
   .mem-Black{background:#14171A;color:#fff;}
@@ -3145,7 +3146,7 @@ async function savePatientFromForm(p, clinics, isEdit){
       document.querySelectorAll("[data-open-existing]").forEach(b=> b.onclick=()=>{ closeSheet(); openPatientProfile(b.dataset.openExisting); });
       document.getElementById("btnContinueNew").onclick = ()=>{
         updated._dupConfirmed = true;
-        renderPatientFormSheet(updated, clinics, isEdit);
+        savePatientFromForm(updated, clinics, isEdit);
       };
       return;
     }
@@ -3490,6 +3491,17 @@ async function renderApptBody(){
 
 // ---- Time-grid calendar helpers (days on top, time down the left) ----
 let CAL_START_HOUR = 8, CAL_END_HOUR = 20;
+
+// Reads the clinic-wide default calendar hours from Settings (falls back
+// to 8 AM–8 PM if never configured). Per-clinic, per-weekday timings set
+// in Admin Panel > Clinic Locations still override this when a specific
+// clinic is selected and has its own hours for that day.
+async function getDefaultCalendarHours(){
+  const s = (await dbGetAll("settings"))[0] || {};
+  const start = s.calendarStartTime ? parseTimeToHour(s.calendarStartTime) : 8;
+  const end = s.calendarEndTime ? parseTimeToHour(s.calendarEndTime) : 20;
+  return { start: Math.floor(start), end: end<=start? Math.floor(start)+1 : Math.ceil(end) };
+}
 const CAL_SLOT_MIN = 30;
 const CAL_WEEKDAY_KEYS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 function weekdayKeyForDate(date){ return CAL_WEEKDAY_KEYS[date.getDay()]; }
@@ -3631,7 +3643,8 @@ async function renderDayView(body){
   appts.sort((a,b)=>(a.startTime||"").localeCompare(b.startTime||""));
   const doctors = await dbGetAll("users");
 
-  CAL_START_HOUR = 8; CAL_END_HOUR = 20;
+  const defaultHours = await getDefaultCalendarHours();
+  CAL_START_HOUR = defaultHours.start; CAL_END_HOUR = defaultHours.end;
   let dayClosed = false, closedClinicName = "";
   if(selectedClinicId!=="ALL"){
     const clinicsForTimings = await dbGetAll("clinics");
@@ -4361,7 +4374,8 @@ async function openPatientRowMenu(patientId){
 }
 
 async function renderWeekView(body){
-  CAL_START_HOUR = 8; CAL_END_HOUR = 20;
+  const defaultHours = await getDefaultCalendarHours();
+  CAL_START_HOUR = defaultHours.start; CAL_END_HOUR = defaultHours.end;
   CAL_SLOT_PX = computeCalSlotPx();
   const start = new Date(apptSelectedDate);
   start.setDate(start.getDate() - start.getDay());
@@ -12853,8 +12867,8 @@ function renderPlanFormSheet(plan, clinics, isEdit, patient, doctors){
       <div class="field"><label>Discount</label><input id="tpOverallDiscount" type="number" min="0" step="0.01" value="${plan.overallDiscount||0}"></div>
       <div class="field"><label>Type</label>
         <select id="tpOverallDiscountType">
-          <option value="percent" ${plan.overallDiscountType!=="flat"?"selected":""}>% Percent</option>
-          <option value="flat" ${plan.overallDiscountType==="flat"?"selected":""}>₹ Flat Amount</option>
+          <option value="flat" ${plan.overallDiscountType!=="percent"?"selected":""}>₹ Flat Amount</option>
+          <option value="percent" ${plan.overallDiscountType==="percent"?"selected":""}>% Percent</option>
         </select>
       </div>
     </div>
@@ -12876,7 +12890,7 @@ function renderPlanFormSheet(plan, clinics, isEdit, patient, doctors){
   document.getElementById("tpOverallDiscount").addEventListener("input", updateTotalsDisplay);
   document.getElementById("tpOverallDiscountType").addEventListener("change", updateTotalsDisplay);
   document.getElementById("btnAddPlanItem").onclick = ()=>{
-    planItemsDraft.push({id:uid("planitem"), tooth:"", diagnosis:"", treatment:"", qty:1, fee:0, discount:0, priority:"Normal", status:"Proposed"});
+    planItemsDraft.push({id:uid("planitem"), tooth:"", diagnosis:"", treatment:"", qty:1, fee:0, discount:0, discountType:"flat", priority:"Normal", status:"Proposed"});
     renderPlanItems();
     updateTotalsDisplay();
   };
@@ -12917,8 +12931,8 @@ function renderPlanFormSheet(plan, clinics, isEdit, patient, doctors){
           <div class="field"><label>Discount</label><input type="number" min="0" data-f="discount" data-idx="${idx}" value="${it.discount}"></div>
           <div class="field"><label>Discount Type</label>
             <select data-f="discountType" data-idx="${idx}">
-              <option value="percent" ${(it.discountType||'percent')==='percent'?'selected':''}>% Percent</option>
-              <option value="flat" ${it.discountType==='flat'?'selected':''}>₹ Flat Amount</option>
+              <option value="flat" ${(it.discountType||'flat')==='flat'?'selected':''}>₹ Flat Amount</option>
+              <option value="percent" ${it.discountType==='percent'?'selected':''}>% Percent</option>
             </select>
           </div>
         </div>
@@ -13303,6 +13317,7 @@ const PROSTH_MATERIALS = ['Zirconia','PFM (Metal-Ceramic)','E-max (Lithium Disil
 const PROSTH_STATUSES = ['Pending','Trial','In Lab','Delivered','Review Needed'];
 
 let clinicalImplantCrownSubTab = "Implants";
+let clinicalProsthoSubTab = "Dentures";
 let implantFormRows = [];
 
 function warrantyStatusInfo(startDateIso, years){
@@ -13338,7 +13353,7 @@ async function renderImplantCrownTab(body, patient){
   body.innerHTML = `
     <div class="filter-row" id="icSubTabs">
       <div class="filter-chip ${clinicalImplantCrownSubTab==='Implants'?'active':''}" data-sub="Implants">Implants</div>
-      <div class="filter-chip ${clinicalImplantCrownSubTab==='Crowns'?'active':''}" data-sub="Crowns">Crowns / Veneers</div>
+      <div class="filter-chip ${clinicalImplantCrownSubTab==='ImplantProsthesis'?'active':''}" data-sub="ImplantProsthesis">Implant Prosthesis</div>
     </div>
     <div id="icSubBody"></div>
   `;
@@ -13347,13 +13362,59 @@ async function renderImplantCrownTab(body, patient){
   });
   const subBody = document.getElementById("icSubBody");
   if(clinicalImplantCrownSubTab==="Implants") await renderImplantCasesList(subBody, patient);
-  else await renderProstheticCasesList(subBody, patient);
+  else await renderImplantProsthesisList(subBody, patient);
+}
+
+async function renderImplantProsthesisList(body, patient){
+  const cases = (await dbGetAll("prosthoCases")).filter(c=>c.patientId===patient.id && c.type==="Implant Prosthesis").sort((a,b)=> new Date(b.date||0)-new Date(a.date||0));
+  body.innerHTML = `
+    <div style="display:flex;gap:8px;margin:12px 0;">
+      <button class="btn btn-primary btn-block" id="btnNewImplantProsth" style="margin-bottom:0;">+ New Implant Prosthesis Case</button>
+      <button class="icon-btn" id="btnPrintImplantProsthMulti" title="Print" style="background:var(--off-white);color:var(--charcoal-2);flex-shrink:0;">${icon('print',16)}</button>
+    </div>
+    ${cases.length? cases.map(c=>`
+      <div class="note-card" data-ipcase="${c.id}" style="cursor:pointer;">
+        <div class="note-head">
+          <b>Implant Prosthesis${c.tooth? " · Tooth "+escapeHtml(c.tooth):""}</b>
+          <button class="qmenu-btn" data-ipmenu="${c.id}" style="transform:none;">${icon('settings',16)}</button>
+        </div>
+        <div class="note-meta">${c.date? new Date(c.date).toLocaleDateString():""}${(c.visits&&c.visits.length)? " · "+c.visits.length+" visit(s)":""}</div>
+      </div>
+    `).join("") : `<div class="empty-card"><b>No implant prosthesis cases yet</b>Tap "+ New Implant Prosthesis Case" to start tracking one.</div>`}
+  `;
+  document.getElementById("btnNewImplantProsth").onclick = ()=> openProsthoForm(null, patient, body, "Implant Prosthesis");
+  document.getElementById("btnPrintImplantProsthMulti").onclick = ()=> openMultiSelectPrintSheet(
+    "Print Implant Prosthesis Cases",
+    cases.map(c=>({label: "Implant Prosthesis"+(c.tooth? " · Tooth "+c.tooth:""), sublabel: c.date? new Date(c.date).toLocaleDateString():"", record: c})),
+    (selected)=> printSelectedProstho(selected, patient)
+  );
+  body.querySelectorAll("[data-ipcase]").forEach(el=> el.onclick = ()=> openProsthoForm(el.dataset.ipcase, patient, body));
+  body.querySelectorAll("[data-ipmenu]").forEach(el=> el.onclick = (e)=>{
+    e.stopPropagation();
+    openEntryActionMenu("Implant Prosthesis Options", [
+      { key:"edit", icon:"edit", text:"Edit", onClick: ()=>{ closeSheet(); openProsthoForm(el.dataset.ipmenu, patient, body); } },
+      { key:"delete", icon:"trash", text:"Delete", onClick: async ()=>{
+        if(!confirm("Delete this implant prosthesis case?")) return;
+        await dbDelete("prosthoCases", el.dataset.ipmenu);
+        showToast("Deleted");
+        closeSheet();
+        renderImplantCrownTab(body, patient);
+      } }
+    ]);
+  });
 }
 
 function goBackToImplantCrownTab(patient, subTab){
   clinicalPatientId = patient.id;
   clinicalView = "Implants & Crowns";
   clinicalImplantCrownSubTab = subTab;
+  renderClinicalWorkspace();
+}
+
+function goBackToProsthoCrownsTab(patient){
+  clinicalPatientId = patient.id;
+  clinicalView = "Prosthodontics";
+  clinicalProsthoSubTab = "Crowns";
   renderClinicalWorkspace();
 }
 
@@ -13476,9 +13537,8 @@ async function openImplantCaseForm(patient, caseId){
       <div class="field"><label>Case Type</label><select id="icCaseType">${IMPLANT_CASE_TYPES.map(t=>`<option ${existing&&existing.caseType===t?'selected':''}>${t}</option>`).join("")}</select></div>
     </div>
     <div class="field-row">
-      <div class="field"><label>Surgeon</label><input id="icSurgeon" value="${escapeAttr(existing?existing.surgeon||'':'')}"></div>
-      <div class="field"><label>Consultant (optional)</label>
-        <select id="icConsultant"><option value="">— None —</option>${consultants.map(c=>`<option value="${c.id}" ${existing&&existing.consultantId===c.id?'selected':''}>${escapeHtml(c.name)}</option>`).join("")}</select>
+      <div class="field"><label>Consultant Surgeon</label>
+        <select id="icConsultant"><option value="">— Select —</option>${consultants.map(c=>`<option value="${c.id}" ${existing&&existing.consultantId===c.id?'selected':''}>${escapeHtml(c.name)}</option>`).join("")}</select>
       </div>
     </div>
     <div class="section-title" style="margin-top:14px;">Implants in this Case</div>
@@ -13595,7 +13655,7 @@ async function openImplantCaseForm(patient, caseId){
     const rec = existing || { id: uid("implcase"), patientId: patient.id, createdAt: nowIso() };
     rec.surgeryDate = surgeryDateIso;
     rec.caseType = document.getElementById("icCaseType").value;
-    rec.surgeon = document.getElementById("icSurgeon").value.trim();
+    rec.surgeon = consultant ? consultant.name : "";
     rec.consultantId = consultantId || null;
     rec.consultantName = consultant ? consultant.name : null;
     rec.consultantFeePending = parseFloat(document.getElementById("icConsultantFee").value)||0;
@@ -13642,7 +13702,7 @@ async function openImplantCaseDetail(caseId, patient){
   openSheet(`
     <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
     <h2>${escapeHtml(c.caseType||"Implant Case")}</h2>
-    <p style="margin-bottom:10px;color:var(--grey);font-size:12.5px;">${new Date(c.surgeryDate).toLocaleDateString()}${c.surgeon? ' · Surgeon: '+escapeHtml(c.surgeon):''}${c.consultantName? ' · Consultant: '+escapeHtml(c.consultantName):''}</p>
+    <p style="margin-bottom:10px;color:var(--grey);font-size:12.5px;">${new Date(c.surgeryDate).toLocaleDateString()}${c.consultantName? ' · Consultant Surgeon: '+escapeHtml(c.consultantName):''}</p>
     ${units.map((u,i)=>{
       const w = warrantyStatusInfo(c.surgeryDate, u.warrantyYears);
       return `<div class="note-card">
@@ -13783,7 +13843,7 @@ async function renderProstheticCasesList(subBody, patient){
 }
 
 async function openProstheticForm(patient, existingId){
-  const goBack = ()=> goBackToImplantCrownTab(patient, "Crowns");
+  const goBack = ()=> goBackToProsthoCrownsTab(patient);
   const all = await dbGetAll("prostheticCases");
   const existing = existingId ? all.find(c=>c.id===existingId) : null;
   prosthWarrantyAttachments = existing && existing.warrantyAttachments ? JSON.parse(JSON.stringify(existing.warrantyAttachments)) : [];
@@ -13884,7 +13944,7 @@ async function openProstheticCaseDetail(id, patient){
     logActivity("Deleted "+(c.type||"crown")+" case for "+patient.name, {patientId:patient.id});
     showToast("Case deleted");
     closeSheet();
-    goBackToImplantCrownTab(patient, "Crowns");
+    goBackToProsthoCrownsTab(patient);
   };
 }
 
@@ -14690,9 +14750,8 @@ async function implantCaseRowsFor(c){
   const rows = [
     {label:"Case Type", value: c.caseType||""},
     {label:"Surgery Date", value: c.surgeryDate? new Date(c.surgeryDate).toLocaleDateString():""},
-    {label:"Surgeon", value: c.surgeon||""},
+    {label:"Consultant Surgeon", value: c.consultantName||c.surgeon||""},
   ];
-  if(c.consultantName) rows.push({label:"Consultant", value: c.consultantName});
   units.forEach((u,i)=>{
     const w = warrantyStatusInfo(c.surgeryDate, u.warrantyYears);
     const parts = [
@@ -16852,12 +16911,27 @@ async function renderEndoTab(body, patient){
       const lastVisit = visits.slice().sort((a,b)=>new Date(b.date||0)-new Date(a.date||0))[0];
       return `<div class="clinic-row" data-endocase="${c.id}" style="cursor:pointer;">
         <div><div class="name">Tooth ${escapeHtml(c.tooth||"—")} ${c.pulpDiagnosis?'· '+escapeHtml(c.pulpDiagnosis):''}</div><div class="addr">${visits.length} visit(s)${lastVisit?' · Last: '+new Date(lastVisit.date).toLocaleDateString():''}</div></div>
-        <span class="chev">${icon('chevron',16)}</span>
+        <button class="qmenu-btn" data-endomenu="${c.id}" style="transform:none;">${icon('settings',16)}</button>
       </div>`;
     }).join("")}</div>` : `<div class="empty-card"><b>No endodontic cases yet</b>Tap "+ New Endodontic Case" to start one for a tooth.</div>`}
   `;
   document.getElementById("btnNewEndoCase").onclick = ()=> openEndoDiagnosisForm(null, patient, body);
   body.querySelectorAll("[data-endocase]").forEach(el=> el.onclick = ()=>{ endoCaseSubTab="Diagnosis"; openEndoCaseDetail(el.dataset.endocase, patient, body); });
+  body.querySelectorAll("[data-endomenu]").forEach(el=> el.onclick = (ev)=>{
+    ev.stopPropagation();
+    const caseId = el.dataset.endomenu;
+    openEntryActionMenu("Endodontic Case Options", [
+      { key:"edit", icon:"edit", text:"Edit", onClick: ()=>{ closeSheet(); openEndoDiagnosisForm(caseId, patient, body); } },
+      { key:"delete", icon:"trash", text:"Delete", onClick: async ()=>{
+        if(!confirm("Delete this endodontic case? This cannot be undone.")) return;
+        await dbDelete("endoCases", caseId);
+        logActivity("Deleted endodontic case for "+patient.name, {patientId: patient.id});
+        showToast("Case deleted");
+        closeSheet();
+        renderEndoTab(body, patient);
+      } }
+    ]);
+  });
 }
 
 const ENDO_PULP_DX_OPTIONS = ["— Select —","Normal Pulp","Reversible Pulpitis","Symptomatic Irreversible Pulpitis","Asymptomatic Irreversible Pulpitis","Pulp Necrosis","Previously Treated","Previously Initiated Therapy"];
@@ -17008,17 +17082,37 @@ function renderEndoVisitsSubTab(subBody, c, patient, body){
   subBody.innerHTML = `
     <button class="btn btn-primary btn-block" id="btnAddEndoVisit" style="margin-bottom:12px;">+ Add Treatment Visit</button>
     ${visits.length? visits.map((v,i)=>`
-      <div class="note-card" data-endovisit="${v.id}" style="cursor:pointer;margin-bottom:8px;">
+      <div class="note-card" style="margin-bottom:8px;">
         <div class="note-head">
           <b>Visit ${i+1} — ${v.date? new Date(v.date).toLocaleDateString():""}</b>
-          <span class="status-pill ${v.status==='Completed'?'st-Completed':'st-Confirmed'}">${v.status||"Pending"}</span>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span class="status-pill ${v.status==='Completed'?'st-Completed':'st-Confirmed'}">${v.status||"Pending"}</span>
+            <button class="qmenu-btn" data-endovisitmenu="${v.id}" style="transform:none;">${icon('settings',16)}</button>
+          </div>
         </div>
         <div class="note-meta">${[v.accessOpening,v.numCanals?v.numCanals+" canal(s)":"",v.fileSystem,v.obturationTechnique].filter(Boolean).join(" · ")||"No details yet"}</div>
       </div>
     `).join("") : `<div class="empty-card"><b>No visits recorded yet</b></div>`}
   `;
   document.getElementById("btnAddEndoVisit").onclick = ()=> openEndoVisitForm(c, patient, body);
-  subBody.querySelectorAll("[data-endovisit]").forEach(el=> el.onclick = ()=> openEndoVisitForm(c, patient, body, el.dataset.endovisit));
+  subBody.querySelectorAll("[data-endovisitmenu]").forEach(el=> el.onclick = (ev)=>{
+    ev.stopPropagation();
+    const visitId = el.dataset.endovisitmenu;
+    openEntryActionMenu("Visit Options", [
+      { key:"edit", icon:"edit", text:"Edit", onClick: ()=>{ closeSheet(); openEndoVisitForm(c, patient, body, visitId); } },
+      { key:"delete", icon:"trash", text:"Delete", onClick: async ()=>{
+        if(!confirm("Delete this visit? This cannot be undone.")) return;
+        c.visits = (c.visits||[]).filter(x=>x.id!==visitId);
+        c.updatedAt = nowIso();
+        await dbPut("endoCases", c);
+        logActivity("Deleted an endodontic visit for "+patient.name, {patientId: patient.id});
+        showToast("Visit deleted");
+        closeSheet();
+        endoCaseSubTab = "Visits";
+        openEndoCaseDetail(c.id, patient, body);
+      } }
+    ]);
+  });
 }
 
 function renderEndoRadiographsSubTab(subBody, c, patient, body){
@@ -17026,14 +17120,32 @@ function renderEndoRadiographsSubTab(subBody, c, patient, body){
   subBody.innerHTML = `
     <button class="btn btn-outline btn-block" id="btnAddEndoRadiograph" style="margin-bottom:12px;">${icon('image',15)} Add Radiograph</button>
     ${radiographs.length? `<div style="display:flex;flex-wrap:wrap;gap:10px;">${radiographs.map(r=>`
-      <div style="text-align:center;" data-endorad="${r.id}">
-        <img src="${r.imageData}" style="width:110px;height:110px;object-fit:cover;border-radius:6px;border:1px solid #ddd;cursor:pointer;">
+      <div style="text-align:center;position:relative;">
+        <img src="${r.imageData}" data-endorad="${r.id}" style="width:110px;height:110px;object-fit:cover;border-radius:6px;border:1px solid #ddd;cursor:pointer;">
+        <button class="qmenu-btn" data-endoradmenu="${r.id}" style="position:absolute;top:2px;right:2px;background:rgba(255,255,255,0.9);transform:none;">${icon('settings',14)}</button>
         <div style="font-size:11px;color:var(--grey);margin-top:3px;">${escapeHtml(r.type)}</div>
       </div>
     `).join("")}</div>` : `<div class="empty-card"><b>No radiographs uploaded yet</b></div>`}
   `;
   document.getElementById("btnAddEndoRadiograph").onclick = ()=> openEndoRadiographForm(c, patient, body);
-  subBody.querySelectorAll("[data-endorad]").forEach(el=> el.onclick = ()=> openImageViewer(el.querySelector("img").src, {patient, fileName:"endo_radiograph.jpg", label:"Endo Radiograph"}));
+  subBody.querySelectorAll("[data-endorad]").forEach(el=> el.onclick = ()=> openImageViewer(el.src, {patient, fileName:"endo_radiograph.jpg", label:"Endo Radiograph"}));
+  subBody.querySelectorAll("[data-endoradmenu]").forEach(el=> el.onclick = (ev)=>{
+    ev.stopPropagation();
+    const radId = el.dataset.endoradmenu;
+    openEntryActionMenu("Radiograph Options", [
+      { key:"delete", icon:"trash", text:"Delete", onClick: async ()=>{
+        if(!confirm("Delete this radiograph? This cannot be undone.")) return;
+        c.radiographs = (c.radiographs||[]).filter(x=>x.id!==radId);
+        c.updatedAt = nowIso();
+        await dbPut("endoCases", c);
+        logActivity("Deleted an endodontic radiograph for "+patient.name, {patientId: patient.id});
+        showToast("Radiograph deleted");
+        closeSheet();
+        endoCaseSubTab = "Radiographs";
+        openEndoCaseDetail(c.id, patient, body);
+      } }
+    ]);
+  });
 }
 
 function renderEndoNotesSubTab(subBody, c, patient, body){
@@ -17260,7 +17372,7 @@ async function renderPerioTab(body, patient){
       const teethCount = Object.keys(c.teeth||{}).length;
       return `<div class="clinic-row" data-periochart="${c.id}" style="cursor:pointer;">
         <div><div class="name">${new Date(c.date).toLocaleDateString()}</div><div class="addr">${teethCount} tooth/teeth charted${c.clinician? " · Dr. "+escapeHtml(c.clinician):""}</div></div>
-        <span class="chev">${icon('chevron',16)}</span>
+        <button class="qmenu-btn" data-periomenu="${c.id}" style="transform:none;">${icon('settings',16)}</button>
       </div>`;
     }).join("")}</div>` : `<div class="empty-card"><b>No periodontal charts yet</b>Tap "+ New Periodontal Chart" to start full-mouth or per-tooth charting.</div>`}
   `;
@@ -17275,6 +17387,21 @@ async function renderPerioTab(body, patient){
     (selected)=> printSelectedPerioCharts(selected, patient)
   );
   body.querySelectorAll("[data-periochart]").forEach(el=> el.onclick = ()=> openPerioChartDetail(el.dataset.periochart, patient, body));
+  body.querySelectorAll("[data-periomenu]").forEach(el=> el.onclick = (ev)=>{
+    ev.stopPropagation();
+    const chartId = el.dataset.periomenu;
+    openEntryActionMenu("Periodontal Chart Options", [
+      { key:"edit", icon:"edit", text:"Edit", onClick: ()=>{ closeSheet(); openPerioChartDetail(chartId, patient, body); } },
+      { key:"delete", icon:"trash", text:"Delete", onClick: async ()=>{
+        if(!confirm("Delete this periodontal chart? This cannot be undone.")) return;
+        await dbDelete("perioCharts", chartId);
+        logActivity("Deleted periodontal chart for "+patient.name, {patientId: patient.id});
+        showToast("Chart deleted");
+        closeSheet();
+        renderPerioTab(body, patient);
+      } }
+    ]);
+  });
 }
 
 async function openPerioChartDetail(chartId, patient, body){
@@ -17290,8 +17417,11 @@ async function openPerioChartDetail(chartId, patient, body){
       </div>
       <button class="btn btn-primary btn-block" id="btnAddPerioTooth" style="margin-bottom:14px;">+ Chart a Tooth</button>
       ${teethEntries.length? teethEntries.map(([tooth, f])=>`
-        <div class="note-card" data-periotooth="${tooth}" style="cursor:pointer;margin-bottom:8px;">
-          <div class="note-head"><b>Tooth ${escapeHtml(tooth)}</b></div>
+        <div class="note-card" style="margin-bottom:8px;">
+          <div class="note-head">
+            <b>Tooth ${escapeHtml(tooth)}</b>
+            <button class="qmenu-btn" data-periotoothmenu="${escapeAttr(tooth)}" style="transform:none;">${icon('settings',16)}</button>
+          </div>
           <div class="note-meta">Pocket: ${(f.pocketDepth||[]).join("-")||"—"} · Recession: ${escapeHtml(f.recession||"0")} · CAL: ${escapeHtml(String(f.cal ?? "—"))}</div>
           <div class="note-meta">${f.bop?"BOP ":""}${f.plaque?"Plaque ":""}${f.calculus?"Calculus ":""}${f.furcation?"Furcation:"+escapeHtml(f.furcation)+" ":""}${f.mobility?"Mobility:"+escapeHtml(f.mobility):""}</div>
         </div>
@@ -17300,7 +17430,23 @@ async function openPerioChartDetail(chartId, patient, body){
   `;
   document.getElementById("perioDetailBack").onclick = ()=>{ clinicalPatientId = patient.id; clinicalView = "Periodontics"; renderClinicalWorkspace(); };
   document.getElementById("btnAddPerioTooth").onclick = ()=> openPerioToothForm(c, patient, body, null);
-  main.querySelectorAll("[data-periotooth]").forEach(el=> el.onclick = ()=> openPerioToothForm(c, patient, body, el.dataset.periotooth));
+  main.querySelectorAll("[data-periotoothmenu]").forEach(el=> el.onclick = (ev)=>{
+    ev.stopPropagation();
+    const tooth = el.dataset.periotoothmenu;
+    openEntryActionMenu("Tooth "+tooth+" Options", [
+      { key:"edit", icon:"edit", text:"Edit", onClick: ()=>{ closeSheet(); openPerioToothForm(c, patient, body, tooth); } },
+      { key:"delete", icon:"trash", text:"Delete", onClick: async ()=>{
+        if(!confirm("Delete charting for tooth "+tooth+"? This cannot be undone.")) return;
+        delete c.teeth[tooth];
+        c.updatedAt = nowIso();
+        await dbPut("perioCharts", c);
+        logActivity("Deleted periodontal charting for tooth "+tooth+" — "+patient.name, {patientId: patient.id});
+        showToast("Tooth entry deleted");
+        closeSheet();
+        openPerioChartDetail(c.id, patient, body);
+      } }
+    ]);
+  });
 }
 
 const PERIO_FURCATION_OPTIONS = ["None","Grade I","Grade II","Grade III"];
@@ -17602,6 +17748,10 @@ async function openOralMedForm(id, patient, body){
 
 // ---- Prosthodontics ----
 const PROSTHO_TYPES = ["Complete Denture","Removable Partial Denture","Fixed Prosthodontics","Implant Prosthesis"];
+// Implant Prosthesis is created from the Implants & Crowns tab instead (see
+// renderImplantCrownTab) — this shorter list is what "+ New Prosthodontic
+// Case" offers from the Prosthodontics tab itself.
+const PROSTHO_TYPES_PICKER = ["Complete Denture","Removable Partial Denture","Fixed Prosthodontics"];
 const PROSTHO_VITA_SHADES = ["— Select —","A1","A2","A3","A3.5","A4","B1","B2","B3","B4","C1","C2","C3","C4","D2","D3","D4"];
 const PROSTHO_FIELDS = {
   "Complete Denture": [
@@ -17641,17 +17791,37 @@ const PROSTHO_FIELDS = {
     ["bisqueTrial","Bisque Trial"], ["finalCementation","Final Cementation"], ["recall","Recall"]
   ],
   "Implant Prosthesis": [
-    ["implantBrand","Implant Brand"], ["implantSize","Implant Size"], ["torque","Torque"], ["isq","ISQ"],
+    ["implantBrand","Implant Brand",["— Select —", ...IMPLANT_BRANDS]],
+    ["implantSize","Implant Size (Diameter x Length)",["— Select —","3.3 x 8mm","3.3 x 10mm","3.5 x 10mm","3.5 x 11.5mm","4.0 x 10mm","4.0 x 11.5mm","4.0 x 13mm","4.5 x 10mm","4.5 x 11.5mm","5.0 x 8mm","5.0 x 10mm","6.0 x 8mm","Other"]],
+    ["torque","Insertion Torque",["— Select —","<15 Ncm (Low)","15–35 Ncm (Standard)","35–45 Ncm (High)",">45 Ncm (Very High)"]],
+    ["isq","ISQ (Implant Stability Quotient)",["— Select —","Below 60 (Low Stability)","60–69 (Medium Stability)","70–80 (High Stability)","Above 80 (Very High Stability)","Not Measured"]],
     ["impressionTechnique","Impression Technique",["— Select —","Open Tray Technique","Closed Tray Technique","Digital Scan"]],
-    ["abutmentSelection","Abutment Selection"],
-    ["prosthesisDelivery","Prosthesis Delivery"], ["maintenance","Maintenance"]
+    ["abutmentSelection","Abutment Selection",["— Select —","Stock Abutment","Custom Abutment — Zirconia","Custom Abutment — Titanium","Angled Abutment","Multi-Unit Abutment","Ball Attachment","Locator Attachment","Other"]],
+    ["prosthesisDelivery","Prosthesis Delivery",["— Select —","Screw-Retained Crown","Cement-Retained Crown","Screw-Retained Bridge","Cement-Retained Bridge","Implant-Supported Overdenture","Hybrid Prosthesis (All-on-4/6)","Other"]],
+    ["maintenance","Maintenance / Recall Plan",["— Select —","3-Month Recall","6-Month Recall","Annual Recall","As Needed","Not Scheduled"]]
   ]
 };
 
 async function renderProsthoTab(body, patient){
-  const cases = (await dbGetAll("prosthoCases")).filter(c=>c.patientId===patient.id).sort((a,b)=> new Date(b.date||0)-new Date(a.date||0));
   body.innerHTML = `
-    <div style="display:flex;gap:8px;margin-bottom:14px;">
+    <div class="filter-row" id="prSubTabs">
+      <div class="filter-chip ${clinicalProsthoSubTab==='Dentures'?'active':''}" data-sub="Dentures">Dentures &amp; Fixed</div>
+      <div class="filter-chip ${clinicalProsthoSubTab==='Crowns'?'active':''}" data-sub="Crowns">Crowns / Veneers</div>
+    </div>
+    <div id="prSubBody"></div>
+  `;
+  body.querySelectorAll("#prSubTabs [data-sub]").forEach(el=>{
+    el.onclick = ()=>{ clinicalProsthoSubTab = el.dataset.sub; renderProsthoTab(body, patient); };
+  });
+  const subBody = document.getElementById("prSubBody");
+  if(clinicalProsthoSubTab==="Crowns") await renderProstheticCasesList(subBody, patient);
+  else await renderProsthoDenturesList(subBody, patient);
+}
+
+async function renderProsthoDenturesList(body, patient){
+  const cases = (await dbGetAll("prosthoCases")).filter(c=>c.patientId===patient.id && c.type!=="Implant Prosthesis").sort((a,b)=> new Date(b.date||0)-new Date(a.date||0));
+  body.innerHTML = `
+    <div style="display:flex;gap:8px;margin:12px 0;">
       <button class="btn btn-primary btn-block" id="btnNewProstho" style="margin-bottom:0;">+ New Prosthodontic Case</button>
       <button class="icon-btn" id="btnPrintProsthoMulti" title="Print" style="background:var(--off-white);color:var(--charcoal-2);flex-shrink:0;">${icon('print',16)}</button>
     </div>
@@ -17663,7 +17833,7 @@ async function renderProsthoTab(body, patient){
         </div>
         <div class="note-meta">${c.date? new Date(c.date).toLocaleDateString():""}${(c.visits&&c.visits.length)? " · "+c.visits.length+" visit(s)":""}</div>
       </div>
-    `).join("") : `<div class="empty-card"><b>No prosthodontic cases yet</b>Complete Denture, Removable Partial Denture, Fixed Prosthodontics or Implant Prosthesis.</div>`}
+    `).join("") : `<div class="empty-card"><b>No prosthodontic cases yet</b>Complete Denture, Removable Partial Denture, or Fixed Prosthodontics.</div>`}
   `;
   document.getElementById("btnNewProstho").onclick = ()=> openProsthoTypePicker(patient, body);
   document.getElementById("btnPrintProsthoMulti").onclick = ()=> openMultiSelectPrintSheet(
@@ -17692,7 +17862,7 @@ function openProsthoTypePicker(patient, body){
     <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
     <h2>New Prosthodontic Case</h2>
     <p style="margin-bottom:10px;">What kind of case is this?</p>
-    ${PROSTHO_TYPES.map(t=>`<button class="btn btn-outline btn-block" data-prtype="${escapeAttr(t)}" style="margin-bottom:8px;">${t}</button>`).join("")}
+    ${PROSTHO_TYPES_PICKER.map(t=>`<button class="btn btn-outline btn-block" data-prtype="${escapeAttr(t)}" style="margin-bottom:8px;">${t}</button>`).join("")}
   `);
   document.querySelectorAll("[data-prtype]").forEach(el=> el.onclick = ()=>{
     closeSheet();
@@ -17774,7 +17944,8 @@ async function openProsthoForm(id, patient, body, presetType){
     logActivity((isEdit?"Updated":"Recorded")+" "+c.type+" case for "+patient.name, {patientId: patient.id});
     showToast("Saved");
     closeSheetOrReturn();
-    renderProsthoTab(body, patient);
+    if(c.type==="Implant Prosthesis") renderImplantCrownTab(body, patient);
+    else renderProsthoTab(body, patient);
   };
 }
 
@@ -18210,8 +18381,8 @@ async function openNewTreatmentSheet(patient, tabBody, patientId, prefill, templ
       <div class="field"><label>Discount</label><input type="number" min="0" id="ntDiscount" value="0"></div>
       <div class="field"><label>Discount Type</label>
         <select id="ntDiscountType">
-          <option value="percent" selected>% Percent</option>
-          <option value="flat">₹ Flat Amount</option>
+          <option value="flat" selected>₹ Flat Amount</option>
+          <option value="percent">% Percent</option>
         </select>
       </div>
     </div>
@@ -18485,8 +18656,8 @@ async function openEditTreatmentItemSheet(planId, itemId, patient, tabBody, pati
       <div class="field"><label>Discount</label><input type="number" min="0" id="etiDiscount" value="${item.discount}"></div>
       <div class="field"><label>Discount Type</label>
         <select id="etiDiscountType">
-          <option value="percent" ${(item.discountType||'percent')==='percent'?'selected':''}>% Percent</option>
-          <option value="flat" ${item.discountType==='flat'?'selected':''}>₹ Flat Amount</option>
+          <option value="flat" ${(item.discountType||'flat')==='flat'?'selected':''}>₹ Flat Amount</option>
+          <option value="percent" ${item.discountType==='percent'?'selected':''}>% Percent</option>
         </select>
       </div>
     </div>
@@ -18606,6 +18777,14 @@ async function openAddTreatmentNoteSheet(planId, itemId, patient, tabBody, patie
 }
 
 // ---- Insurance: mark a treatment as Cashless, reminder in 15 days, record reimbursement later ----
+function computeItemNetAmount(item){
+  const lineGross = (Number(item.fee)||0) * (Number(item.qty)||1);
+  const lineDiscount = item.discountType==="flat"
+    ? Math.min(lineGross, Number(item.discount)||0)
+    : lineGross * ((Number(item.discount)||0)/100);
+  return lineGross - lineDiscount;
+}
+
 async function openMarkCashlessSheet(planId, itemId, patient, tabBody, patientId){
   const plan = (await dbGetAll("treatmentPlans")).find(p=>p.id===planId);
   if(!plan){ showToast("Plan not found"); return; }
@@ -18616,7 +18795,7 @@ async function openMarkCashlessSheet(planId, itemId, patient, tabBody, patientId
   openSheet(`
     <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
     <h2>Mark as Cashless (Insurance)</h2>
-    <p style="margin-bottom:10px;">${escapeHtml(item.treatment||"Treatment")}${item.tooth? ' · Tooth '+escapeHtml(item.tooth):''} — ${finMoney((Number(item.fee)||0)*(Number(item.qty)||1), await finCurrency())}</p>
+    <p style="margin-bottom:10px;">${escapeHtml(item.treatment||"Treatment")}${item.tooth? ' · Tooth '+escapeHtml(item.tooth):''} — ${finMoney(computeItemNetAmount(item), await finCurrency())}${(item.discount&&Number(item.discount)>0)? ` <span style="color:var(--grey);">(after discount)</span>`:''}</p>
     <div class="field"><label>Insurer / Notes (optional)</label><input id="csInsurer" placeholder="e.g. Star Health, Policy No."></div>
     <p style="margin-bottom:10px;">This marks the treatment as a cashless insurance claim and sets a follow-up reminder for <b>${reminderDate.toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'})}</b> (15 days from today) to check on reimbursement. The amount reimbursed can be entered once insurance actually pays.</p>
     <button class="btn btn-primary btn-block" id="btnConfirmCashless">Mark as Cashless</button>
@@ -18628,7 +18807,7 @@ async function openMarkCashlessSheet(planId, itemId, patient, tabBody, patientId
       clinicId: plan.clinicId, treatment: item.treatment||"", tooth: item.tooth||"",
       insurer, status: "Pending",
       claimDate: nowIso(), reminderDate: reminderDate.toISOString(),
-      amountClaimed: (Number(item.fee)||0)*(Number(item.qty)||1),
+      amountClaimed: computeItemNetAmount(item),
       amountReimbursed: null, reimbursedDate: null, notes: ""
     };
     await dbAdd("insuranceClaims", claim);
@@ -18696,6 +18875,85 @@ async function openRecordReimbursementSheet(claimId, patient, tabBody, patientId
     }
     logActivity("Recorded insurance reimbursement of "+finMoney(amount,cur)+" for "+patient.name, {patientId: patient.id});
     showToast("Reimbursement recorded");
+    closeSheetOrReturn();
+    if(refreshFn) refreshFn();
+  };
+}
+
+// ---- Insurance: Co-payment — the portion the patient pays directly out of
+// pocket (common with cashless claims where insurance doesn't cover 100%).
+// Recorded as a normal payment (so it shows in Receipts too) but tagged
+// distinctly and linked to the claim.
+async function openRecordCopaymentSheet(claimId, patient, tabBody, patientId, refreshFn){
+  const claim = (await dbGetAll("insuranceClaims")).find(c=>c.id===claimId);
+  if(!claim){ showToast("Claim not found"); return; }
+  const cur = await finCurrency();
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>Record Co-payment</h2>
+    <p style="margin-bottom:10px;">${escapeHtml(claim.treatment||"Treatment")}${claim.tooth? ' · Tooth '+escapeHtml(claim.tooth):''}${claim.insurer? ' · '+escapeHtml(claim.insurer):''}</p>
+    <p style="margin-bottom:10px;color:var(--grey);">The portion ${escapeHtml(patient.name)} pays directly — separate from what the insurer reimburses.</p>
+    <div class="field-row">
+      <div class="field"><label>Amount</label><input id="cpAmount" type="number" min="0" step="0.01"></div>
+      <div class="field"><label>Date</label><input id="cpDate" type="date" value="${toDateKey(new Date())}"></div>
+    </div>
+    <div class="field"><label>Payment Mode</label><select id="cpMode">${FIN_PAYMENT_MODES.map(m=>`<option value="${m}">${m}</option>`).join("")}</select></div>
+    <div class="field"><label>Notes</label><input id="cpNotes" placeholder="Optional"></div>
+    <button class="btn btn-primary btn-block" id="btnSaveCopayment">Save &amp; Print Receipt</button>
+  `);
+  document.getElementById("btnSaveCopayment").onclick = async ()=>{
+    const amount = parseFloat(document.getElementById("cpAmount").value);
+    if(!amount || amount<=0){ showToast("Enter a valid amount"); return; }
+    const dateVal = document.getElementById("cpDate").value;
+    const mode = document.getElementById("cpMode").value;
+    const notes = document.getElementById("cpNotes").value.trim();
+    const date = dateVal? new Date(dateVal).toISOString() : nowIso();
+
+    const copayment = {
+      id: uid("pmt"), patientId: patient.id, invoiceId: null, receiptNumber: await nextReceiptNumber(null),
+      type: "Co-payment", claimId: claim.id,
+      amount, mode, notes: notes || ("Co-payment — "+(claim.treatment||"")),
+      date
+    };
+    await dbAdd("payments", copayment);
+    await syncPaymentToIncomeTransaction(copayment, patient);
+
+    logActivity("Recorded co-payment of "+finMoney(amount,cur)+" for "+patient.name, {patientId: patient.id});
+    showToast("Co-payment recorded");
+    closeSheetOrReturn();
+    if(refreshFn) refreshFn();
+    printReceipt(copayment, null, patient, cur);
+  };
+}
+
+async function openEditInsuranceClaimSheet(claimId, patient, tabBody, patientId, refreshFn){
+  const claim = (await dbGetAll("insuranceClaims")).find(c=>c.id===claimId);
+  if(!claim){ showToast("Claim not found"); return; }
+  const cur = await finCurrency();
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>Edit Insurance Claim</h2>
+    <p style="margin-bottom:10px;">${escapeHtml(claim.treatment||"Treatment")}${claim.tooth? ' · Tooth '+escapeHtml(claim.tooth):''}</p>
+    <div class="field"><label>Insurer / Notes</label><input id="ecInsurer" value="${escapeAttr(claim.insurer)}" placeholder="e.g. Star Health, Policy No."></div>
+    <div class="field"><label>Amount Claimed</label><input id="ecAmount" type="number" min="0" step="0.01" value="${claim.amountClaimed||0}"></div>
+    <div class="field"><label>Status</label>
+      <select id="ecStatus">
+        <option value="Pending" ${claim.status==="Pending"?"selected":""}>Pending</option>
+        <option value="Reimbursed" ${claim.status==="Reimbursed"?"selected":""}>Reimbursed</option>
+        <option value="Rejected" ${claim.status==="Rejected"?"selected":""}>Rejected</option>
+      </select>
+    </div>
+    <div class="field"><label>Notes</label><input id="ecNotes" value="${escapeAttr(claim.notes)}"></div>
+    <button class="btn btn-primary btn-block" id="btnSaveClaimEdit">Save Changes</button>
+  `);
+  document.getElementById("btnSaveClaimEdit").onclick = async ()=>{
+    claim.insurer = document.getElementById("ecInsurer").value.trim();
+    claim.amountClaimed = parseFloat(document.getElementById("ecAmount").value)||0;
+    claim.status = document.getElementById("ecStatus").value;
+    claim.notes = document.getElementById("ecNotes").value.trim();
+    await dbPut("insuranceClaims", claim);
+    logActivity("Updated insurance claim for "+patient.name, {patientId: patient.id});
+    showToast("Claim updated");
     closeSheetOrReturn();
     if(refreshFn) refreshFn();
   };
@@ -19836,26 +20094,70 @@ async function renderBillingTab(body, patientId, patient){
     });
   }else{
     const claims = (await dbGetAll("insuranceClaims")).filter(c=>c.patientId===patientId).sort((a,b)=> new Date(b.claimDate||0)-new Date(a.claimDate||0));
+    const allPayments = await dbGetAll("payments");
+    const copaidByClaim = {};
+    allPayments.filter(p=>p.type==="Co-payment" && p.claimId).forEach(p=>{
+      copaidByClaim[p.claimId] = (copaidByClaim[p.claimId]||0) + (p.amount||0);
+    });
     subBody.innerHTML = `
       ${claims.length? claims.map(c=>`
         <div class="note-card">
           <div class="note-head">
             <b>${escapeHtml(c.treatment||"Treatment")}${c.tooth? ' · Tooth '+escapeHtml(c.tooth):''}</b>
-            <span class="status-pill ins-${c.status}">${escapeHtml(c.status)}</span>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span class="status-pill ins-${c.status}">${escapeHtml(c.status)}</span>
+              <button class="qmenu-btn" data-claimmenu="${c.id}" style="transform:none;">${icon('settings',16)}</button>
+            </div>
           </div>
           <div class="note-meta">${c.insurer? escapeHtml(c.insurer)+" · ":""}Claimed ${new Date(c.claimDate).toLocaleDateString()}</div>
           <div class="note-meta" style="margin-top:2px;">Amount Claimed: ${finMoney(c.amountClaimed||0,cur)}</div>
+          ${copaidByClaim[c.id]? `<div class="note-meta" style="margin-top:2px;color:var(--charcoal-2);">Co-paid by Patient: ${finMoney(copaidByClaim[c.id],cur)}</div>` : ""}
           ${c.status==="Reimbursed"? `
             <div class="note-meta" style="margin-top:2px;font-weight:700;color:var(--green);">Amount Reimbursed: ${finMoney(c.amountReimbursed||0,cur)} · ${new Date(c.reimbursedDate).toLocaleDateString()}</div>
           ` : `
             <div class="note-meta" style="margin-top:2px;color:#8A6D00;">Follow-up reminder: ${new Date(c.reminderDate).toLocaleDateString()}</div>
             <button class="btn btn-primary btn-block" data-reimburse="${c.id}" style="margin-top:10px;">Payment Reimbursed</button>
           `}
+          <button class="btn btn-outline btn-block" data-copay="${c.id}" style="margin-top:8px;">+ Record Co-payment</button>
         </div>
       `).join("") : `<div class="empty-card" style="margin-top:12px;"><b>No insurance claims yet</b>Mark a treatment as "Cashless (Insurance)" from the Treatment tab to start one.</div>`}
     `;
     subBody.querySelectorAll("[data-reimburse]").forEach(el=> el.onclick = ()=>{
       openRecordReimbursementSheet(el.dataset.reimburse, patient, body, patientId, ()=>renderBillingTab(body, patientId, patient));
+    });
+    subBody.querySelectorAll("[data-copay]").forEach(el=> el.onclick = ()=>{
+      openRecordCopaymentSheet(el.dataset.copay, patient, body, patientId, ()=>renderBillingTab(body, patientId, patient));
+    });
+    subBody.querySelectorAll("[data-claimmenu]").forEach(el=> el.onclick = (ev)=>{
+      ev.stopPropagation();
+      const claimId = el.dataset.claimmenu;
+      openEntryActionMenu("Insurance Claim Options", [
+        { key:"edit", icon:"edit", text:"Edit", onClick: ()=>{ closeSheet(); openEditInsuranceClaimSheet(claimId, patient, body, patientId, ()=>renderBillingTab(body, patientId, patient)); } },
+        { key:"delete", icon:"trash", text:"Delete", onClick: async ()=>{
+          if(!confirm("Delete this insurance claim? This does not delete any payments already recorded against it.")) return;
+          const claimToDelete = (await dbGetAll("insuranceClaims")).find(x=>x.id===claimId);
+          await dbDelete("insuranceClaims", claimId);
+          if(claimToDelete && claimToDelete.planId && claimToDelete.itemId){
+            const plan = (await dbGetAll("treatmentPlans")).find(p=>p.id===claimToDelete.planId);
+            if(plan){
+              const item = (plan.items||[]).find(it=>it.id===claimToDelete.itemId);
+              if(item && item.insuranceClaimId===claimId){
+                delete item.insuranceClaimId;
+                delete item.insuranceStatus;
+                plan.updatedAt = nowIso();
+                await dbPut("treatmentPlans", plan);
+              }
+            }
+          }
+          const reminders = await dbGetAll("reminders");
+          const rem = reminders.find(r=>r.claimId===claimId);
+          if(rem){ await dbDelete("reminders", rem.id); }
+          logActivity("Deleted insurance claim for "+patient.name, {patientId: patient.id});
+          showToast("Claim deleted");
+          closeSheet();
+          renderBillingTab(body, patientId, patient);
+        } }
+      ]);
     });
   }
 }
@@ -20033,7 +20335,7 @@ async function openQuickBillForm(patient){
       <div class="field"><label>Discount</label><input type="number" min="0" id="qbDiscount" value="0"></div>
     </div>
     <div class="field"><label>Discount Type</label>
-      <select id="qbDiscountType"><option value="percent">% Percent</option><option value="flat">₹ Flat Amount</option></select>
+      <select id="qbDiscountType"><option value="flat" selected>₹ Flat Amount</option><option value="percent">% Percent</option></select>
     </div>
     <div class="plan-totals" id="qbTotalsBox"></div>
     <div class="field-row">
@@ -20094,7 +20396,7 @@ async function openQuickBillForm(patient){
       id: uid("plan"), patientId: patient.id, clinicId, doctor, createdDate: nowTs,
       items: [{ id: uid("planitem"), treatmentDate: nowTs, tooth: qbToothValue, diagnosis:"", treatment,
         qty, fee: feePerUnit, discount, discountType, priority:"Normal", status:"Completed", performedBy: doctor }],
-      overallDiscount:0, overallDiscountType:"percent", quickBill:true, createdAt: nowTs
+      overallDiscount:0, overallDiscountType:"flat", quickBill:true, createdAt: nowTs
     };
     await dbAdd("treatmentPlans", plan);
 
@@ -20316,7 +20618,7 @@ function renderInvoiceFormSheet(inv, clinics, isEdit, patient, cur){
   wireFormBack(goBack);
   renderInvItems();
   document.getElementById("btnAddInvItemRow").onclick = ()=>{
-    invoiceItemsDraft.push({id:uid("invitem"), description:"", qty:1, unitPrice:0, discount:0});
+    invoiceItemsDraft.push({id:uid("invitem"), description:"", qty:1, unitPrice:0, discount:0, discountType:"flat"});
     renderInvItems();
   };
   document.getElementById("btnLoadFromPlan").onclick = async ()=>{
@@ -20370,8 +20672,8 @@ function renderInvoiceFormSheet(inv, clinics, isEdit, patient, cur){
           <div class="field"><label>Discount</label><input type="number" min="0" data-f="discount" data-idx="${idx}" value="${it.discount}"></div>
           <div class="field"><label>Discount Type</label>
             <select data-f="discountType" data-idx="${idx}">
-              <option value="percent" ${(it.discountType||'percent')==='percent'?'selected':''}>% Percent</option>
-              <option value="flat" ${it.discountType==='flat'?'selected':''}>₹ Flat Amount</option>
+              <option value="flat" ${(it.discountType||'flat')==='flat'?'selected':''}>₹ Flat Amount</option>
+              <option value="percent" ${it.discountType==='percent'?'selected':''}>% Percent</option>
             </select>
           </div>
         </div>
@@ -22655,7 +22957,8 @@ function openDirectChatThread(otherEmail, otherName){
     if(!text) return;
     input.value = "";
     await dbAdd("directMessages", {
-      id: uid("dm"), convoId, fromEmail: myEmail, toEmail: otherEmail, text, createdAt: nowIso()
+      id: uid("dm"), convoId, fromEmail: myEmail, toEmail: otherEmail,
+      toEmailLower: otherEmail.toLowerCase(), text, createdAt: nowIso()
     });
   };
   document.getElementById("btnDmSend").onclick = send;
@@ -22692,7 +22995,7 @@ function playMessageBeep(){
 let dmGlobalSeenIds = null;
 function startGlobalDirectMessageListener(){
   if(!fbCurrentUserEmail) return;
-  window.__fb.listenQuery("directMessages", "toEmail", fbCurrentUserEmail, "createdAt", async (messages)=>{
+  window.__fb.listenQuery("directMessages", "toEmailLower", fbCurrentUserEmail.toLowerCase(), "createdAt", async (messages)=>{
     if(dmGlobalSeenIds===null){
       // First snapshot after login/reload — just record what already exists, don't notify.
       dmGlobalSeenIds = new Set(messages.map(m=>m.id));
@@ -24746,6 +25049,12 @@ async function openSettingsSheet(){
       </div>
       <div class="field"><label>Backup Reminder (days)</label><input id="sBackupDays" type="number" min="1" value="${s.backupReminderDays||7}"></div>
     </div>
+    <div class="section-title">Calendar &amp; Appointments</div>
+    <div class="field-row">
+      <div class="field"><label>Calendar Starts At</label><input type="time" id="sCalStart" value="${escapeAttr(s.calendarStartTime||'08:00')}"></div>
+      <div class="field"><label>Calendar Ends At</label><input type="time" id="sCalEnd" value="${escapeAttr(s.calendarEndTime||'20:00')}"></div>
+    </div>
+    <p style="margin-top:-8px;">Controls the time range shown in the Appointments calendar (Day and Week views). A specific clinic's own hours — set per weekday in Admin Panel &gt; Clinic Locations — still take priority over this when that clinic is selected.</p>
     <div class="section-title">Assist</div>
     <div class="field"><label>Assistant's WhatsApp Number</label><input id="sAssistantWa" value="${escapeAttr(s.assistantWhatsapp)}" placeholder="e.g. 91XXXXXXXXXX" inputmode="tel"></div>
     <p style="margin-top:-8px;">Used by "Remind Assistant" on the Assist tab. Include country code, no + or spaces.</p>
@@ -24803,6 +25112,8 @@ async function openSettingsSheet(){
     s.registrationNumber = document.getElementById("sReg").value.trim();
     s.currency = document.getElementById("sCurrency").value;
     s.backupReminderDays = parseInt(document.getElementById("sBackupDays").value)||7;
+    s.calendarStartTime = document.getElementById("sCalStart").value || "08:00";
+    s.calendarEndTime = document.getElementById("sCalEnd").value || "20:00";
     s.assistantWhatsapp = document.getElementById("sAssistantWa").value.trim().replace(/[^0-9]/g,"");
     s.kioskExitPin = document.getElementById("sKioskPin").value.trim().replace(/[^0-9]/g,"");
     s.teamChatMode = document.getElementById("sTeamChatMode").value;
