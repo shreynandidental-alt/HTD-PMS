@@ -466,15 +466,15 @@
   .clinical-nav-group:last-child{margin-bottom:0;}
   .clinical-nav-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--grey);margin:0 2px 7px;}
   .clinical-nav-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;}
+  .clinical-nav-grid-specialty{grid-template-columns:repeat(4,1fr);}
   .cv-tile{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;padding:10px 4px;border-radius:12px;background:var(--white);border:1px solid var(--grey-light);cursor:pointer;text-align:center;min-height:66px;transition:background 0.15s,border-color 0.15s;}
   .cv-tile-icon{display:flex;color:var(--charcoal-2);}
   .cv-tile-label{font-size:10.5px;font-weight:600;color:var(--charcoal-2);line-height:1.2;}
   .cv-tile.active{background:var(--green);border-color:var(--green);}
   .cv-tile.active .cv-tile-icon,.cv-tile.active .cv-tile-label{color:#FFFFFF;}
-  /* Desktop: one row for Overview & Records (6 items), two even rows of 4 for Specialty Modules (8 items) */
+  /* Desktop: one row for Overview & Records (6 items); Specialty Modules (8 items) stays 4-across at every size */
   @media (min-width:900px){
     .clinical-nav-grid-overview{grid-template-columns:repeat(6,1fr);}
-    .clinical-nav-grid-specialty{grid-template-columns:repeat(4,1fr);}
   }
   .appt-live-clock{
     display:flex;justify-content:space-between;align-items:center;background:var(--black);color:#FFFFFF;
@@ -914,6 +914,16 @@
     .header-icons .icon-btn{width:24px !important;height:24px !important;}
     .logo-full{height:42px !important;}
     select.clinic-select{max-width:60px !important;font-size:9.5px !important;padding:5px 2px !important;}
+  }
+  /* Larger touch targets on tablet-class touchscreens (iPad, Android tablets) —
+     detected by pointer:coarse + hover:none rather than screen width, so it
+     doesn't accidentally match a resized desktop browser window. Without this,
+     tablets used the same fixed icon size as a small laptop, which looks
+     disproportionately small on a big touchscreen. */
+  @media (min-width:640px) and (pointer:coarse) and (hover:none){
+    .icon-btn{width:42px !important;height:42px !important;}
+    .fab{width:64px !important;height:64px !important;font-size:30px !important;}
+    .fab-chat{width:58px !important;height:58px !important;}
   }
 </style>
 <script type="module">
@@ -2268,7 +2278,9 @@ async function getDashboardCounts(){
   const outstandingBalance = invoices.reduce((sum,inv)=> sum + (inv.balance||0), 0);
 
   const payments = await dbGetAll("payments");
-  const todaysCollection = payments.filter(p=> p.date===todayKey).reduce((sum,p)=> sum + (p.amount||0), 0);
+  const todaysCollection = payments
+    .filter(p=> p.date && toDateKey(new Date(p.date))===todayKey)
+    .reduce((sum,p)=> sum + (p.amount||0), 0);
 
   return {apptsToday, overdueReminders, patientsWaiting, todayAppts, remindersToday, todoTasksToday, treatmentDueToday, outstandingBalance, todaysCollection, followUpsDue};
 }
@@ -2914,7 +2926,7 @@ async function openPatientForm(id, prefill){
     p = Object.assign({
       id: uid("pat"), code:null, name:"", mobile:"", whatsappNumber:"", altMobile:"", email:"",
       dob:"", gender:"", address:"", city:"", occupation:"", referredBy:"",
-      preferredClinicId: selectedClinicId!=="ALL" ? selectedClinicId : (clinics[0]?.id||""),
+      preferredClinicId: selectedClinicId!=="ALL" ? selectedClinicId : getDefaultClinicId(clinics),
       treatingDoctor:"", medicalAlerts:"", allergies:"", currentMedications:"", generalNotes:"",
       status:"Active", createdAt: nowIso()
     }, prefill||{});
@@ -2948,17 +2960,18 @@ async function renderPatientFormSheet(p, clinics, isEdit, dupWarningHtml){
     </div>
     <div class="field-row">
       <div class="field"><label>Date of Birth</label><input id="pfDob" type="date" value="${escapeAttr(p.dob)}"></div>
+      <div class="field"><label>Age${p.dob? ' (auto-calculated)':''}</label><input id="pfAge" type="number" min="0" max="130" value="${escapeAttr(p.age||'')}" ${p.dob? 'readonly style="background:var(--off-white);color:var(--grey);"':''} placeholder="Years"></div>
+    </div>
+    <div class="field-row">
       <div class="field"><label>Gender</label>
         <select id="pfGender">
           ${["","Male","Female","Other"].map(g=>`<option value="${g}" ${p.gender===g?'selected':''}>${g||"Select"}</option>`).join("")}
         </select>
       </div>
+      <div class="field"><label>City</label><input id="pfCity" value="${escapeAttr(p.city)}"></div>
     </div>
     <div class="field"><label>Address</label><input id="pfAddress" value="${escapeAttr(p.address)}"></div>
-    <div class="field-row">
-      <div class="field"><label>City</label><input id="pfCity" value="${escapeAttr(p.city)}"></div>
-      <div class="field"><label>Occupation</label><input id="pfOccupation" value="${escapeAttr(p.occupation)}"></div>
-    </div>
+    <div class="field"><label>Occupation</label><input id="pfOccupation" value="${escapeAttr(p.occupation)}"></div>
     <div class="field"><label>ABHA ID</label><input id="pfAbha" value="${escapeAttr(p.abhaId)}" placeholder="14-digit Ayushman Bharat Health Account number"></div>
     <div class="field-row">
       <div class="field"><label>Preferred Clinic</label>
@@ -3008,6 +3021,22 @@ async function renderPatientFormSheet(p, clinics, isEdit, dupWarningHtml){
   wireDoctorSelect("pfDoctor");
   document.getElementById("pfMembership").addEventListener("change", (ev)=>{
     document.getElementById("pfMembershipCustomWrap").style.display = ev.target.value==="Custom" ? "block" : "none";
+  });
+  document.getElementById("pfDob").addEventListener("change", (ev)=>{
+    const ageInput = document.getElementById("pfAge");
+    const ageLabel = ageInput.parentElement.querySelector("label");
+    if(ev.target.value){
+      ageInput.value = computeAgeFromDob(ev.target.value);
+      ageInput.readOnly = true;
+      ageInput.style.background = "var(--off-white)";
+      ageInput.style.color = "var(--grey)";
+      ageLabel.textContent = "Age (auto-calculated)";
+    }else{
+      ageInput.readOnly = false;
+      ageInput.style.background = "";
+      ageInput.style.color = "";
+      ageLabel.textContent = "Age";
+    }
   });
   document.getElementById("btnSavePatient").onclick = ()=>savePatientFromForm(p, clinics, isEdit);
   const addFamilyBtn = document.getElementById("btnAddFamilyMember");
@@ -3106,6 +3135,9 @@ async function savePatientFromForm(p, clinics, isEdit){
     altMobile: document.getElementById("pfAlt").value.trim(),
     email: document.getElementById("pfEmail").value.trim(),
     dob: document.getElementById("pfDob").value,
+    age: document.getElementById("pfDob").value
+      ? computeAgeFromDob(document.getElementById("pfDob").value)
+      : (document.getElementById("pfAge").value? parseInt(document.getElementById("pfAge").value) : ""),
     gender: document.getElementById("pfGender").value,
     address: document.getElementById("pfAddress").value.trim(),
     city: document.getElementById("pfCity").value.trim(),
@@ -4503,7 +4535,7 @@ async function openAppointmentForm(id, prefill){
   }else{
     a = Object.assign({
       id: uid("appt"), patientId:"", patientName:"",
-      clinicId: selectedClinicId!=="ALL" ? selectedClinicId : (clinics[0]?.id||""),
+      clinicId: selectedClinicId!=="ALL" ? selectedClinicId : getDefaultClinicId(clinics),
       doctor:"", date: toDateKey(apptSelectedDate instanceof Date ? apptSelectedDate : new Date()),
       startTime:"10:00", durationMinutes:30, treatmentType:"", chair:"", notes:"", status:"Scheduled",
       createdAt: nowIso()
@@ -4678,7 +4710,7 @@ async function openReserveSlotForm(id, prefill){
   }else{
     a = Object.assign({
       id: uid("appt"), patientId:"", patientName:"Reserved",
-      clinicId: selectedClinicId!=="ALL" ? selectedClinicId : (clinics[0]?.id||""),
+      clinicId: selectedClinicId!=="ALL" ? selectedClinicId : getDefaultClinicId(clinics),
       doctor:"", date: toDateKey(apptSelectedDate instanceof Date ? apptSelectedDate : new Date()),
       startTime:"10:00", durationMinutes:30, notes:"", status:"Reserved",
       createdAt: nowIso()
@@ -6879,11 +6911,22 @@ function openEntryActionMenu(label, actions){
     if(el) el.onclick = a.onClick;
   });
 }
+function computeAgeFromDob(dobStr){
+  const dob = new Date(dobStr);
+  if(isNaN(dob.getTime())) return "";
+  const today = new Date();
+  let age = today.getFullYear() - dob.getFullYear();
+  const hasHadBirthdayThisYear = (today.getMonth() > dob.getMonth()) ||
+    (today.getMonth()===dob.getMonth() && today.getDate() >= dob.getDate());
+  if(!hasHadBirthdayThisYear) age--;
+  return Math.max(0, age);
+}
+
 function patientBlockAgeGender(patient){
   if(!patient) return "—";
   if(patient.ageGender) return patient.ageGender;
   if(patient.dob){
-    const age = new Date().getFullYear()-new Date(patient.dob).getFullYear();
+    const age = computeAgeFromDob(patient.dob);
     return `${age}/${patient.gender||"—"}`;
   }
   if(patient.age) return patient.gender ? `${patient.age}/${patient.gender}` : String(patient.age);
@@ -6958,7 +7001,7 @@ async function printDocument(opts){
     <style>
       *{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact;color-adjust:exact;}
       @page{ size:${pageSize} ${orientation}; margin:${mTop}mm ${mRight}mm ${mBottom}mm ${mLeft}mm; }
-      body{font-family:Arial,Helvetica,sans-serif;color:#14171A;padding:32px;max-width:760px;margin:0 auto;zoom:${zoomLevel};}
+      body{font-family:Arial,Helvetica,sans-serif;color:#14171A;padding:32px;padding-bottom:90px;max-width:760px;margin:0 auto;zoom:${zoomLevel};}
       .letterhead{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #14171A;padding-bottom:12px;margin-bottom:16px;gap:16px;}
       .letterhead-left{display:flex;align-items:center;gap:14px;}
       .letterhead-logo{width:130px;height:130px;object-fit:contain;flex-shrink:0;}
@@ -6984,7 +7027,7 @@ async function printDocument(opts){
       .sign-block .stamp{height:64px;object-fit:contain;display:block;margin-left:auto;margin-top:4px;}
       .sign-block .sign-name{font-size:12.5px;font-weight:700;margin-top:4px;}
       .sign-line{margin-top:60px;text-align:right;font-size:13px;}
-      .footer{margin-top:40px;text-align:center;font-size:10.5px;color:#999;border-top:1px solid #eee;padding-top:10px;page-break-inside:avoid;}
+      .footer{position:fixed;bottom:0;left:0;right:0;text-align:center;font-size:10.5px;color:#999;border-top:1px solid #eee;padding-top:10px;background:#fff;}
       .footer-meta span:not(:last-child)::after{content:" · ";}
       .footer-custom{margin-top:6px;color:#555;font-size:11px;text-align:center;}
       .pdf-hint{background:#eef8f0;border:1px solid #cfe8d6;border-radius:8px;padding:10px 14px;font-size:12.5px;color:#1F6E42;margin-bottom:16px;}
@@ -8252,7 +8295,7 @@ async function openTransactionForm(id){
   }else{
     t = {
       id: uid("fintx"), type:"Income", amount:"", date: toDateKey(new Date()),
-      clinicId: selectedClinicId!=="ALL" ? selectedClinicId : (clinics[0]?.id||""),
+      clinicId: selectedClinicId!=="ALL" ? selectedClinicId : getDefaultClinicId(clinics),
       category: incomeCats[0], paymentMode:"UPI", description:"", notes:"",
       vendorId:"", paymentStatus:"Paid",
       createdAt: nowIso()
@@ -8995,7 +9038,7 @@ async function openInventoryItemForm(id){
   }else{
     item = {
       id: uid("inv"), name:"", category: INV_CATEGORIES[0], brand:"", supplier:"", supplierContact:"", vendorId:"",
-      clinicId: selectedClinicId!=="ALL" ? selectedClinicId : (clinics[0]?.id||""),
+      clinicId: selectedClinicId!=="ALL" ? selectedClinicId : getDefaultClinicId(clinics),
       unit: INV_UNITS[0], quantityInStock:"", lowStockThreshold: DEFAULT_LOW_STOCK_THRESHOLD,
       purchasePrice:"", batchNumber:"", expiryDate:"", notes:"", createdAt: nowIso()
     };
@@ -12833,7 +12876,7 @@ async function openTreatmentPlanForm(planId, patient){
   }else{
     plan = {
       id: uid("plan"), patientId: patient.id,
-      clinicId: patient.preferredClinicId || (clinics[0]?.id||""),
+      clinicId: patient.preferredClinicId || getDefaultClinicId(clinics),
       doctor: patient.treatingDoctor || "",
       createdDate: nowIso(), items: []
     };
@@ -18440,7 +18483,7 @@ async function openNewTreatmentSheet(patient, tabBody, patientId, prefill, templ
     };
     const plan = {
       id: uid("plan"), patientId: patient.id,
-      clinicId: patient.preferredClinicId || (clinics[0]?.id||""),
+      clinicId: patient.preferredClinicId || getDefaultClinicId(clinics),
       doctor: patient.treatingDoctor || "",
       createdDate: item.treatmentDate,
       items: [item]
@@ -18559,7 +18602,7 @@ async function createInvoiceForTreatmentItem(item, patient){
   }];
   const totals = computeInvoiceTotals(items, 0, cur);
   const inv = {
-    id: uid("inv"), patientId: patient.id, clinicId: patient.preferredClinicId||(clinics[0]?.id||""),
+    id: uid("inv"), patientId: patient.id, clinicId: patient.preferredClinicId||getDefaultClinicId(clinics),
     invoiceNumber: await nextInvoiceNumber(),
     date: nowIso(), items, taxPercent: 0,
     totalGross: totals.gross, totalDiscount: totals.discount, totalTax: totals.tax, totalNet: totals.net,
@@ -18576,7 +18619,7 @@ async function generateInvoiceForTreatmentItem(item, patient, patientId){
   const { remaining } = await computeRemainingInvoiceableAmount(item, patient.id);
   if(remaining<=0){ showToast("This treatment has already been fully invoiced"); return; }
   const inv = {
-    id: uid("inv"), patientId: patient.id, clinicId: patient.preferredClinicId||(clinics[0]?.id||""),
+    id: uid("inv"), patientId: patient.id, clinicId: patient.preferredClinicId||getDefaultClinicId(clinics),
     invoiceNumber: await nextInvoiceNumber(),
     date: nowIso(), items: [], taxPercent: 0, amountPaid: 0
   };
@@ -18808,8 +18851,14 @@ async function openMarkCashlessSheet(planId, itemId, patient, tabBody, patientId
       insurer, status: "Pending",
       claimDate: nowIso(), reminderDate: reminderDate.toISOString(),
       amountClaimed: computeItemNetAmount(item),
-      amountReimbursed: null, reimbursedDate: null, notes: ""
+      amountReimbursed: null, reimbursedDate: null, notes: "", invoiceId: null
     };
+    // An invoice is generated automatically so the treatment is billed the
+    // moment it's marked cashless — co-payments (and eventually the
+    // reimbursement) apply against this same invoice rather than floating
+    // unlinked.
+    const invResult = await createInvoiceForTreatmentItem(item, patient);
+    if(invResult && invResult.inv) claim.invoiceId = invResult.inv.id;
     await dbAdd("insuranceClaims", claim);
     await dbAdd("reminders", {
       id: uid("rem"), patientId: patient.id, title: "Insurance reimbursement follow-up — "+(item.treatment||"treatment")+" for "+patient.name,
@@ -18820,7 +18869,7 @@ async function openMarkCashlessSheet(planId, itemId, patient, tabBody, patientId
     plan.updatedAt = nowIso();
     await dbPut("treatmentPlans", plan);
     logActivity("Marked "+(item.treatment||"a treatment")+" as cashless insurance for "+patient.name, {patientId: patient.id});
-    showToast("Marked as cashless — reminder set for "+reminderDate.toLocaleDateString());
+    showToast(invResult? "Marked as cashless, invoice "+invResult.inv.invoiceNumber+" created — reminder set for "+reminderDate.toLocaleDateString() : "Marked as cashless — reminder set for "+reminderDate.toLocaleDateString());
     closeSheetOrReturn();
     renderTreatmentTab(tabBody, patientId, patient);
   };
@@ -18877,6 +18926,11 @@ async function openRecordReimbursementSheet(claimId, patient, tabBody, patientId
     showToast("Reimbursement recorded");
     closeSheetOrReturn();
     if(refreshFn) refreshFn();
+    let invoice = null;
+    if(claim.invoiceId){
+      invoice = (await dbGetAll("invoices")).find(i=>i.id===claim.invoiceId);
+    }
+    printReceipt(reimbursementPayment, invoice, patient, cur, claim);
   };
 }
 
@@ -18909,20 +18963,34 @@ async function openRecordCopaymentSheet(claimId, patient, tabBody, patientId, re
     const notes = document.getElementById("cpNotes").value.trim();
     const date = dateVal? new Date(dateVal).toISOString() : nowIso();
 
+    // When the claim has a linked invoice (the normal case, created
+    // automatically when the treatment was marked cashless), the co-payment
+    // is applied straight to that invoice as a real partial payment —
+    // reducing its balance — rather than floating as an unlinked receipt.
+    let invoice = null;
+    if(claim.invoiceId){
+      invoice = (await dbGetAll("invoices")).find(i=>i.id===claim.invoiceId);
+    }
+    const receiptNumber = await nextReceiptNumber(invoice? invoice.id : null);
     const copayment = {
-      id: uid("pmt"), patientId: patient.id, invoiceId: null, receiptNumber: await nextReceiptNumber(null),
+      id: uid("pmt"), patientId: patient.id, invoiceId: invoice? invoice.id : null, receiptNumber,
       type: "Co-payment", claimId: claim.id,
       amount, mode, notes: notes || ("Co-payment — "+(claim.treatment||"")),
       date
     };
     await dbAdd("payments", copayment);
     await syncPaymentToIncomeTransaction(copayment, patient);
+    if(invoice){
+      invoice.amountPaid = (Number(invoice.amountPaid)||0) + amount;
+      invoice.balance = (Number(invoice.totalNet)||0) - invoice.amountPaid;
+      await dbPut("invoices", invoice);
+    }
 
     logActivity("Recorded co-payment of "+finMoney(amount,cur)+" for "+patient.name, {patientId: patient.id});
-    showToast("Co-payment recorded");
+    showToast("Co-payment recorded"+(invoice? " and applied to invoice "+invoice.invoiceNumber : ""));
     closeSheetOrReturn();
     if(refreshFn) refreshFn();
-    printReceipt(copayment, null, patient, cur);
+    printReceipt(copayment, invoice, patient, cur, claim);
   };
 }
 
@@ -19032,7 +19100,7 @@ async function openPrescriptionForm(rxId, patient){
     rx = (await dbGetAll("prescriptions")).find(x=>x.id===rxId);
     if(!rx){ showToast("Prescription not found"); return; }
   }else{
-    rx = { id: uid("rx"), patientId: patient.id, clinicId: patient.preferredClinicId||(clinics[0]?.id||""), doctor: patient.treatingDoctor||"", date: nowIso(), diagnosis:"", advice:"", followUpDate:"", items:[] };
+    rx = { id: uid("rx"), patientId: patient.id, clinicId: patient.preferredClinicId||getDefaultClinicId(clinics), doctor: patient.treatingDoctor||"", date: nowIso(), diagnosis:"", advice:"", followUpDate:"", items:[] };
   }
   rxItemsDraft = (rx.items||[]).map(it=>Object.assign({}, it));
   const doctors = await dbGetAll("users");
@@ -20094,6 +20162,7 @@ async function renderBillingTab(body, patientId, patient){
     });
   }else{
     const claims = (await dbGetAll("insuranceClaims")).filter(c=>c.patientId===patientId).sort((a,b)=> new Date(b.claimDate||0)-new Date(a.claimDate||0));
+    const allInvoicesForClaims = await dbGetAll("invoices");
     const allPayments = await dbGetAll("payments");
     const copaidByClaim = {};
     allPayments.filter(p=>p.type==="Co-payment" && p.claimId).forEach(p=>{
@@ -20110,6 +20179,7 @@ async function renderBillingTab(body, patientId, patient){
             </div>
           </div>
           <div class="note-meta">${c.insurer? escapeHtml(c.insurer)+" · ":""}Claimed ${new Date(c.claimDate).toLocaleDateString()}</div>
+          ${c.invoiceId? `<div class="note-meta" style="margin-top:2px;">Invoice: ${escapeHtml(allInvoicesForClaims.find(i=>i.id===c.invoiceId)?.invoiceNumber||"—")}</div>` : ""}
           <div class="note-meta" style="margin-top:2px;">Amount Claimed: ${finMoney(c.amountClaimed||0,cur)}</div>
           ${copaidByClaim[c.id]? `<div class="note-meta" style="margin-top:2px;color:var(--charcoal-2);">Co-paid by Patient: ${finMoney(copaidByClaim[c.id],cur)}</div>` : ""}
           ${c.status==="Reimbursed"? `
@@ -20513,7 +20583,7 @@ async function openInvoiceForm(invoiceId, patient, prefillItems){
   }else{
     const allInvoices = await dbGetAll("invoices");
     inv = {
-      id: uid("inv"), patientId: patient.id, clinicId: patient.preferredClinicId||(clinics[0]?.id||""),
+      id: uid("inv"), patientId: patient.id, clinicId: patient.preferredClinicId||getDefaultClinicId(clinics),
       invoiceNumber: await nextInvoiceNumber(),
       date: nowIso(), items: [], taxPercent: 0, amountPaid: 0
     };
@@ -21083,34 +21153,44 @@ async function printBillPayment(inv, patient, clinics, cur){
   logActivity("Printed bill payment for invoice "+inv.invoiceNumber+" for "+patient.name, {patientId:patient.id});
 }
 
-async function printReceipt(payment, invoice, patient, cur){
+async function printReceipt(payment, invoice, patient, cur, claim){
   const clinics = await dbGetAll("clinics");
   const clinic = clinics.find(c=>c.id===(invoice&&invoice.clinicId)) || clinics.find(c=>c.id===patient.preferredClinicId);
   const title = patient.gender==="Female" ? "Ms." : patient.gender==="Male" ? "Mr." : "";
   const treatmentLines = invoice && invoice.items && invoice.items.length
     ? invoice.items.map(it=> escapeHtml(it.description||"Treatment")).join("<br>")
-    : escapeHtml(payment.type || payment.notes || "Payment");
+    : escapeHtml((claim&&claim.treatment) || payment.type || payment.notes || "Payment");
   const billNo = invoice ? escapeHtml(invoice.invoiceNumber) : "—";
   const amountStr = finMoney(payment.amount, cur);
+  const paidLabel = claim ? (payment.type==="Co-payment" ? "Co-payment Amount" : "Paid Amount") : "Paid Amount";
+  const insuranceBlockHtml = claim ? `
+    <div class="row"><b>Insurance Claim</b></div>
+    ${claim.insurer? `<div class="row"><b>Insurer</b>${escapeHtml(claim.insurer)}</div>`:""}
+    <div class="row"><b>Claim Status</b>${escapeHtml(claim.status||"Pending")}</div>
+    <div class="row"><b>Amount Claimed</b>${finMoney(claim.amountClaimed||0,cur)}</div>
+    ${claim.status==="Reimbursed"? `<div class="row"><b>Amount Reimbursed by Insurance</b>${finMoney(claim.amountReimbursed||0,cur)}${claim.reimbursedDate? ' ('+new Date(claim.reimbursedDate).toLocaleDateString()+')':''}</div>` : `<div class="row"><b>Amount Reimbursed by Insurance</b>Pending</div>`}
+  ` : "";
   const bodyHtml = `
     <div class="patient-block" style="margin-bottom:16px;">
       <div class="pb-row"><b>Receipt Number:</b> ${escapeHtml(payment.receiptNumber||"")}</div>
       <div class="pb-row"><b>Receipt Date:</b> ${new Date(payment.date).toLocaleDateString(undefined,{day:'2-digit',month:'short',year:'numeric'})}</div>
+      ${billNo!=="—"? `<div class="pb-row"><b>Bill No:</b> ${billNo}</div>`:""}
     </div>
     <div style="font-size:13.5px;font-weight:600;margin-bottom:8px;">
       Received with thanks from ${title} ${escapeHtml(patient.name)}${patient.code? ` (${escapeHtml(patient.code)})`:''} the sum of ${amountStr}.
     </div>
     <div class="row"><b>Mode of Payment</b>${escapeHtml(payment.mode||"—")}</div>
     <table style="margin-top:14px;">
-      <thead><tr><th>Sr No.</th><th>Bill No</th><th>Treatment Type</th><th style="text-align:right;">Paid Amount</th></tr></thead>
+      <thead><tr><th>Sr No.</th><th>Bill No</th><th>Treatment Type</th><th style="text-align:right;">${paidLabel}</th></tr></thead>
       <tbody>
         <tr><td>1</td><td>${billNo}</td><td>${treatmentLines}</td><td style="text-align:right;">${amountStr}</td></tr>
       </tbody>
       <tfoot><tr><td colspan="3" style="text-align:right;font-weight:bold;">Total</td><td style="text-align:right;font-weight:bold;">${amountStr}</td></tr></tfoot>
     </table>
+    ${insuranceBlockHtml? `<div style="margin-top:16px;">${insuranceBlockHtml}</div>` : ""}
     ${(payment.notes && payment.notesPrint!==false)? `<div style="margin-top:16px;font-size:13px;"><b>Notes:</b> ${escapeHtml(payment.notes)}</div>` : `<div style="margin-top:16px;font-size:13px;color:#999;">Notes:</div>`}
   `;
-  printDocument({ title:"Receipt", patient, clinic, bodyHtml, signHtml: await buildSignBlock(patient.treatingDoctor) });
+  printDocument({ title: claim? "Insurance Payment Receipt" : "Receipt", patient, clinic, bodyHtml, signHtml: await buildSignBlock(patient.treatingDoctor) });
 }
 
 // ---- Payment to be Made (simple due tracker, separate from formal Invoices) ----
@@ -23137,7 +23217,7 @@ async function openClinicsSheet(){
       ${clinics.map(c=>`
         <div class="clinic-row">
           <div>
-            <div class="name">${escapeHtml(c.name)} ${c.archived?'<span class="badge-archived">Archived</span>':''}</div>
+            <div class="name">${escapeHtml(c.name)} ${c.isDefault?'<span class="status-pill ins-Reimbursed">Default</span>':''} ${c.archived?'<span class="badge-archived">Archived</span>':''}</div>
             <div class="addr">${escapeHtml(c.address||"")}</div>
           </div>
           <div style="display:flex;gap:6px;">
@@ -23175,6 +23255,10 @@ async function openClinicForm(id){
       <div class="field"><label>Email</label><input id="fClinicEmail" value="${escapeAttr(c.email)}"></div>
     </div>
     <div class="field"><label>Website</label><input id="fClinicWebsite" value="${escapeAttr(c.website)}" placeholder="www.example.com"></div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;margin:4px 2px 14px;cursor:pointer;">
+      <input type="checkbox" id="fClinicIsDefault" ${c.isDefault?"checked":""} style="width:16px;height:16px;flex-shrink:0;"> Set as Default Clinic
+    </label>
+    <p style="margin-top:-10px;">New patients and appointments will be assigned to this clinic automatically, until changed manually. Only one clinic can be default at a time.</p>
     <div class="section-title" style="margin-top:6px;">Print Header &amp; Footer</div>
     <div class="field">
       <label>Clinic Logo</label>
@@ -23238,6 +23322,15 @@ async function openClinicForm(id){
     c.phone = document.getElementById("fClinicPhone").value.trim();
     c.email = document.getElementById("fClinicEmail").value.trim();
     c.website = document.getElementById("fClinicWebsite").value.trim();
+    c.isDefault = document.getElementById("fClinicIsDefault").checked;
+    if(c.isDefault){
+      for(const other of clinics){
+        if(other.id!==c.id && other.isDefault){
+          other.isDefault = false;
+          await dbPut("clinics", other);
+        }
+      }
+    }
     c.logo = logoDataUrl;
     c.printFooter = document.getElementById("fClinicFooter").value.trim();
     c.googleReviewLink = document.getElementById("fClinicReviewLink").value.trim();
@@ -25386,7 +25479,7 @@ function excelDateKey(v){
 
 async function importPatientDataWorkbook(workbook){
   const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived);
-  const defaultClinicId = selectedClinicId!=="ALL" ? selectedClinicId : (clinics[0]?.id||"");
+  const defaultClinicId = selectedClinicId!=="ALL" ? selectedClinicId : getDefaultClinicId(clinics);
   let patients = await dbGetAll("patients");
   const byMobile = {};
   patients.forEach(p=>{ if(p.mobile) byMobile[p.mobile] = p; });
@@ -25715,6 +25808,16 @@ function openExcelImportSheet(){
 // ---------------------------------------------------------
 // Clinic selector
 // ---------------------------------------------------------
+// Returns the clinic ID marked "Set as Default" in Clinic Locations, or
+// falls back to the first clinic if none is explicitly set. Used wherever
+// a new patient or appointment needs a starting clinic assigned automatically.
+function getDefaultClinicId(clinics){
+  const flagged = clinics.find(c=>c.isDefault && !c.archived);
+  if(flagged) return flagged.id;
+  const firstActive = clinics.find(c=>!c.archived);
+  return (firstActive || clinics[0])?.id || "";
+}
+
 async function refreshClinicSelector(){
   const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived);
   const sel = document.getElementById("clinicSelect");
