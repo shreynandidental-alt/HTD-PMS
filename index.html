@@ -2079,7 +2079,7 @@ function apptRowHtml(a){
       <div class="appt-time">${formatTime(a.startTime)}</div>
       <div class="appt-main">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-          <span class="an">${escapeHtml(a.patientName||"Unknown")}${a.status==="InChair"&&a.chair? ` <span style="font-weight:400;color:var(--grey);">(${escapeHtml(a.chair)})</span>` : ""}</span>
+          <span class="an" data-openpatient="${a.patientId||""}" style="${a.patientId?'cursor:pointer;text-decoration:underline;text-decoration-color:transparent;':''}">${escapeHtml(a.patientName||"Unknown")}</span>${a.status==="InChair"&&a.chair? ` <span style="font-weight:400;color:var(--grey);">(${escapeHtml(a.chair)})</span>` : ""}
           <span class="status-pill st-${a.status}">${a.status}</span>
         </div>
         <div class="am">${escapeHtml(a.treatmentType||"General")}${a.doctor? " · Dr. "+escapeHtml(a.doctor):""}</div>
@@ -2103,6 +2103,7 @@ function apptQuickActions(a){
   }
   list.push({label:"Call",action:"__call",ico:"phone"});
   list.push({label:"WhatsApp",action:"__whatsapp",ico:"message"});
+  list.push({label:"Open Profile",action:"__openprofile",ico:"user"});
   return list;
 }
 
@@ -2130,10 +2131,25 @@ function wireApptRowActions(root){
         return;
       }
       if(act==="__reschedule"){ openAppointmentForm(id); return; }
+      if(act==="__openprofile"){
+        const appts = await dbGetAll("appointments");
+        const apt = appts.find(x=>x.id===id);
+        if(apt && apt.patientId) openPatientProfile(apt.patientId);
+        return;
+      }
       if(act==="InChair"){ await promptChairThenSetInChair(id); return; }
       await setApptStatus(id, act);
       if(currentPage==="home") renderHome();
       else if(currentPage==="appointments") renderAppointments();
+    });
+  });
+  root.querySelectorAll(".an[data-openpatient]").forEach(nameEl=>{
+    const pid = nameEl.dataset.openpatient;
+    if(!pid) return;
+    nameEl.addEventListener("click", (e)=>{
+      e.stopPropagation();
+      hideApptHoverCard();
+      openPatientProfile(pid);
     });
   });
   root.querySelectorAll(".appt-row[data-apptid]").forEach(row=>{
@@ -2931,7 +2947,7 @@ async function openPatientForm(id, prefill){
       status:"Active", createdAt: nowIso()
     }, prefill||{});
   }
-  renderPatientFormSheet(p, clinics, !!id);
+  await renderPatientFormSheet(p, clinics, !!id);
 }
 
 async function renderPatientFormSheet(p, clinics, isEdit, dupWarningHtml){
@@ -3162,7 +3178,7 @@ async function savePatientFromForm(p, clinics, isEdit){
   if(!isEdit && !updated._dupConfirmed){
     const dups = await findPossibleDuplicates(updated.mobile, updated.altMobile, updated.name, null);
     if(dups.length){
-      renderPatientFormSheet(updated, clinics, isEdit, `
+      await renderPatientFormSheet(updated, clinics, isEdit, `
         <div class="warn-banner" style="border-color:#E8D2AC;">
           <b style="display:block;margin-bottom:6px;">Possible existing patient found</b>
           ${dups.slice(0,3).map(d=>`
@@ -6455,7 +6471,7 @@ const CommunicationService = {
 // yet seen.
 async function checkForNewOnlineBookings(){
   const s = (await dbGetAll("settings"))[0] || {};
-  if(!s.onlineBookingEnabled) return;
+  if(!s.onlineBookingEnabled && !s.requestApptEnabled) return;
   let all = [];
   try{
     all = await dbGetAll("onlineBookings");
@@ -6463,10 +6479,11 @@ async function checkForNewOnlineBookings(){
   const bookings = all.filter(b=>!b.processed);
   if(!bookings.length) return;
   for(const b of bookings){
+    const isQuickRequest = !b.time;
     await createLoggedNotification({
       id: uid("notif"), type:"online_booking", relatedId: b.id||uid("ob"), monthKey: toDateKey(new Date()),
-      title: "New Online Booking: "+(b.name||"Patient"),
-      message: (b.name||"A patient")+" requested "+(b.date?new Date(b.date).toLocaleDateString():"")+(b.time?" at "+b.time:"")+" via your website.",
+      title: (isQuickRequest? "New Appointment Request: " : "New Online Booking: ")+(b.name||"Patient"),
+      message: (b.name||"A patient")+(isQuickRequest? " requested an appointment around "+(b.date?new Date(b.date).toLocaleDateString():"a preferred date") : " requested "+(b.date?new Date(b.date).toLocaleDateString():"")+(b.time?" at "+b.time:""))+" via your website.",
       read:false, createdAt: nowIso()
     });
     b.processed = true;
@@ -6477,21 +6494,25 @@ async function checkForNewOnlineBookings(){
 }
 
 function showNewBookingPopup(bookings){
+  const anyQuick = bookings.some(b=>!b.time);
+  const allQuick = bookings.every(b=>!b.time);
+  const heading = allQuick ? "New Appointment Request" : anyQuick ? "New Website Requests" : "New Online Booking";
   const wrap = document.createElement("div");
   wrap.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:900;display:flex;align-items:center;justify-content:center;padding:20px;";
   wrap.innerHTML = `
     <div style="background:#fff;border-radius:14px;padding:20px;max-width:380px;width:100%;max-height:80vh;overflow-y:auto;">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
         <span style="color:var(--green);">${icon('calendar',20)}</span>
-        <h2 style="margin:0;font-size:17px;">New Online Booking${bookings.length>1?'s':''}!</h2>
+        <h2 style="margin:0;font-size:17px;">${heading}${bookings.length>1?'s':''}!</h2>
       </div>
       <p style="margin:6px 0 14px;color:var(--grey);">Requested through your website${bookings.length>1?' — '+bookings.length+' new requests':''}.</p>
       ${bookings.map(b=>`
         <div class="list-card" style="margin-bottom:10px;">
-          <div style="font-weight:700;font-size:14px;margin-bottom:4px;">${escapeHtml(b.name||"Unknown")}</div>
+          <div style="font-weight:700;font-size:14px;margin-bottom:4px;">${escapeHtml(b.name||"Unknown")}${b.age? " · Age "+escapeHtml(String(b.age)):""}</div>
           <div style="font-size:12.5px;color:var(--charcoal-2);margin-bottom:2px;">${escapeHtml(b.phone||"No phone given")}${b.email?" · "+escapeHtml(b.email):""}</div>
-          <div style="font-size:12.5px;color:var(--charcoal-2);margin-bottom:2px;">Requested: ${b.date?new Date(b.date).toLocaleDateString():"—"}${b.time?" at "+escapeHtml(b.time):""}</div>
-          ${b.reason? `<div style="font-size:12.5px;color:var(--grey);">${escapeHtml(b.reason)}</div>` : ""}
+          ${b.clinicLocation? `<div style="font-size:12.5px;color:var(--charcoal-2);margin-bottom:2px;">${escapeHtml(b.clinicLocation)}</div>`:""}
+          <div style="font-size:12.5px;color:var(--charcoal-2);margin-bottom:2px;">${b.time? "Requested: "+(b.date?new Date(b.date).toLocaleDateString():"—")+" at "+escapeHtml(b.time) : "Preferred date: "+(b.date?new Date(b.date).toLocaleDateString():"Not specified")}</div>
+          ${b.reason? `<div style="font-size:12.5px;color:var(--grey);">Reason: ${escapeHtml(b.reason)}</div>` : ""}
           <button class="btn btn-outline btn-sm" data-nbaccept="${escapeAttr(b.id||"")}" style="margin-top:8px;">Add to Appointments</button>
         </div>
       `).join("")}
@@ -6512,12 +6533,222 @@ function showNewBookingPopup(bookings){
 async function prefillAppointmentFromOnlineBooking(b){
   const patients = await dbGetAll("patients");
   let patient = patients.find(p=> p.mobile===b.phone);
+  let matchedClinicId = null;
+  if(b.clinicLocation){
+    const clinics = await dbGetAll("clinics");
+    const match = clinics.find(c=> c.name===b.clinicLocation) || clinics.find(c=> normalizeStr(c.name)===normalizeStr(b.clinicLocation));
+    if(match) matchedClinicId = match.id;
+  }
   if(!patient){
-    openPatientForm(null, {name:b.name, mobile:b.phone, email:b.email});
+    const patientPrefill = {name:b.name, mobile:b.phone, email:b.email, age:b.age};
+    if(matchedClinicId) patientPrefill.preferredClinicId = matchedClinicId;
+    openPatientForm(null, patientPrefill);
     showToast("Add this new patient, then book their appointment for "+(b.date?new Date(b.date).toLocaleDateString():"")+(b.time?" "+b.time:""));
   }else{
-    openAppointmentForm(null, {patientId: patient.id, date: b.date, startTime: b.time, notes: b.reason});
+    const apptPrefill = {patientId: patient.id, date: b.date, startTime: b.time, notes: b.reason};
+    if(matchedClinicId) apptPrefill.clinicId = matchedClinicId;
+    openAppointmentForm(null, apptPrefill);
   }
+}
+
+// ---- Request Appointment Button (Admin) ----
+// Unlike the slot-picking Online Booking Widget above (which needs its own
+// separately-hosted file), this is a single self-contained <script> block —
+// paste it anywhere on an existing website and it works immediately, no
+// hosting step. It writes into the same "onlineBookings" Firestore
+// collection (just without a specific time slot), so it rides the exact
+// same detection/notification/bell pipeline already wired up above.
+const REQUEST_APPT_FC = {
+  apiKey: "AIzaSyAGoza4ETqjMJug-7royY0pZfpzBgNAPFU",
+  authDomain: "htd-pms.firebaseapp.com",
+  projectId: "htd-pms",
+  storageBucket: "htd-pms.firebasestorage.app",
+  messagingSenderId: "500213236550",
+  appId: "1:500213236550:web:86b6e6c0fb4defa38d1b47"
+};
+// Shared field markup for both embed variants below. Clinic Location uses
+// the exact internal clinic names as option VALUES (even though the visible
+// label uses the "|" the practice asked for) so a submission can be matched
+// straight to the right clinic when it's converted into a real appointment.
+function requestApptFieldsHtml(){
+  return [
+'    <label style="display:block;font-size:12.5px;font-weight:600;color:#555;margin-bottom:4px;">Full Name *</label>',
+'    <input id="htdRaName" style="width:100%;box-sizing:border-box;padding:10px;border:1px solid #ddd;border-radius:8px;margin-bottom:12px;font-size:14px;">',
+'    <div style="display:flex;gap:10px;">',
+'      <div style="flex:1;">',
+'        <label style="display:block;font-size:12.5px;font-weight:600;color:#555;margin-bottom:4px;">Age *</label>',
+'        <input id="htdRaAge" type="number" min="0" max="130" style="width:100%;box-sizing:border-box;padding:10px;border:1px solid #ddd;border-radius:8px;margin-bottom:12px;font-size:14px;">',
+'      </div>',
+'      <div style="flex:1;">',
+'        <label style="display:block;font-size:12.5px;font-weight:600;color:#555;margin-bottom:4px;">Mobile *</label>',
+'        <input id="htdRaMobile" type="tel" style="width:100%;box-sizing:border-box;padding:10px;border:1px solid #ddd;border-radius:8px;margin-bottom:12px;font-size:14px;">',
+'      </div>',
+'    </div>',
+'    <label style="display:block;font-size:12.5px;font-weight:600;color:#555;margin-bottom:4px;">Email</label>',
+'    <input id="htdRaEmail" type="email" style="width:100%;box-sizing:border-box;padding:10px;border:1px solid #ddd;border-radius:8px;margin-bottom:12px;font-size:14px;">',
+'    <label style="display:block;font-size:12.5px;font-weight:600;color:#555;margin-bottom:4px;">Clinic Location</label>',
+'    <select id="htdRaClinic" style="width:100%;box-sizing:border-box;padding:10px;border:1px solid #ddd;border-radius:8px;margin-bottom:12px;font-size:14px;background:#fff;">',
+'      <option value="">Select a location</option>',
+'      <option value="Healing Touch Dental \u2013 Sector 23">Healing Touch Dental | Sector 23</option>',
+'      <option value="Healing Touch Dental \u2013 Sector 45">Healing Touch Dental | Sector 45</option>',
+'    </select>',
+'    <label style="display:block;font-size:12.5px;font-weight:600;color:#555;margin-bottom:4px;">Preferred Date</label>',
+'    <input id="htdRaDate" type="date" style="width:100%;box-sizing:border-box;padding:10px;border:1px solid #ddd;border-radius:8px;margin-bottom:12px;font-size:14px;">',
+'    <label style="display:block;font-size:12.5px;font-weight:600;color:#555;margin-bottom:4px;">Reason (brief)</label>',
+'    <textarea id="htdRaReason" rows="2" style="width:100%;box-sizing:border-box;padding:10px;border:1px solid #ddd;border-radius:8px;margin-bottom:14px;font-size:14px;font-family:inherit;resize:vertical;"></textarea>',
+'    <div id="htdRaStatus" style="font-size:13px;margin-bottom:10px;"></div>'
+  ].join("\n");
+}
+// The submit handler is identical for both variants except for what happens
+// after a successful save (popup closes itself; inline form just resets in
+// place so the page stays where it was).
+function requestApptSubmitScript(mode){
+  const afterSuccessJs = mode==="popup"
+    ? '      document.getElementById("htdRaForm").innerHTML = "<p style=\\"text-align:center;padding:20px 0;color:#1F6F54;font-weight:600;\\">Thank you! Your request has been sent \u2014 we\'ll be in touch shortly.</p><button onclick=\\"document.getElementById(\'htdRaOverlay\').style.display=\'none\'\\" style=\\"width:100%;background:#1F6F54;color:#fff;border:none;padding:12px;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;\\">Close</button>";'
+    : '      document.getElementById("htdRaForm").innerHTML = "<p style=\\"text-align:center;padding:24px 0;color:#1F6F54;font-weight:600;\\">Thank you! Your request has been sent \u2014 we\'ll be in touch shortly.</p>";';
+  return [
+'  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";',
+'  import { getFirestore, collection, addDoc } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";',
+'  const fbApp = initializeApp('+JSON.stringify(REQUEST_APPT_FC)+', "htd-request-appt-widget-'+mode+'");',
+'  const fbDb = getFirestore(fbApp);',
+(mode==="popup" ? [
+'  const btn = document.getElementById("htdRaBtn");',
+'  const overlay = document.getElementById("htdRaOverlay");',
+'  btn.onclick = () => { overlay.style.display = "flex"; };',
+'  document.getElementById("htdRaCancel").onclick = () => { overlay.style.display = "none"; };',
+'  overlay.addEventListener("click", (e) => { if(e.target === overlay) overlay.style.display = "none"; });'
+].join("\n") : ""),
+'  document.getElementById("htdRaSubmit").onclick = async () => {',
+'    const name = document.getElementById("htdRaName").value.trim();',
+'    const age = document.getElementById("htdRaAge").value.trim();',
+'    const mobile = document.getElementById("htdRaMobile").value.trim();',
+'    const statusEl = document.getElementById("htdRaStatus");',
+'    if(!name || !age || !mobile){ statusEl.textContent = "Please fill in your name, age, and mobile number."; statusEl.style.color = "#B00020"; return; }',
+'    const submitBtn = document.getElementById("htdRaSubmit");',
+'    submitBtn.disabled = true; submitBtn.textContent = "Submitting...";',
+'    try{',
+'      await addDoc(collection(fbDb, "onlineBookings"), {',
+'        name, age, phone: mobile,',
+'        email: document.getElementById("htdRaEmail").value.trim(),',
+'        clinicLocation: document.getElementById("htdRaClinic").value,',
+'        date: document.getElementById("htdRaDate").value,',
+'        reason: document.getElementById("htdRaReason").value.trim(),',
+'        processed: false,',
+'        createdAt: new Date().toISOString()',
+'      });',
+afterSuccessJs,
+'    }catch(e){',
+'      statusEl.textContent = "Something went wrong. Please try again or call us directly.";',
+'      statusEl.style.color = "#B00020";',
+'      submitBtn.disabled = false; submitBtn.textContent = "Submit Request";',
+'    }',
+'  };'
+  ].join("\n");
+}
+
+// Variant 1: a button that opens a popup form on top of the page.
+function generateRequestApptButtonEmbedCode(){
+  return [
+'<!-- Healing Touch Dental — Request Appointment button. Paste this wherever',
+'     on your site you want the button to appear. -->',
+'<button id="htdRaBtn" style="background:#1F6F54;color:#fff;border:none;padding:12px 22px;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;font-family:inherit;">Request Appointment</button>',
+'<div id="htdRaOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:99999;align-items:center;justify-content:center;padding:16px;">',
+'  <div style="background:#fff;border-radius:14px;padding:22px;max-width:400px;width:100%;max-height:90vh;overflow-y:auto;font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,sans-serif;">',
+'    <h2 style="margin:0 0 4px;font-size:19px;color:#1a1a1a;">Request an Appointment</h2>',
+'    <p style="margin:0 0 16px;color:#777;font-size:13px;">We\'ll call or message you to confirm a time.</p>',
+'    <div id="htdRaForm">',
+requestApptFieldsHtml(),
+'      <button id="htdRaSubmit" style="width:100%;background:#1F6F54;color:#fff;border:none;padding:12px;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;">Submit Request</button>',
+'      <button id="htdRaCancel" style="width:100%;background:none;color:#777;border:none;padding:10px;font-size:14px;cursor:pointer;margin-top:4px;">Cancel</button>',
+'    </div>',
+'  </div>',
+'</div>',
+'<script type="module">',
+requestApptSubmitScript("popup"),
+'<'+'/script>'
+  ].join("\n");
+}
+
+// Variant 2: the form itself, always visible on the page — no button, no
+// popup, just a "Submit Request" button at the bottom of the form.
+function generateRequestApptInlineEmbedCode(){
+  return [
+'<!-- Healing Touch Dental — Request Appointment form (embedded directly,',
+'     no popup). Paste this wherever on your site you want the form to appear. -->',
+'<div style="max-width:400px;font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,sans-serif;">',
+'  <h2 style="margin:0 0 4px;font-size:19px;color:#1a1a1a;">Request an Appointment</h2>',
+'  <p style="margin:0 0 16px;color:#777;font-size:13px;">We\'ll call or message you to confirm a time.</p>',
+'  <div id="htdRaForm">',
+requestApptFieldsHtml(),
+'    <button id="htdRaSubmit" style="width:100%;background:#1F6F54;color:#fff;border:none;padding:12px;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;">Submit Request</button>',
+'  </div>',
+'</div>',
+'<script type="module">',
+requestApptSubmitScript("inline"),
+'<'+'/script>'
+  ].join("\n");
+}
+
+async function openRequestApptButtonSheet(){
+  const s = (await dbGetAll("settings"))[0] || {id:"main"};
+  const requests = (await dbGetAll("onlineBookings")).filter(b=>!b.time).sort((a,b)=> new Date(b.createdAt||0)-new Date(a.createdAt||0));
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>Request Appointment Button</h2>
+    <p style="margin-bottom:10px;">Copy-paste snippets for your website — no separate hosting needed. Visitors fill in a short form, and it lands here as a notification.</p>
+    <div class="warn-banner" style="margin-bottom:12px;">Writes straight into your Firestore database (the same <code>onlineBookings</code> collection as the slot-based widget). Make sure your Firestore security rules allow public <code>create</code> on that collection before sharing it — see the note at the bottom.</div>
+    <label class="ai-crs-check" style="margin-bottom:14px;"><input type="checkbox" id="raEnabled" ${s.requestApptEnabled?'checked':''}> Enable notifications for this button</label>
+    <button class="btn btn-primary btn-block" id="btnSaveRaEnabled" style="margin-bottom:16px;">Save</button>
+    <div class="section-title" style="margin-bottom:6px;">Option 1 — Button that opens a pop-up form</div>
+    <p style="margin:0 0 8px;">A button visitors click; the form appears in a pop-up on top of the page.</p>
+    <button class="btn btn-outline btn-block" id="btnCopyRaEmbedPopup" style="margin-bottom:16px;">${icon('file',15)} Copy Pop-up Button Code</button>
+    <div class="section-title" style="margin-bottom:6px;">Option 2 — Form embedded directly on the page</div>
+    <p style="margin:0 0 8px;">No button, no pop-up — the form itself sits inline wherever you paste it, with its own Submit button.</p>
+    <button class="btn btn-outline btn-block" id="btnCopyRaEmbedInline" style="margin-bottom:16px;">${icon('file',15)} Copy Inline Form Code</button>
+    <p style="margin:0 0 16px;">Paste whichever you choose anywhere in your website's HTML — in the body, a page template, or right before <code>&lt;/body&gt;</code>.</p>
+    <div class="section-title" style="margin-bottom:8px;">Requests Received</div>
+    ${requests.length? requests.map(b=>`
+      <div class="note-card">
+        <div class="note-head"><b>${escapeHtml(b.name||"Unknown")}${b.age? " · Age "+escapeHtml(String(b.age)):""}</b>${b.processed? `<span class="status-pill">Reviewed</span>`:`<span class="status-pill" style="background:var(--amber-bg);color:var(--amber);">New</span>`}</div>
+        <div class="note-meta">${escapeHtml(b.phone||"No phone")}${b.email?" · "+escapeHtml(b.email):""}</div>
+        ${b.clinicLocation? `<div class="note-meta" style="margin-top:2px;">${escapeHtml(b.clinicLocation)}</div>`:""}
+        <div class="note-meta" style="margin-top:2px;">Preferred date: ${b.date? new Date(b.date).toLocaleDateString():"Not specified"}</div>
+        ${b.reason? `<div class="note-meta" style="margin-top:2px;">Reason: ${escapeHtml(b.reason)}</div>`:""}
+        <button class="btn btn-outline btn-block" data-raaccept="${b.id}" style="margin-top:8px;">Add to Appointments</button>
+      </div>
+    `).join("") : `<div class="empty-card"><b>No requests yet</b>They'll show up here as soon as someone submits the form on your website.</div>`}
+  `);
+  document.getElementById("btnSaveRaEnabled").onclick = async ()=>{
+    s.requestApptEnabled = document.getElementById("raEnabled").checked;
+    await dbPut("settings", s);
+    showToast("Saved");
+  };
+  document.getElementById("btnCopyRaEmbedPopup").onclick = async ()=>{
+    try{
+      await navigator.clipboard.writeText(generateRequestApptButtonEmbedCode());
+      showToast("Pop-up button code copied — paste it into your website");
+    }catch(e){
+      showToast("Couldn't copy — select and copy the code manually");
+    }
+  };
+  document.getElementById("btnCopyRaEmbedInline").onclick = async ()=>{
+    try{
+      await navigator.clipboard.writeText(generateRequestApptInlineEmbedCode());
+      showToast("Inline form code copied — paste it into your website");
+    }catch(e){
+      showToast("Couldn't copy — select and copy the code manually");
+    }
+  };
+  document.querySelectorAll("[data-raaccept]").forEach(btn=>{
+    btn.onclick = async ()=>{
+      const b = requests.find(x=>x.id===btn.dataset.raaccept);
+      if(!b) return;
+      b.processed = true;
+      await dbPut("onlineBookings", b);
+      closeSheet();
+      await prefillAppointmentFromOnlineBooking(b);
+    };
+  });
 }
 
 async function openOnlineBookingSettingsSheet(){
@@ -18903,13 +19134,27 @@ async function openRecordReimbursementSheet(claimId, patient, tabBody, patientId
     claim.notes = notes;
     await dbPut("insuranceClaims", claim);
 
+    // The reimbursement is money collected against the same bill the
+    // cashless claim was raised for — linking it to that invoice (and
+    // updating its balance) keeps the invoice's paid/outstanding totals
+    // accurate, the same way a co-payment against it already does.
+    let invoice = null;
+    if(claim.invoiceId){
+      invoice = (await dbGetAll("invoices")).find(i=>i.id===claim.invoiceId);
+    }
+    const receiptNumber = await nextReceiptNumber(invoice? invoice.id : null);
     const reimbursementPayment = {
-      id: uid("pmt"), patientId: patient.id, invoiceId: null, receiptNumber: await nextReceiptNumber(null), type: "Insurance", claimId: claim.id,
+      id: uid("pmt"), patientId: patient.id, invoiceId: invoice? invoice.id : null, receiptNumber, type: "Insurance", claimId: claim.id,
       amount, mode, notes: notes || ("Insurance reimbursement — "+(claim.treatment||"")),
       date: claim.reimbursedDate
     };
     await dbAdd("payments", reimbursementPayment);
     await syncPaymentToIncomeTransaction(reimbursementPayment, patient);
+    if(invoice){
+      invoice.amountPaid = (Number(invoice.amountPaid)||0) + amount;
+      invoice.balance = (Number(invoice.totalNet)||0) - invoice.amountPaid;
+      await dbPut("invoices", invoice);
+    }
 
     const reminders = await dbGetAll("reminders");
     const rem = reminders.find(r=>r.claimId===claimId);
@@ -18923,13 +19168,9 @@ async function openRecordReimbursementSheet(claimId, patient, tabBody, patientId
       }
     }
     logActivity("Recorded insurance reimbursement of "+finMoney(amount,cur)+" for "+patient.name, {patientId: patient.id});
-    showToast("Reimbursement recorded");
+    showToast("Reimbursement recorded"+(invoice? " and applied to invoice "+invoice.invoiceNumber : ""));
     closeSheetOrReturn();
     if(refreshFn) refreshFn();
-    let invoice = null;
-    if(claim.invoiceId){
-      invoice = (await dbGetAll("invoices")).find(i=>i.id===claim.invoiceId);
-    }
     printReceipt(reimbursementPayment, invoice, patient, cur, claim);
   };
 }
@@ -20203,6 +20444,11 @@ async function renderBillingTab(body, patientId, patient){
       const claimId = el.dataset.claimmenu;
       openEntryActionMenu("Insurance Claim Options", [
         { key:"edit", icon:"edit", text:"Edit", onClick: ()=>{ closeSheet(); openEditInsuranceClaimSheet(claimId, patient, body, patientId, ()=>renderBillingTab(body, patientId, patient)); } },
+        { key:"print", icon:"print", text:"Print", onClick: async ()=>{
+          closeSheet();
+          const claimToPrint = (await dbGetAll("insuranceClaims")).find(x=>x.id===claimId);
+          if(claimToPrint) await printInsuranceClaim(claimToPrint, patient);
+        } },
         { key:"delete", icon:"trash", text:"Delete", onClick: async ()=>{
           if(!confirm("Delete this insurance claim? This does not delete any payments already recorded against it.")) return;
           const claimToDelete = (await dbGetAll("insuranceClaims")).find(x=>x.id===claimId);
@@ -21151,6 +21397,42 @@ async function printBillPayment(inv, patient, clinics, cur){
   const signHtml = await buildSignBlock(patient.treatingDoctor);
   printDocument({ title:"Bill Payment", patient, clinic, bodyHtml, signHtml });
   logActivity("Printed bill payment for invoice "+inv.invoiceNumber+" for "+patient.name, {patientId:patient.id});
+}
+
+// Prints a standalone summary of one insurance claim — status, amounts,
+// linked invoice, and any co-payments recorded against it. Distinct from
+// printReceipt (which prints a single payment/receipt); this covers the
+// whole claim at a glance.
+async function printInsuranceClaim(claim, patient){
+  const cur = await finCurrency();
+  const clinics = await dbGetAll("clinics");
+  const clinic = clinics.find(c=>c.id===claim.clinicId) || clinics.find(c=>c.id===patient.preferredClinicId);
+  let invoice = null;
+  if(claim.invoiceId){
+    invoice = (await dbGetAll("invoices")).find(i=>i.id===claim.invoiceId);
+  }
+  const copayments = (await dbGetAll("payments")).filter(p=>p.type==="Co-payment" && p.claimId===claim.id).sort((a,b)=> new Date(a.date)-new Date(b.date));
+  const totalCopaid = copayments.reduce((s,p)=> s+(Number(p.amount)||0), 0);
+  const bodyHtml = `
+    <h2 style="margin:0 0 10px;">Insurance Claim</h2>
+    <div class="row"><b>Treatment</b>${escapeHtml(claim.treatment||"—")}${claim.tooth? " · Tooth "+escapeHtml(claim.tooth):""}</div>
+    ${claim.insurer? `<div class="row"><b>Insurer</b>${escapeHtml(claim.insurer)}</div>`:""}
+    <div class="row"><b>Claim Status</b>${escapeHtml(claim.status||"Pending")}</div>
+    <div class="row"><b>Claim Date</b>${claim.claimDate? new Date(claim.claimDate).toLocaleDateString():"—"}</div>
+    ${invoice? `<div class="row"><b>Linked Invoice</b>${escapeHtml(invoice.invoiceNumber)}</div>`:""}
+    <div class="row"><b>Amount Claimed</b>${finMoney(claim.amountClaimed||0,cur)}</div>
+    ${claim.status==="Reimbursed"? `<div class="row"><b>Amount Reimbursed by Insurance</b>${finMoney(claim.amountReimbursed||0,cur)}${claim.reimbursedDate? " ("+new Date(claim.reimbursedDate).toLocaleDateString()+")":""}</div>` : `<div class="row"><b>Amount Reimbursed by Insurance</b>Pending</div>`}
+    ${totalCopaid>0? `<div class="row"><b>Total Co-paid by Patient</b>${finMoney(totalCopaid,cur)}</div>`:""}
+    ${copayments.length? `
+      <h3 style="font-size:13px;margin:14px 0 4px;">Co-payment History</h3>
+      <table><thead><tr><th>Date</th><th>Receipt No</th><th>Mode</th><th style="text-align:right;">Amount</th></tr></thead><tbody>
+        ${copayments.map(p=>`<tr><td>${new Date(p.date).toLocaleDateString()}</td><td>${escapeHtml(p.receiptNumber||"")}</td><td>${escapeHtml(p.mode||"")}</td><td style="text-align:right;">${finMoney(p.amount,cur)}</td></tr>`).join("")}
+      </tbody></table>
+    ` : ""}
+    ${claim.notes? `<div class="row" style="margin-top:10px;"><b>Notes</b>${escapeHtml(claim.notes)}</div>`:""}
+  `;
+  printDocument({ title:"Insurance Claim", patient, clinic, docDate: new Date().toLocaleDateString(), bodyHtml, signHtml: await buildSignBlock(patient.treatingDoctor) });
+  logActivity("Printed insurance claim details for "+patient.name, {patientId: patient.id});
 }
 
 async function printReceipt(payment, invoice, patient, cur, claim){
@@ -22279,6 +22561,7 @@ async function renderAdminPanel(){
       { label:"Communication Attribute", icon:"settings", action: null },
       { label:"Communication Settings (WhatsApp Provider)", icon:"message", action: openCommunicationSettingsSheet },
       { label:"Online Booking Widget", icon:"calendar", action: openOnlineBookingSettingsSheet },
+      { label:"Request Appointment Button", icon:"calendar", action: openRequestApptButtonSheet },
       { label:"Live Message Sync", icon:"chat", action: openLiveMessageSyncSettingsSheet },
       { label:"WhatsApp Template", icon:"message", action: openWhatsAppTemplatesSheet },
       { label:"SMS Template", icon:"sms", action: openSmsTemplatesSheet },
