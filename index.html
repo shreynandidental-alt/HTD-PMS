@@ -5000,10 +5000,12 @@ async function renderAssistCommitments(body){
 
 function commitmentRowHtml(c){
   const overdue = c.status==="Pending" && commitmentDueTs(c) < Date.now();
+  const isLabCommitment = c.category==="Check With Lab";
   const actions = c.status==="Done" ? [] : [
     {label:"Done", action:"done", ico:"check"},
     {label:"Snooze", action:"snooze", ico:"bell"},
-    {label:"Edit", action:"edit", ico:"edit"}
+    {label:"Edit", action:"edit", ico:"edit"},
+    ...(isLabCommitment? [{label:"Remind Lab", action:"remindlab", ico:"message"}] : [])
   ];
   return `
     <div class="appt-row">
@@ -5031,8 +5033,59 @@ function wireCommitmentActions(root){
       if(act==="done"){ await setCommitmentStatus(id,"Done"); refreshAssistAndHome(); }
       else if(act==="snooze"){ openSnoozeSheet(id); }
       else if(act==="edit"){ openCommitmentForm(id); }
+      else if(act==="remindlab"){ await remindLabForCommitment(id); }
     });
   });
+}
+
+// One-click version of the Communication > Lab flow, triggered straight
+// from a "Check With Lab" commitment: finds that patient's active lab
+// case(s) and opens the same status-check message, ready to send — without
+// needing to go find the patient and pick the case manually.
+async function remindLabForCommitment(commitmentId){
+  const items = await dbGetAll("commitments");
+  const c = items.find(x=>x.id===commitmentId);
+  if(!c || !c.patientId){ showToast("This commitment isn't linked to a patient"); return; }
+  const patients = await dbGetAll("patients");
+  const patient = patients.find(p=>p.id===c.patientId);
+  if(!patient){ showToast("Patient not found"); return; }
+  const cases = (await dbGetAll("labCases")).filter(lc=>lc.patientId===patient.id && lc.status!=="Delivered to Patient");
+  if(!cases.length){ showToast("No active lab case found for "+patient.name); return; }
+  if(cases.length===1){
+    const { message, lab } = await buildLabStatusCheckMessage(cases, patient);
+    if(!lab || (!lab.phone && !lab.email)){ showToast("No contact number/email on file for this lab — add one under Lab Cases"); return; }
+    openWhatsAppComposer({ toName: lab.name, toNumber: lab.phone, patientId: null, title:"Lab Status Check", message });
+  }else{
+    openRemindLabCasePickerSheet(cases, patient);
+  }
+}
+
+function openRemindLabCasePickerSheet(cases, patient){
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>Remind Lab — ${escapeHtml(patient.name)}</h2>
+    <p style="margin-bottom:10px;">This patient has more than one active lab case — pick which one(s) to ask about.</p>
+    <div class="list-card">
+      ${cases.map(lc=>`
+        <label style="display:flex;align-items:flex-start;gap:10px;padding:9px 6px;cursor:pointer;border-bottom:1px solid var(--off-white);">
+          <input type="checkbox" class="remindlab-case-check" value="${lc.id}" style="margin-top:2px;" checked>
+          <div>
+            <div style="font-weight:700;font-size:13px;">${escapeHtml(lc.caseType||"Lab Case")}${lc.tooth?" · Tooth "+escapeHtml(lc.tooth):""}</div>
+            <div style="font-size:11.5px;color:var(--grey);">${escapeHtml(lc.labName||"No lab set")} · ${escapeHtml(lc.status||"")}${lc.dateSent? " · Sent "+new Date(lc.dateSent).toLocaleDateString():""}</div>
+          </div>
+        </label>
+      `).join("")}
+    </div>
+    <button class="btn btn-primary btn-block" id="btnRemindLabConfirm" style="margin-top:10px;">Prepare Reminder Message</button>
+  `);
+  document.getElementById("btnRemindLabConfirm").onclick = async ()=>{
+    const checked = [...document.querySelectorAll(".remindlab-case-check:checked")].map(cb=> cases.find(c=>c.id===cb.value));
+    if(!checked.length){ showToast("Select at least one lab case"); return; }
+    const { message, lab } = await buildLabStatusCheckMessage(checked, patient);
+    if(!lab || (!lab.phone && !lab.email)){ showToast("No contact number/email on file for this lab — add one under Lab Cases"); return; }
+    closeSheet();
+    openWhatsAppComposer({ toName: lab.name, toNumber: lab.phone, patientId: null, title:"Lab Status Check", message });
+  };
 }
 
 async function setCommitmentStatus(id, status){
@@ -5046,9 +5099,22 @@ async function setCommitmentStatus(id, status){
   showToast("Marked " + status);
 }
 
-function refreshAssistAndHome(){
+async function refreshAssistAndHome(){
   if(currentPage==="assist") renderAssistBody();
   else if(currentPage==="home") renderHome();
+}
+
+// Commitments marked Done just sit there forever otherwise — after a week
+// they're no longer useful to see, so they're quietly removed rather than
+// cluttering the list indefinitely.
+async function cleanupOldCompletedCommitments(){
+  const items = await dbGetAll("commitments");
+  const cutoff = Date.now() - 7*86400000;
+  const stale = items.filter(c=> c.status==="Done" && c.completedAt && new Date(c.completedAt).getTime() < cutoff);
+  for(const c of stale){
+    await dbDelete("commitments", c.id).catch(()=>{});
+  }
+  if(stale.length) refreshAssistAndHome();
 }
 
 function openFollowUpForm(patient){
@@ -7675,6 +7741,18 @@ async function renderCommRecipientPicker(){
 // ready-to-send status-check message with the case details already filled
 // in, and sets the recipient to that case's lab contact (via labId) so
 // WhatsApp/SMS/Email go straight to the right lab.
+// Shared by the Communication > Lab flow and the "Remind Lab" quick-action
+// on Check-With-Lab commitments — builds one status-check message covering
+// every case passed in, and resolves which lab contact it should go to.
+async function buildLabStatusCheckMessage(cases, patient){
+  const labs = await dbGetAll("labs");
+  const firstLabId = cases[0].labId;
+  const lab = firstLabId ? labs.find(l=>l.id===firstLabId) : labs.find(l=> normalizeStr(l.name)===normalizeStr(cases[0].labName||""));
+  const caseLines = cases.map(c=> `• ${c.caseType||"Case"}${c.tooth?" (Tooth "+c.tooth+")":""} — sent ${c.dateSent?new Date(c.dateSent).toLocaleDateString():"—"}, promised by ${c.labPromisedDate?new Date(c.labPromisedDate).toLocaleDateString():"—"}, current status: ${c.status||"—"}`).join("\n");
+  const message = `Hi${lab?" "+lab.name:""}, checking on the status of the following lab case(s) for patient ${patient.name}:\n\n${caseLines}\n\nCould you please confirm the current status and expected completion date? Thank you.\n— Healing Touch Dental`;
+  return { message, lab };
+}
+
 async function renderCommLabCasesPicker(patient){
   const zone = document.getElementById("commLabCasesZone");
   if(!zone) return;
@@ -7701,13 +7779,9 @@ async function renderCommLabCasesPicker(patient){
   document.getElementById("btnCommGenLabMsg").onclick = async ()=>{
     const checked = [...document.querySelectorAll(".comm-labcase-check:checked")].map(cb=> cases.find(c=>c.id===cb.value));
     if(!checked.length){ showToast("Select at least one lab case"); return; }
-    const labs = await dbGetAll("labs");
-    const firstLabId = checked[0].labId;
-    const lab = firstLabId ? labs.find(l=>l.id===firstLabId) : labs.find(l=> normalizeStr(l.name)===normalizeStr(checked[0].labName||""));
-    const mixedLabs = checked.some(c=> (c.labId||"") !== firstLabId);
+    const mixedLabs = checked.some(c=> (c.labId||"") !== checked[0].labId);
+    const { message, lab } = await buildLabStatusCheckMessage(checked, patient);
     if(mixedLabs) showToast("Selected cases are from different labs — message addressed to "+(lab?lab.name:checked[0].labName||"the first case's lab"));
-    const caseLines = checked.map(c=> `• ${c.caseType||"Case"}${c.tooth?" (Tooth "+c.tooth+")":""} — sent ${c.dateSent?new Date(c.dateSent).toLocaleDateString():"—"}, promised by ${c.labPromisedDate?new Date(c.labPromisedDate).toLocaleDateString():"—"}, current status: ${c.status||"—"}`).join("\n");
-    const message = `Hi${lab?" "+lab.name:""}, checking on the status of the following lab case(s) for patient ${patient.name}:\n\n${caseLines}\n\nCould you please confirm the current status and expected completion date? Thank you.\n— Healing Touch Dental`;
     commSelectedRecipient = {
       type: "Lab", id: lab?lab.id:null, name: lab?lab.name:(checked[0].labName||"Lab"),
       phone: lab?lab.phone:"", email: lab?lab.email:"", prefillMessage: message
@@ -26343,6 +26417,7 @@ setupLogin(async function boot(){
     await checkLowStockNotifications();
     await checkForNewOnlineBookings();
     await checkChecklistNotifications();
+    await cleanupOldCompletedCommitments();
     if(bootSettings && bootSettings.teamChatMode==="direct") startGlobalDirectMessageListener();
     await refreshClinicSelector();
     await initStickyNote();
@@ -26364,6 +26439,7 @@ setupLogin(async function boot(){
       await checkLowStockNotifications();
       await checkForNewOnlineBookings();
       await checkChecklistNotifications();
+      await cleanupOldCompletedCommitments();
     }, 60000);
   }catch(err){
     console.error(err);
