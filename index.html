@@ -6475,7 +6475,7 @@ async function checkForNewOnlineBookings(){
   let all = [];
   try{
     all = await dbGetAll("onlineBookings");
-  }catch(e){ return; } // silently skip this cycle — e.g. offline
+  }catch(e){ console.error("checkForNewOnlineBookings: couldn't read onlineBookings —", e); return; } // e.g. offline, or a Firestore rules issue
   const bookings = all.filter(b=>!b.processed);
   if(!bookings.length) return;
   for(const b of bookings){
@@ -6692,10 +6692,18 @@ requestApptSubmitScript("inline"),
 async function openRequestApptButtonSheet(){
   const s = (await dbGetAll("settings"))[0] || {id:"main"};
   const requests = (await dbGetAll("onlineBookings")).filter(b=>!b.time).sort((a,b)=> new Date(b.createdAt||0)-new Date(a.createdAt||0));
+  const notifsOn = !!s.requestApptEnabled;
   openSheet(`
     <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
     <h2>Request Appointment Button</h2>
     <p style="margin-bottom:10px;">Copy-paste snippets for your website — no separate hosting needed. Visitors fill in a short form, and it lands here as a notification.</p>
+    <div style="display:flex;align-items:center;gap:10px;padding:12px 14px;border-radius:10px;margin-bottom:14px;background:${notifsOn?'var(--green-bg,#E7F5EE)':'#FCEBEB'};border:1px solid ${notifsOn?'var(--green,#1F6F54)':'#D9534F'};">
+      <span style="font-size:20px;">${notifsOn? '🔔' : '🔕'}</span>
+      <div>
+        <div style="font-weight:700;font-size:13.5px;color:${notifsOn?'var(--green,#1F6F54)':'#B00020'};">Notifications are currently ${notifsOn? 'ON':'OFF'}</div>
+        <div style="font-size:12px;color:var(--charcoal-2);">${notifsOn? "You&rsquo;ll get a pop-up and bell alert for new requests." : "Requests still save, but you won&rsquo;t be alerted until this is turned on below."}</div>
+      </div>
+    </div>
     <div class="warn-banner" style="margin-bottom:12px;">Writes straight into your Firestore database (the same <code>onlineBookings</code> collection as the slot-based widget). Make sure your Firestore security rules allow public <code>create</code> on that collection before sharing it — see the note at the bottom.</div>
     <label class="ai-crs-check" style="margin-bottom:14px;"><input type="checkbox" id="raEnabled" ${s.requestApptEnabled?'checked':''}> Enable notifications for this button</label>
     <button class="btn btn-primary btn-block" id="btnSaveRaEnabled" style="margin-bottom:16px;">Save</button>
@@ -6717,11 +6725,20 @@ async function openRequestApptButtonSheet(){
         <button class="btn btn-outline btn-block" data-raaccept="${b.id}" style="margin-top:8px;">Add to Appointments</button>
       </div>
     `).join("") : `<div class="empty-card"><b>No requests yet</b>They'll show up here as soon as someone submits the form on your website.</div>`}
+    <div class="section-title" style="margin-top:20px;margin-bottom:6px;">Firestore Security Rule (required)</div>
+    <p style="margin:0 0 8px;">Without this rule, submissions from your website will fail with "Something went wrong" — visitors aren't logged in, so Firestore blocks the write by default until this is added. In the <a href="https://console.firebase.google.com/" target="_blank" rel="noopener">Firebase Console</a> → your project → Firestore Database → Rules tab, make sure a rule like this is present (merge it into whatever rules are already there — don't just replace the whole file):</p>
+    <pre id="raRulesSnippet" style="background:#1a1a1a;color:#e8e8e8;padding:12px;border-radius:8px;font-size:11.5px;overflow-x:auto;white-space:pre;margin-bottom:8px;">match /onlineBookings/{docId} {
+  allow create: if true;
+  allow read, update, delete: if request.auth != null;
+}</pre>
+    <button class="btn btn-outline btn-block" id="btnCopyRaRules" style="margin-bottom:8px;">${icon('file',15)} Copy Rule</button>
+    <p style="margin:0 0 4px;">This allows anyone to submit a new request (needed for the public form to work) but only your logged-in staff can read, edit, or delete them — so requests stay private. Click "Publish" in the Firebase Console after adding it.</p>
   `);
   document.getElementById("btnSaveRaEnabled").onclick = async ()=>{
     s.requestApptEnabled = document.getElementById("raEnabled").checked;
     await dbPut("settings", s);
-    showToast("Saved");
+    showToast(s.requestApptEnabled? "Saved — notifications are now ON" : "Saved — notifications are now OFF");
+    openRequestApptButtonSheet();
   };
   document.getElementById("btnCopyRaEmbedPopup").onclick = async ()=>{
     try{
@@ -6737,6 +6754,14 @@ async function openRequestApptButtonSheet(){
       showToast("Inline form code copied — paste it into your website");
     }catch(e){
       showToast("Couldn't copy — select and copy the code manually");
+    }
+  };
+  document.getElementById("btnCopyRaRules").onclick = async ()=>{
+    try{
+      await navigator.clipboard.writeText(document.getElementById("raRulesSnippet").textContent);
+      showToast("Rule copied — paste it into Firestore Rules in the Firebase Console");
+    }catch(e){
+      showToast("Couldn't copy — select and copy the rule manually");
     }
   };
   document.querySelectorAll("[data-raaccept]").forEach(btn=>{
@@ -19554,10 +19579,10 @@ async function renderFilesTab(body, patientId, patient){
     <p style="margin:-4px 0 8px;">STL, DICOM (.dcm) and scanner files can be stored and downloaded here, but this app can't render or measure them in-browser — they'll need to be opened in your CBCT/scanner software or a dedicated viewer.</p>
     <input type="file" accept="image/*,.pdf,.stl,.dcm,.ply,.zip" id="docFileInput" style="display:none;">
     <button class="btn btn-primary btn-block" id="btnUploadDoc" style="margin-bottom:14px;">+ Upload Document</button>
-    ${docs.length? `<div class="list-card">${docs.map(d=>`
+    ${docs.length? `<div class="list-card">${groupPatientDocuments(docs).map(d=>`
       <div class="list-row" data-doc="${d.id}" style="cursor:pointer;">
         <span class="row-ico">${icon(d.mimeType&&d.mimeType.includes('pdf')?'receipt':'box',18)}</span>
-        <span class="txt">${escapeHtml(d.name)}</span>
+        <span class="txt">${escapeHtml(d.name)}${d.pageCount>1? ` (${d.pageCount} pages)` : ""}</span>
         <span class="meta">${escapeHtml(d.category)}</span>
       </div>
     `).join("")}</div>` : `<div class="empty-card"><b>No documents uploaded yet</b></div>`}
@@ -19626,12 +19651,18 @@ async function renderFilesTab(body, patientId, patient){
     el.onclick = ()=>{
       const d = docs.find(x=>x.id===el.dataset.doc);
       if(!d) return;
+      // Multi-page saves (e.g. a handwritten prescription) are stored as
+      // several documents sharing one groupId — gather every page in that
+      // group before viewing/printing, in original page order.
+      const pageDocs = d.groupId
+        ? docs.filter(x=>x.groupId===d.groupId).sort((a,b)=> (a.pageIndex||0)-(b.pageIndex||0))
+        : [d];
       if(d.mimeType && d.mimeType.startsWith("image/")){
         // window.open(dataURL) is unreliable for large data: URLs — many
         // browsers silently open a blank tab instead of navigating. The
         // in-app viewer just sets an <img src>, which has no such limit
         // and is the same proven approach used for X-rays.
-        openImageViewer(d.fileData, {patient, fileName: d.name, label: d.category, onPrint: ()=> printSavedDocument(d, patient)});
+        openImageViewer(d.fileData, {patient, fileName: d.name, label: d.category, onPrint: ()=> printSavedDocument(pageDocs, patient)});
       }else{
         // PDFs and everything else this app can't render inline — download
         // instead of window.open(dataURL), which is unreliable at any size
@@ -19643,6 +19674,25 @@ async function renderFilesTab(body, patientId, patient){
       }
     };
   });
+}
+
+// Collapses documents that share a groupId (a multi-page save, like a
+// handwritten prescription) into a single representative row — the first
+// page stands in for the whole set, tagged with how many pages it has.
+function groupPatientDocuments(docs){
+  const seen = new Set();
+  const result = [];
+  for(const d of docs){
+    if(d.groupId){
+      if(seen.has(d.groupId)) continue;
+      seen.add(d.groupId);
+      const pages = docs.filter(x=>x.groupId===d.groupId).sort((a,b)=> (a.pageIndex||0)-(b.pageIndex||0));
+      result.push(Object.assign({}, pages[0], { pageCount: pages.length }));
+    }else{
+      result.push(d);
+    }
+  }
+  return result;
 }
 
 function openImageViewer(src, shareOpts){
@@ -19678,13 +19728,20 @@ function openImageViewer(src, shareOpts){
 // Re-prints a saved Files document (currently used for Handwritten
 // Prescriptions/Notes) the same way it printed when first saved: full
 // page image(s) under the clinic's letterhead, in original page order.
-async function printSavedDocument(d, patient){
+// Accepts either an array of page-documents (current format — one Firestore
+// document per page, to stay under the 1MB per-document limit) or a single
+// legacy document that still has an inline extraPages array.
+async function printSavedDocument(docOrPages, patient){
   const clinics = await dbGetAll("clinics");
   const clinic = clinics.find(c=>c.id===patient.preferredClinicId);
-  const images = [d.fileData, ...(d.extraPages||[])];
+  const pages = Array.isArray(docOrPages) ? docOrPages : [docOrPages];
+  const first = pages[0];
+  const images = pages.length>1 || !first.extraPages
+    ? pages.map(p=>p.fileData)
+    : [first.fileData, ...(first.extraPages||[])];
   const bodyHtml = images.map((img,i)=> `<div style="text-align:center;${i>0?'page-break-before:always;':''}"><img src="${img}" style="width:100%;display:block;"></div>`).join("");
   printDocument({
-    title: d.category || "Document", patient, clinic, docDate: d.date? new Date(d.date).toLocaleDateString() : new Date().toLocaleDateString(),
+    title: first.category || "Document", patient, clinic, docDate: first.date? new Date(first.date).toLocaleDateString() : new Date().toLocaleDateString(),
     bodyHtml, signHtml: ""
   });
 }
@@ -19893,34 +19950,57 @@ function openHandwrittenPrescriptionPad(patient){
   document.getElementById("btnHwSavePrint").onclick = async ()=>{
     const nonEmptyPages = pages.filter(p=>p.strokes.length);
     if(!nonEmptyPages.length){ showToast("Write something first"); return; }
-    // Render each page to its own image at that page's own resolution.
-    const savedIdx = pageIdx;
-    const images = [];
-    for(let i=0;i<pages.length;i++){
-      if(!pages[i].strokes.length) continue;
-      loadPage(i);
-      images.push(canvas.toDataURL("image/jpeg", 0.92));
+    const saveBtn = document.getElementById("btnHwSavePrint");
+    saveBtn.disabled = true; saveBtn.textContent = "Saving...";
+    try{
+      // Render each page to its own image at that page's own resolution.
+      const savedIdx = pageIdx;
+      const images = [];
+      for(let i=0;i<pages.length;i++){
+        if(!pages[i].strokes.length) continue;
+        loadPage(i);
+        images.push(canvas.toDataURL("image/jpeg", 0.85));
+      }
+      loadPage(savedIdx);
+      // Firestore caps every document at 1MB — a single multi-page prescription
+      // easily exceeds that if all pages are crammed into one document's
+      // fields (which silently failed the whole save with no page pages
+      // written at all). Each page is now its own document instead, tied
+      // together by groupId, so a long prescription just adds more documents
+      // rather than risking the limit.
+      const groupId = uid("hwgrp");
+      const dateStr = new Date().toLocaleDateString().replace(/\//g,"-");
+      const savedDocIds = [];
+      for(let i=0;i<images.length;i++){
+        const img = images[i];
+        // ~4 bytes of base64 encode every 3 raw bytes; stay comfortably under
+        // Firestore's 1MB ceiling even after the rest of the document's fields.
+        if(img.length > 1300000){
+          throw new Error("Page "+(i+1)+" has too much detail to save — try writing a bit lighter or splitting it across more pages.");
+        }
+        const docId = uid("doc");
+        await dbAdd("patientDocuments", {
+          id: docId, patientId: patient.id, category: "Handwritten Prescription",
+          name: "Handwritten Prescription "+dateStr+(images.length>1? " - Page "+(i+1)+" of "+images.length : "")+".jpg",
+          mimeType: "image/jpeg", date: nowIso(), fileData: img,
+          groupId, pageIndex: i, pageCount: images.length
+        });
+        savedDocIds.push(docId);
+      }
+      logActivity("Saved a handwritten prescription for "+patient.name, {patientId: patient.id});
+      const clinics = await dbGetAll("clinics");
+      const clinic = clinics.find(c=>c.id===patient.preferredClinicId);
+      const bodyHtml = images.map((img,i)=> `<div style="text-align:center;${i>0?'page-break-before:always;':''}"><img src="${img}" style="width:100%;display:block;"></div>`).join("");
+      printDocument({
+        title: "Handwritten Prescription", patient, clinic, docDate: new Date().toLocaleDateString(),
+        bodyHtml, signHtml: ""
+      });
+      showToast("Saved to Files and sent to print");
+      wrap.remove();
+    }catch(err){
+      showToast(err.message || "Couldn't save — please try again");
+      saveBtn.disabled = false; saveBtn.textContent = "Save & Print";
     }
-    loadPage(savedIdx);
-    const docId = uid("doc");
-    // Save the first page as the Files thumbnail/record; each page still
-    // prints in full below.
-    await dbAdd("patientDocuments", {
-      id: docId, patientId: patient.id, category: "Handwritten Prescription",
-      name: "Handwritten Prescription "+new Date().toLocaleDateString().replace(/\//g,"-")+".jpg",
-      mimeType: "image/jpeg", date: nowIso(), fileData: images[0],
-      extraPages: images.length>1 ? images.slice(1) : undefined
-    });
-    logActivity("Saved a handwritten prescription for "+patient.name, {patientId: patient.id});
-    const clinics = await dbGetAll("clinics");
-    const clinic = clinics.find(c=>c.id===patient.preferredClinicId);
-    const bodyHtml = images.map((img,i)=> `<div style="text-align:center;${i>0?'page-break-before:always;':''}"><img src="${img}" style="width:100%;display:block;"></div>`).join("");
-    printDocument({
-      title: "Handwritten Prescription", patient, clinic, docDate: new Date().toLocaleDateString(),
-      bodyHtml, signHtml: ""
-    });
-    showToast("Saved to Files and sent to print");
-    wrap.remove();
   };
 }
 
