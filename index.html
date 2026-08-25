@@ -6628,7 +6628,26 @@ async function checkForNewOnlineBookings(){
   }catch(e){ console.error("checkForNewOnlineBookings: couldn't read onlineBookings —", e); return; } // e.g. offline, or a Firestore rules issue
   const bookings = all.filter(b=>!b.processed);
   if(!bookings.length) return;
+  // The `processed` flag alone isn't a safe guard against duplicates —
+  // multiple open tabs, a slow/failed write, or this check overlapping
+  // itself can all leave it not stuck by the time this runs again. What
+  // actually can't duplicate is a one-time create, so check what already
+  // has a notification logged before popping up another one, regardless of
+  // what the flag says.
+  let existingNotifs = [];
+  try{
+    existingNotifs = await dbGetAll("notifications");
+  }catch(e){ console.error("checkForNewOnlineBookings: couldn't read notifications —", e); return; }
+  const alreadyNotifiedIds = new Set(existingNotifs.filter(n=>n.type==="online_booking" && n.relatedId).map(n=>n.relatedId));
+  const newBookings = [];
   for(const b of bookings){
+    if(alreadyNotifiedIds.has(b.id)){
+      // Already notified about this one — just get the flag caught up so
+      // it stops being picked up next time, without popping up again.
+      b.processed = true;
+      await dbPut("onlineBookings", b).catch(()=>{});
+      continue;
+    }
     const isQuickRequest = !b.time;
     await createLoggedNotification({
       id: uid("notif"), type:"online_booking", relatedId: b.id||uid("ob"), monthKey: toDateKey(new Date()),
@@ -6636,21 +6655,96 @@ async function checkForNewOnlineBookings(){
       message: (b.name||"A patient")+(isQuickRequest? " requested an appointment around "+(b.date?new Date(b.date).toLocaleDateString():"a preferred date") : " requested "+(b.date?new Date(b.date).toLocaleDateString():"")+(b.time?" at "+b.time:""))+" via your website.",
       read:false, createdAt: nowIso()
     });
-    // A persistent reminder rather than a one-off popup — it stays on the
-    // Home screen (with Add Appointment / Call / WhatsApp / Delete right
-    // there) until someone actually resolves it, instead of interrupting
-    // once and then being easy to lose track of.
-    await dbAdd("reminders", {
-      id: uid("rem"), patientId: null, patientName: b.name || "Unknown",
-      title: (isQuickRequest? "Appointment request" : "Online booking")+" from "+(b.name||"website visitor"),
-      type: "Online Appointment", caseId: b.id,
-      dueDate: nowIso(), status: "Pending", createdAt: nowIso()
-    }).catch(()=>{});
+    alreadyNotifiedIds.add(b.id);
     b.processed = true;
-    await dbPut("onlineBookings", b);
+    await dbPut("onlineBookings", b).catch(()=>{});
+    newBookings.push(b);
   }
-  refreshNotificationBell();
-  if(currentPage==="home") renderHome();
+  if(newBookings.length){
+    refreshNotificationBell();
+    showNewBookingPopup(newBookings);
+  }
+}
+
+// Popup shown for genuinely new website appointment requests — each one
+// gets its own card with the full set of actions, so a request can be
+// fully handled without leaving the popup. "Read" just dismisses that one
+// card (the request stays on file for the Online Appointments admin list);
+// "Delete" removes it outright; "Add Appointment" converts it and clears it,
+// matching how the admin list's own Add Appointment behaves.
+function showNewBookingPopup(bookings){
+  const wrap = document.createElement("div");
+  wrap.id = "newBookingPopupWrap";
+  wrap.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:900;display:flex;align-items:center;justify-content:center;padding:20px;";
+  wrap.innerHTML = `
+    <div style="background:#fff;border-radius:14px;padding:20px;max-width:400px;width:100%;max-height:82vh;overflow-y:auto;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+        <span style="color:var(--green);">${icon('calendar',20)}</span>
+        <h2 style="margin:0;font-size:17px;">New Appointment Request${bookings.length>1?'s':''}!</h2>
+      </div>
+      <p style="margin:6px 0 14px;color:var(--grey);">Requested through your website${bookings.length>1?' — '+bookings.length+' new':''}.</p>
+      <div id="nbCardsZone">${bookings.map(b=>newBookingCardHtml(b)).join("")}</div>
+      <button class="btn btn-primary btn-block" id="btnNbClose" style="margin-top:6px;">Close</button>
+    </div>
+  `;
+  document.body.appendChild(wrap);
+  wireNewBookingPopupCards(wrap, bookings);
+  wrap.querySelector("#btnNbClose").onclick = ()=> wrap.remove();
+}
+
+function newBookingCardHtml(b){
+  return `
+    <div class="list-card" data-nbcard="${b.id}" style="margin-bottom:10px;">
+      <div style="font-weight:700;font-size:14px;margin-bottom:4px;">${escapeHtml(b.name||"Unknown")}${b.age? " · Age "+escapeHtml(String(b.age)):""}</div>
+      <div style="font-size:12.5px;color:var(--charcoal-2);margin-bottom:2px;">${escapeHtml(b.phone||"No phone given")}${b.email?" · "+escapeHtml(b.email):""}</div>
+      ${b.clinicLocation? `<div style="font-size:12.5px;color:var(--charcoal-2);margin-bottom:2px;">${escapeHtml(b.clinicLocation)}</div>`:""}
+      <div style="font-size:12.5px;color:var(--charcoal-2);margin-bottom:2px;">${b.time? "Requested: "+(b.date?new Date(b.date).toLocaleDateString():"—")+" at "+escapeHtml(b.time) : "Preferred date: "+(b.date?new Date(b.date).toLocaleDateString():"Not specified")}</div>
+      ${b.reason? `<div style="font-size:12.5px;color:var(--grey);margin-bottom:6px;">Reason: ${escapeHtml(b.reason)}</div>` : ""}
+      <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;">
+        <button class="btn btn-outline btn-sm" data-nbact="add" data-id="${b.id}">${icon('check',13)} Add Appointment</button>
+        <button class="btn btn-outline btn-sm" data-nbact="read" data-id="${b.id}">${icon('check',13)} Read</button>
+        <button class="btn btn-outline btn-sm" data-nbact="call" data-id="${b.id}">${icon('phone',13)} Call</button>
+        <button class="btn btn-outline btn-sm" data-nbact="whatsapp" data-id="${b.id}">${icon('message',13)} WhatsApp</button>
+        <button class="btn btn-outline btn-sm" data-nbact="delete" data-id="${b.id}" style="color:var(--red);border-color:var(--red);">${icon('trash',13)} Delete</button>
+      </div>
+    </div>
+  `;
+}
+
+function wireNewBookingPopupCards(wrap, bookings){
+  const closeIfEmpty = ()=>{ if(!wrap.querySelector("[data-nbcard]")) wrap.remove(); };
+  wrap.querySelectorAll("[data-nbact]").forEach(btn=>{
+    btn.addEventListener("click", async (e)=>{
+      e.stopPropagation();
+      const action = btn.dataset.nbact, id = btn.dataset.id;
+      const b = bookings.find(x=>x.id===id);
+      if(!b) return;
+      if(action==="add"){
+        wrap.remove();
+        await dbDelete("onlineBookings", b.id).catch(()=>{});
+        await prefillAppointmentFromOnlineBooking(b);
+      }else if(action==="read"){
+        const card = wrap.querySelector(`[data-nbcard="${id}"]`);
+        if(card) card.remove();
+        closeIfEmpty();
+      }else if(action==="call"){
+        callNumber(b.phone, b.name);
+      }else if(action==="whatsapp"){
+        if(!b.phone){ showToast("No phone number on file for "+(b.name||"this request")); return; }
+        openWhatsAppComposer({
+          toName: b.name, toNumber: b.phone, patientId: null, title:"Appointment Request",
+          message: `Hi ${b.name||""}, thanks for requesting an appointment with us! Could you let us know a convenient date/time and we'll get you booked in?`
+        });
+      }else if(action==="delete"){
+        if(!confirm("Delete this appointment request?")) return;
+        await dbDelete("onlineBookings", b.id).catch(()=>{});
+        const card = wrap.querySelector(`[data-nbcard="${id}"]`);
+        if(card) card.remove();
+        showToast("Request deleted");
+        closeIfEmpty();
+      }
+    });
+  });
 }
 
 async function prefillAppointmentFromOnlineBooking(b){
