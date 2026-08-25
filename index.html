@@ -6619,9 +6619,45 @@ const CommunicationService = {
 // documents there — see the security rules note in the widget settings
 // sheet). This just reads that same collection and surfaces anything not
 // yet seen.
+// Some website setups fire the embedded form's submit more than once per
+// click (the platform re-running injected scripts on soft navigation, the
+// snippet accidentally pasted twice on the same page, etc.) — this
+// collapses bookings that are clearly the same submission (same phone,
+// preferred date, reason, and clinic) down to a single one, deleting the
+// rest. Prefers to keep whichever copy already has a notification logged
+// against it, so cleanup never triggers a fresh popup for something
+// already seen.
+async function dedupeOnlineBookings(){
+  let all = [];
+  try{ all = await dbGetAll("onlineBookings"); }catch(e){ return false; }
+  if(all.length<2) return false;
+  let existingNotifs = [];
+  try{ existingNotifs = await dbGetAll("notifications"); }catch(e){ existingNotifs = []; }
+  const notifiedIds = new Set(existingNotifs.filter(n=>n.type==="online_booking" && n.relatedId).map(n=>n.relatedId));
+  const groups = {};
+  for(const b of all){
+    const key = (b.phone||"")+"|"+(b.date||"")+"|"+(b.reason||"")+"|"+(b.clinicLocation||"");
+    (groups[key] = groups[key]||[]).push(b);
+  }
+  let removedAny = false;
+  for(const key in groups){
+    const group = groups[key];
+    if(group.length<2) continue;
+    group.sort((a,b)=> new Date(a.createdAt||0)-new Date(b.createdAt||0));
+    const keep = group.find(b=>notifiedIds.has(b.id)) || group[0];
+    for(const d of group){
+      if(d.id===keep.id) continue;
+      await dbDelete("onlineBookings", d.id).catch(()=>{});
+      removedAny = true;
+    }
+  }
+  return removedAny;
+}
+
 async function checkForNewOnlineBookings(){
   const s = (await dbGetAll("settings"))[0] || {};
   if(!s.onlineBookingEnabled && !s.requestApptEnabled) return;
+  await dedupeOnlineBookings().catch(()=>{});
   let all = [];
   try{
     all = await dbGetAll("onlineBookings");
@@ -6826,22 +6862,35 @@ function requestApptSubmitScript(mode){
   return [
 '  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";',
 '  import { getFirestore, collection, addDoc } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";',
-'  const fbApp = initializeApp('+JSON.stringify(REQUEST_APPT_FC)+', "htd-request-appt-widget-'+mode+'");',
+'  const fbApp = initializeApp('+JSON.stringify(REQUEST_APPT_FC)+', "htd-request-appt-widget-'+mode+'-"+Date.now()+Math.random());',
 '  const fbDb = getFirestore(fbApp);',
+'  const submitBtn = document.getElementById("htdRaSubmit");',
+'  // Some site builders re-run injected scripts on soft-navigation/re-render',
+'  // without a full page reload, which would otherwise wire this handler',
+'  // again each time and cause the same click to submit more than once.',
+'  // Skip everything below if this exact button has already been wired.',
+'  if(submitBtn && submitBtn.dataset.htdWired === "1"){',
+'    // still fall through so a duplicate popup-toggle button works, but',
+'    // never re-wire the submit handler',
+'  }else{',
 (mode==="popup" ? [
 '  const btn = document.getElementById("htdRaBtn");',
 '  const overlay = document.getElementById("htdRaOverlay");',
-'  btn.onclick = () => { overlay.style.display = "flex"; };',
-'  document.getElementById("htdRaCancel").onclick = () => { overlay.style.display = "none"; };',
-'  overlay.addEventListener("click", (e) => { if(e.target === overlay) overlay.style.display = "none"; });'
+'  if(btn) btn.onclick = () => { overlay.style.display = "flex"; };',
+'  const cancelBtn = document.getElementById("htdRaCancel");',
+'  if(cancelBtn) cancelBtn.onclick = () => { overlay.style.display = "none"; };',
+'  if(overlay) overlay.addEventListener("click", (e) => { if(e.target === overlay) overlay.style.display = "none"; });'
 ].join("\n") : ""),
-'  document.getElementById("htdRaSubmit").onclick = async () => {',
+'  if(submitBtn){',
+'  submitBtn.dataset.htdWired = "1";',
+'  submitBtn.onclick = async () => {',
+'    if(submitBtn.dataset.htdSubmitting === "1") return; // re-entrancy guard',
 '    const name = document.getElementById("htdRaName").value.trim();',
 '    const age = document.getElementById("htdRaAge").value.trim();',
 '    const mobile = document.getElementById("htdRaMobile").value.trim();',
 '    const statusEl = document.getElementById("htdRaStatus");',
 '    if(!name || !age || !mobile){ statusEl.textContent = "Please fill in your name, age, and mobile number."; statusEl.style.color = "#B00020"; return; }',
-'    const submitBtn = document.getElementById("htdRaSubmit");',
+'    submitBtn.dataset.htdSubmitting = "1";',
 '    submitBtn.disabled = true; submitBtn.textContent = "Submitting...";',
 '    try{',
 '      await addDoc(collection(fbDb, "onlineBookings"), {',
@@ -6858,8 +6907,11 @@ afterSuccessJs,
 '      statusEl.textContent = "Something went wrong. Please try again or call us directly.";',
 '      statusEl.style.color = "#B00020";',
 '      submitBtn.disabled = false; submitBtn.textContent = "Submit Request";',
+'      submitBtn.dataset.htdSubmitting = "0";',
 '    }',
-'  };'
+'  };',
+'  }',
+'  }'
   ].join("\n");
 }
 
@@ -6977,13 +7029,43 @@ async function openRequestApptButtonSheet(){
 // requests — separate from the embed-code/settings screen above, so the
 // two don't get tangled together.
 async function openOnlineAppointmentsListSheet(){
+  await dedupeOnlineBookings().catch(()=>{});
   const requests = (await dbGetAll("onlineBookings")).filter(b=>!b.time).sort((a,b)=> new Date(b.createdAt||0)-new Date(a.createdAt||0));
   openSheet(`
     <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
     <h2>Online Appointments</h2>
-    <p style="margin-bottom:12px;">Every appointment request submitted through your website's Request Appointment button/form.</p>
-    ${requests.length? requests.map(b=>`
-      <div class="note-card">
+    <p style="margin-bottom:8px;">Every appointment request submitted through your website's Request Appointment button/form.</p>
+    ${requests.length? `
+      <p style="margin:0 0 10px;color:var(--grey);font-size:12px;">Swipe a card left to delete it.</p>
+      <button class="btn btn-block" id="btnOaDeleteAll" style="margin-bottom:14px;color:var(--red);border:1px solid var(--red);background:none;">${icon('trash',15)} Delete All</button>
+    ` : ""}
+    <div id="oaListZone">
+      ${requests.length? requests.map(b=>onlineApptCardHtml(b)).join("") : `<div class="empty-card"><b>No requests yet</b>They'll show up here as soon as someone submits the form on your website.</div>`}
+    </div>
+  `);
+  wireOnlineApptCardActions(requests);
+  const deleteAllBtn = document.getElementById("btnOaDeleteAll");
+  if(deleteAllBtn){
+    deleteAllBtn.onclick = async ()=>{
+      if(!confirm(`Delete all ${requests.length} appointment request${requests.length>1?'s':''}? This can't be undone.`)) return;
+      for(const b of requests){
+        await dbDelete("onlineBookings", b.id).catch(()=>{});
+      }
+      const reminders = await dbGetAll("reminders");
+      for(const r of reminders.filter(r=>r.type==="Online Appointment")){
+        await dbDelete("reminders", r.id).catch(()=>{});
+      }
+      showToast("All requests deleted");
+      openOnlineAppointmentsListSheet();
+    };
+  }
+}
+
+function onlineApptCardHtml(b){
+  return `
+    <div class="swipe-wrap" data-oacard="${b.id}" style="position:relative;overflow:hidden;border-radius:10px;margin-bottom:10px;">
+      <div class="swipe-delete-bg" style="position:absolute;inset:0;background:var(--red);color:#fff;display:flex;align-items:center;justify-content:flex-end;padding-right:20px;font-weight:700;font-size:13px;">${icon('trash',16)}&nbsp;Delete</div>
+      <div class="note-card swipe-content" style="position:relative;margin-bottom:0;background:#fff;touch-action:pan-y;">
         <div class="note-head"><b>${escapeHtml(b.name||"Unknown")}${b.age? " · Age "+escapeHtml(String(b.age)):""}</b>${b.processed? `<span class="status-pill">Reviewed</span>`:`<span class="status-pill" style="background:var(--amber-bg);color:var(--amber);">New</span>`}</div>
         <div class="note-meta">${escapeHtml(b.phone||"No phone")}${b.email?" · "+escapeHtml(b.email):""}</div>
         ${b.clinicLocation? `<div class="note-meta" style="margin-top:2px;">${escapeHtml(b.clinicLocation)}</div>`:""}
@@ -6997,8 +7079,68 @@ async function openOnlineAppointmentsListSheet(){
           <button class="btn btn-outline btn-sm" data-oadelete="${b.id}" style="color:var(--red);border-color:var(--red);">${icon('trash',13)} Delete</button>
         </div>
       </div>
-    `).join("") : `<div class="empty-card"><b>No requests yet</b>They'll show up here as soon as someone submits the form on your website.</div>`}
-  `);
+    </div>
+  `;
+}
+
+// A left-swipe reveals a red Delete strip behind the card, matching the
+// familiar mobile "swipe to delete" gesture. Bails out early if the drag
+// turns out to be more vertical than horizontal, so it never fights with
+// scrolling the list.
+function wireSwipeToDelete(root, onDelete){
+  root.querySelectorAll(".swipe-wrap").forEach(wrap=>{
+    const content = wrap.querySelector(".swipe-content");
+    const id = wrap.dataset.oacard;
+    let startX=0, startY=0, dx=0, dragging=false, decided=false, isHorizontal=false;
+    content.addEventListener("touchstart", (e)=>{
+      startX = e.touches[0].clientX; startY = e.touches[0].clientY;
+      dx = 0; dragging = true; decided = false; isHorizontal = false;
+      content.style.transition = "none";
+    }, {passive:true});
+    content.addEventListener("touchmove", (e)=>{
+      if(!dragging) return;
+      const x = e.touches[0].clientX, y = e.touches[0].clientY;
+      const moveX = x-startX, moveY = y-startY;
+      if(!decided){
+        if(Math.abs(moveX)>8 || Math.abs(moveY)>8){
+          decided = true;
+          isHorizontal = Math.abs(moveX) > Math.abs(moveY);
+        }
+      }
+      if(decided && isHorizontal){
+        dx = Math.min(0, moveX); // only allow swiping left
+        content.style.transform = `translateX(${dx}px)`;
+      }
+    }, {passive:true});
+    content.addEventListener("touchend", async ()=>{
+      dragging = false;
+      content.style.transition = "transform 0.2s ease";
+      if(decided && isHorizontal && dx < -80){
+        content.style.transform = "translateX(-100%)";
+        wrap.style.maxHeight = wrap.offsetHeight+"px";
+        wrap.style.transition = "max-height 0.2s ease 0.1s, margin 0.2s ease 0.1s";
+        setTimeout(async ()=>{
+          wrap.style.maxHeight = "0px";
+          wrap.style.marginBottom = "0px";
+          await onDelete(id);
+          wrap.remove();
+        }, 200);
+      }else{
+        content.style.transform = "translateX(0)";
+      }
+    });
+  });
+}
+
+function wireOnlineApptCardActions(requests){
+  wireSwipeToDelete(document, async (id)=>{
+    const b = requests.find(x=>x.id===id);
+    if(!b) return;
+    await dbDelete("onlineBookings", b.id).catch(()=>{});
+    const reminders = await dbGetAll("reminders");
+    const rem = reminders.find(r=>r.caseId===b.id && r.type==="Online Appointment");
+    if(rem) await dbDelete("reminders", rem.id).catch(()=>{});
+  });
   document.querySelectorAll("[data-oaadd]").forEach(btn=>{
     btn.onclick = async ()=>{
       const b = requests.find(x=>x.id===btn.dataset.oaadd);
