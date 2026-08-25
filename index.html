@@ -4856,6 +4856,8 @@ async function getClinicalReminders(){
 
 function reminderRowHtml(r){
   const overdue = r.dueDate && new Date(r.dueDate).getTime() < Date.now();
+  const isLabCase = r.type==="Lab Case";
+  const isOnlineAppt = r.type==="Online Appointment";
   return `
     <div class="appt-row">
       <div class="appt-time" style="${overdue?'color:var(--red);':''}">${r.dueDate? new Date(r.dueDate).toLocaleDateString(undefined,{day:'numeric',month:'short'}) : '—'}</div>
@@ -4867,8 +4869,16 @@ function reminderRowHtml(r){
         </div>
         <div class="am">${escapeHtml(r.title||"Reminder")}</div>
         <div class="appt-actions">
-          <button class="mini-btn" data-ract="done" data-id="${r.id}">${icon('check',13)} Done</button>
-          ${r.patientId? `<button class="mini-btn" data-ract="open" data-id="${r.patientId}">${icon('user',13)} Open Patient</button>` : ""}
+          ${isOnlineAppt? `
+            <button class="mini-btn" data-ract="oa-add" data-id="${r.id}">${icon('check',13)} Add Appointment</button>
+            <button class="mini-btn" data-ract="oa-call" data-id="${r.id}">${icon('phone',13)} Call</button>
+            <button class="mini-btn" data-ract="oa-whatsapp" data-id="${r.id}">${icon('message',13)} WhatsApp</button>
+            <button class="mini-btn" data-ract="oa-delete" data-id="${r.id}">${icon('trash',13)} Delete</button>
+          ` : `
+            <button class="mini-btn" data-ract="done" data-id="${r.id}">${icon('check',13)} Done</button>
+            ${r.patientId? `<button class="mini-btn" data-ract="open" data-id="${r.patientId}">${icon('user',13)} Open Patient</button>` : ""}
+            ${isLabCase? `<button class="mini-btn" data-ract="remindlab" data-id="${r.id}">${icon('message',13)} Remind Lab</button>` : ""}
+          `}
         </div>
       </div>
     </div>
@@ -4886,9 +4896,83 @@ function wireReminderRowActions(root){
         if(r){ r.status = "Completed"; await dbPut("reminders", r); showToast("Reminder marked done"); if(currentPage==="home") renderHome(); }
       }else if(action==="open"){
         openPatientProfile(btn.dataset.id);
+      }else if(action==="remindlab"){
+        await remindLabForReminder(btn.dataset.id);
+      }else if(action==="oa-add"){
+        await resolveOnlineApptReminder(btn.dataset.id, "convert");
+      }else if(action==="oa-call"){
+        const booking = await getBookingForReminder(btn.dataset.id);
+        if(booking) callNumber(booking.phone, booking.name);
+      }else if(action==="oa-whatsapp"){
+        const booking = await getBookingForReminder(btn.dataset.id);
+        if(booking){
+          if(!booking.phone){ showToast("No phone number on file for "+(booking.name||"this request")); return; }
+          openWhatsAppComposer({
+            toName: booking.name, toNumber: booking.phone, patientId: null, title:"Appointment Request",
+            message: `Hi ${booking.name||""}, thanks for requesting an appointment with us! Could you let us know a convenient date/time and we'll get you booked in?`
+          });
+        }
+      }else if(action==="oa-delete"){
+        if(!confirm("Delete this appointment request?")) return;
+        await resolveOnlineApptReminder(btn.dataset.id, "delete");
       }
     });
   });
+}
+
+async function getBookingForReminder(reminderId){
+  const reminders = await dbGetAll("reminders");
+  const r = reminders.find(x=>x.id===reminderId);
+  if(!r || !r.caseId){ showToast("Request not found"); return null; }
+  const booking = (await dbGetAll("onlineBookings")).find(b=>b.id===r.caseId);
+  if(!booking){ showToast("This request no longer exists"); return null; }
+  return booking;
+}
+
+// Shared resolution for an Online Appointment reminder — either converting
+// it into a real appointment or deleting it outright. Either way the
+// underlying request and its reminder are removed together, so it can't
+// come back and prompt again once handled.
+async function resolveOnlineApptReminder(reminderId, mode){
+  const reminders = await dbGetAll("reminders");
+  const r = reminders.find(x=>x.id===reminderId);
+  if(!r){ showToast("Reminder not found"); return; }
+  const booking = r.caseId ? (await dbGetAll("onlineBookings")).find(b=>b.id===r.caseId) : null;
+  if(mode==="convert"){
+    if(booking) await prefillAppointmentFromOnlineBooking(booking);
+    else showToast("This request no longer exists");
+  }
+  if(booking) await dbDelete("onlineBookings", booking.id).catch(()=>{});
+  await dbDelete("reminders", r.id).catch(()=>{});
+  if(mode==="delete") showToast("Request deleted");
+  if(currentPage==="home") renderHome();
+}
+
+// The reminder created when a Lab Case follow-up date is set carries the
+// exact labCases record it came from (caseId) — go straight to that case
+// rather than guessing which of the patient's cases is meant.
+async function remindLabForReminder(reminderId){
+  const reminders = await dbGetAll("reminders");
+  const r = reminders.find(x=>x.id===reminderId);
+  if(!r){ showToast("Reminder not found"); return; }
+  const patients = await dbGetAll("patients");
+  const patient = r.patientId ? patients.find(p=>p.id===r.patientId) : null;
+  if(!patient){ showToast("Patient not found for this reminder"); return; }
+  let labCase = null;
+  if(r.caseId){
+    labCase = (await dbGetAll("labCases")).find(lc=>lc.id===r.caseId);
+  }
+  if(!labCase){
+    // Fall back to the patient's other active cases if this specific one
+    // was since deleted, rather than dead-ending the reminder.
+    const active = (await dbGetAll("labCases")).filter(lc=>lc.patientId===patient.id && lc.status!=="Delivered to Patient");
+    if(!active.length){ showToast("No active lab case found for "+patient.name); return; }
+    if(active.length>1){ openRemindLabCasePickerSheet(active, patient); return; }
+    labCase = active[0];
+  }
+  const { message, lab } = await buildLabStatusCheckMessage([labCase], patient);
+  if(!lab || (!lab.phone && !lab.email)){ showToast("No contact number/email on file for this lab — add one under Lab Cases"); return; }
+  openWhatsAppComposer({ toName: lab.name, toNumber: lab.phone, patientId: null, title:"Lab Status Check", message });
 }
 
 async function getAssistCounts(){
@@ -6552,48 +6636,21 @@ async function checkForNewOnlineBookings(){
       message: (b.name||"A patient")+(isQuickRequest? " requested an appointment around "+(b.date?new Date(b.date).toLocaleDateString():"a preferred date") : " requested "+(b.date?new Date(b.date).toLocaleDateString():"")+(b.time?" at "+b.time:""))+" via your website.",
       read:false, createdAt: nowIso()
     });
+    // A persistent reminder rather than a one-off popup — it stays on the
+    // Home screen (with Add Appointment / Call / WhatsApp / Delete right
+    // there) until someone actually resolves it, instead of interrupting
+    // once and then being easy to lose track of.
+    await dbAdd("reminders", {
+      id: uid("rem"), patientId: null, patientName: b.name || "Unknown",
+      title: (isQuickRequest? "Appointment request" : "Online booking")+" from "+(b.name||"website visitor"),
+      type: "Online Appointment", caseId: b.id,
+      dueDate: nowIso(), status: "Pending", createdAt: nowIso()
+    }).catch(()=>{});
     b.processed = true;
     await dbPut("onlineBookings", b);
   }
   refreshNotificationBell();
-  showNewBookingPopup(bookings);
-}
-
-function showNewBookingPopup(bookings){
-  const anyQuick = bookings.some(b=>!b.time);
-  const allQuick = bookings.every(b=>!b.time);
-  const heading = allQuick ? "New Appointment Request" : anyQuick ? "New Website Requests" : "New Online Booking";
-  const wrap = document.createElement("div");
-  wrap.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:900;display:flex;align-items:center;justify-content:center;padding:20px;";
-  wrap.innerHTML = `
-    <div style="background:#fff;border-radius:14px;padding:20px;max-width:380px;width:100%;max-height:80vh;overflow-y:auto;">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
-        <span style="color:var(--green);">${icon('calendar',20)}</span>
-        <h2 style="margin:0;font-size:17px;">${heading}${bookings.length>1?'s':''}!</h2>
-      </div>
-      <p style="margin:6px 0 14px;color:var(--grey);">Requested through your website${bookings.length>1?' — '+bookings.length+' new requests':''}.</p>
-      ${bookings.map(b=>`
-        <div class="list-card" style="margin-bottom:10px;">
-          <div style="font-weight:700;font-size:14px;margin-bottom:4px;">${escapeHtml(b.name||"Unknown")}${b.age? " · Age "+escapeHtml(String(b.age)):""}</div>
-          <div style="font-size:12.5px;color:var(--charcoal-2);margin-bottom:2px;">${escapeHtml(b.phone||"No phone given")}${b.email?" · "+escapeHtml(b.email):""}</div>
-          ${b.clinicLocation? `<div style="font-size:12.5px;color:var(--charcoal-2);margin-bottom:2px;">${escapeHtml(b.clinicLocation)}</div>`:""}
-          <div style="font-size:12.5px;color:var(--charcoal-2);margin-bottom:2px;">${b.time? "Requested: "+(b.date?new Date(b.date).toLocaleDateString():"—")+" at "+escapeHtml(b.time) : "Preferred date: "+(b.date?new Date(b.date).toLocaleDateString():"Not specified")}</div>
-          ${b.reason? `<div style="font-size:12.5px;color:var(--grey);">Reason: ${escapeHtml(b.reason)}</div>` : ""}
-          <button class="btn btn-outline btn-sm" data-nbaccept="${escapeAttr(b.id||"")}" style="margin-top:8px;">Add to Appointments</button>
-        </div>
-      `).join("")}
-      <button class="btn btn-primary btn-block" id="btnNbClose">Close</button>
-    </div>
-  `;
-  wrap.querySelector("#btnNbClose").onclick = ()=> wrap.remove();
-  wrap.querySelectorAll("[data-nbaccept]").forEach((btn,idx)=>{
-    btn.onclick = async ()=>{
-      const b = bookings[idx];
-      wrap.remove();
-      await prefillAppointmentFromOnlineBooking(b);
-    };
-  });
-  document.body.appendChild(wrap);
+  if(currentPage==="home") renderHome();
 }
 
 async function prefillAppointmentFromOnlineBooking(b){
@@ -6757,7 +6814,6 @@ requestApptSubmitScript("inline"),
 
 async function openRequestApptButtonSheet(){
   const s = (await dbGetAll("settings"))[0] || {id:"main"};
-  const requests = (await dbGetAll("onlineBookings")).filter(b=>!b.time).sort((a,b)=> new Date(b.createdAt||0)-new Date(a.createdAt||0));
   const notifsOn = !!s.requestApptEnabled;
   openSheet(`
     <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
@@ -6767,12 +6823,13 @@ async function openRequestApptButtonSheet(){
       <span style="font-size:20px;">${notifsOn? '🔔' : '🔕'}</span>
       <div>
         <div style="font-weight:700;font-size:13.5px;color:${notifsOn?'var(--green,#1F6F54)':'#B00020'};">Notifications are currently ${notifsOn? 'ON':'OFF'}</div>
-        <div style="font-size:12px;color:var(--charcoal-2);">${notifsOn? "You&rsquo;ll get a pop-up and bell alert for new requests." : "Requests still save, but you won&rsquo;t be alerted until this is turned on below."}</div>
+        <div style="font-size:12px;color:var(--charcoal-2);">${notifsOn? "You&rsquo;ll get a bell alert and a reminder on Home for new requests." : "Requests still save, but you won&rsquo;t be alerted until this is turned on below."}</div>
       </div>
     </div>
     <div class="warn-banner" style="margin-bottom:12px;">Writes straight into your Firestore database (the same <code>onlineBookings</code> collection as the slot-based widget). Make sure your Firestore security rules allow public <code>create</code> on that collection before sharing it — see the note at the bottom.</div>
     <label class="ai-crs-check" style="margin-bottom:14px;"><input type="checkbox" id="raEnabled" ${s.requestApptEnabled?'checked':''}> Enable notifications for this button</label>
     <button class="btn btn-primary btn-block" id="btnSaveRaEnabled" style="margin-bottom:16px;">Save</button>
+    <button class="btn btn-outline btn-block" id="btnGoToOnlineAppts" style="margin-bottom:16px;">${icon('calendar',15)} View Online Appointment Requests</button>
     <div class="section-title" style="margin-bottom:6px;">Option 1 — Button that opens a pop-up form</div>
     <p style="margin:0 0 8px;">A button visitors click; the form appears in a pop-up on top of the page.</p>
     <button class="btn btn-outline btn-block" id="btnCopyRaEmbedPopup" style="margin-bottom:16px;">${icon('file',15)} Copy Pop-up Button Code</button>
@@ -6780,17 +6837,6 @@ async function openRequestApptButtonSheet(){
     <p style="margin:0 0 8px;">No button, no pop-up — the form itself sits inline wherever you paste it, with its own Submit button.</p>
     <button class="btn btn-outline btn-block" id="btnCopyRaEmbedInline" style="margin-bottom:16px;">${icon('file',15)} Copy Inline Form Code</button>
     <p style="margin:0 0 16px;">Paste whichever you choose anywhere in your website's HTML — in the body, a page template, or right before <code>&lt;/body&gt;</code>.</p>
-    <div class="section-title" style="margin-bottom:8px;">Requests Received</div>
-    ${requests.length? requests.map(b=>`
-      <div class="note-card">
-        <div class="note-head"><b>${escapeHtml(b.name||"Unknown")}${b.age? " · Age "+escapeHtml(String(b.age)):""}</b>${b.processed? `<span class="status-pill">Reviewed</span>`:`<span class="status-pill" style="background:var(--amber-bg);color:var(--amber);">New</span>`}</div>
-        <div class="note-meta">${escapeHtml(b.phone||"No phone")}${b.email?" · "+escapeHtml(b.email):""}</div>
-        ${b.clinicLocation? `<div class="note-meta" style="margin-top:2px;">${escapeHtml(b.clinicLocation)}</div>`:""}
-        <div class="note-meta" style="margin-top:2px;">Preferred date: ${b.date? new Date(b.date).toLocaleDateString():"Not specified"}</div>
-        ${b.reason? `<div class="note-meta" style="margin-top:2px;">Reason: ${escapeHtml(b.reason)}</div>`:""}
-        <button class="btn btn-outline btn-block" data-raaccept="${b.id}" style="margin-top:8px;">Add to Appointments</button>
-      </div>
-    `).join("") : `<div class="empty-card"><b>No requests yet</b>They'll show up here as soon as someone submits the form on your website.</div>`}
     <div class="section-title" style="margin-top:20px;margin-bottom:6px;">Firestore Security Rule (required)</div>
     <p style="margin:0 0 8px;">Without this rule, submissions from your website will fail with "Something went wrong" — visitors aren't logged in, so Firestore blocks the write by default until this is added. In the <a href="https://console.firebase.google.com/" target="_blank" rel="noopener">Firebase Console</a> → your project → Firestore Database → Rules tab, make sure a rule like this is present (merge it into whatever rules are already there — don't just replace the whole file):</p>
     <pre id="raRulesSnippet" style="background:#1a1a1a;color:#e8e8e8;padding:12px;border-radius:8px;font-size:11.5px;overflow-x:auto;white-space:pre;margin-bottom:8px;">match /onlineBookings/{docId} {
@@ -6806,6 +6852,7 @@ async function openRequestApptButtonSheet(){
     showToast(s.requestApptEnabled? "Saved — notifications are now ON" : "Saved — notifications are now OFF");
     openRequestApptButtonSheet();
   };
+  document.getElementById("btnGoToOnlineAppts").onclick = ()=>{ closeSheet(); openOnlineAppointmentsListSheet(); };
   document.getElementById("btnCopyRaEmbedPopup").onclick = async ()=>{
     try{
       await navigator.clipboard.writeText(generateRequestApptButtonEmbedCode());
@@ -6830,14 +6877,74 @@ async function openRequestApptButtonSheet(){
       showToast("Couldn't copy — select and copy the rule manually");
     }
   };
-  document.querySelectorAll("[data-raaccept]").forEach(btn=>{
+}
+
+// Dedicated admin screen just for browsing/actioning online appointment
+// requests — separate from the embed-code/settings screen above, so the
+// two don't get tangled together.
+async function openOnlineAppointmentsListSheet(){
+  const requests = (await dbGetAll("onlineBookings")).filter(b=>!b.time).sort((a,b)=> new Date(b.createdAt||0)-new Date(a.createdAt||0));
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>Online Appointments</h2>
+    <p style="margin-bottom:12px;">Every appointment request submitted through your website's Request Appointment button/form.</p>
+    ${requests.length? requests.map(b=>`
+      <div class="note-card">
+        <div class="note-head"><b>${escapeHtml(b.name||"Unknown")}${b.age? " · Age "+escapeHtml(String(b.age)):""}</b>${b.processed? `<span class="status-pill">Reviewed</span>`:`<span class="status-pill" style="background:var(--amber-bg);color:var(--amber);">New</span>`}</div>
+        <div class="note-meta">${escapeHtml(b.phone||"No phone")}${b.email?" · "+escapeHtml(b.email):""}</div>
+        ${b.clinicLocation? `<div class="note-meta" style="margin-top:2px;">${escapeHtml(b.clinicLocation)}</div>`:""}
+        <div class="note-meta" style="margin-top:2px;">Preferred date: ${b.date? new Date(b.date).toLocaleDateString():"Not specified"}</div>
+        ${b.reason? `<div class="note-meta" style="margin-top:2px;">Reason: ${escapeHtml(b.reason)}</div>`:""}
+        <div class="note-meta" style="margin-top:2px;color:var(--grey);">Submitted ${b.createdAt? new Date(b.createdAt).toLocaleString():""}</div>
+        <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;">
+          <button class="btn btn-outline btn-sm" data-oaadd="${b.id}">${icon('check',13)} Add Appointment</button>
+          <button class="btn btn-outline btn-sm" data-oacall="${b.id}">${icon('phone',13)} Call</button>
+          <button class="btn btn-outline btn-sm" data-oawa="${b.id}">${icon('message',13)} WhatsApp</button>
+          <button class="btn btn-outline btn-sm" data-oadelete="${b.id}" style="color:var(--red);border-color:var(--red);">${icon('trash',13)} Delete</button>
+        </div>
+      </div>
+    `).join("") : `<div class="empty-card"><b>No requests yet</b>They'll show up here as soon as someone submits the form on your website.</div>`}
+  `);
+  document.querySelectorAll("[data-oaadd]").forEach(btn=>{
     btn.onclick = async ()=>{
-      const b = requests.find(x=>x.id===btn.dataset.raaccept);
+      const b = requests.find(x=>x.id===btn.dataset.oaadd);
       if(!b) return;
-      b.processed = true;
-      await dbPut("onlineBookings", b);
+      await dbDelete("onlineBookings", b.id).catch(()=>{});
+      const reminders = await dbGetAll("reminders");
+      const rem = reminders.find(r=>r.caseId===b.id && r.type==="Online Appointment");
+      if(rem) await dbDelete("reminders", rem.id).catch(()=>{});
       closeSheet();
       await prefillAppointmentFromOnlineBooking(b);
+    };
+  });
+  document.querySelectorAll("[data-oacall]").forEach(btn=>{
+    btn.onclick = ()=>{
+      const b = requests.find(x=>x.id===btn.dataset.oacall);
+      if(b) callNumber(b.phone, b.name);
+    };
+  });
+  document.querySelectorAll("[data-oawa]").forEach(btn=>{
+    btn.onclick = ()=>{
+      const b = requests.find(x=>x.id===btn.dataset.oawa);
+      if(!b) return;
+      if(!b.phone){ showToast("No phone number on file for "+(b.name||"this request")); return; }
+      openWhatsAppComposer({
+        toName: b.name, toNumber: b.phone, patientId: null, title:"Appointment Request",
+        message: `Hi ${b.name||""}, thanks for requesting an appointment with us! Could you let us know a convenient date/time and we'll get you booked in?`
+      });
+    };
+  });
+  document.querySelectorAll("[data-oadelete]").forEach(btn=>{
+    btn.onclick = async ()=>{
+      if(!confirm("Delete this appointment request?")) return;
+      const b = requests.find(x=>x.id===btn.dataset.oadelete);
+      if(!b) return;
+      await dbDelete("onlineBookings", b.id).catch(()=>{});
+      const reminders = await dbGetAll("reminders");
+      const rem = reminders.find(r=>r.caseId===b.id && r.type==="Online Appointment");
+      if(rem) await dbDelete("reminders", rem.id).catch(()=>{});
+      showToast("Request deleted");
+      openOnlineAppointmentsListSheet();
     };
   });
 }
@@ -22716,6 +22823,7 @@ async function renderAdminPanel(){
       { label:"Communication Settings (WhatsApp Provider)", icon:"message", action: openCommunicationSettingsSheet },
       { label:"Online Booking Widget", icon:"calendar", action: openOnlineBookingSettingsSheet },
       { label:"Request Appointment Button", icon:"calendar", action: openRequestApptButtonSheet },
+      { label:"Online Appointments", icon:"calendar", action: openOnlineAppointmentsListSheet },
       { label:"Live Message Sync", icon:"chat", action: openLiveMessageSyncSettingsSheet },
       { label:"WhatsApp Template", icon:"message", action: openWhatsAppTemplatesSheet },
       { label:"SMS Template", icon:"sms", action: openSmsTemplatesSheet },
