@@ -1767,6 +1767,101 @@ document.querySelectorAll(".nav-item").forEach(el=>{
 // ---------------------------------------------------------
 // Home / Dashboard
 // ---------------------------------------------------------
+// Finds patients whose most recent completed treatment or visit falls
+// roughly around the 6-month mark (a ~3-week window centered on 182
+// days, so it's not so narrow a patient could slip through unnoticed, but
+// not so wide it nags for months on end either). Skips anyone who's
+// already got a future appointment booked (they're already coming back),
+// and anyone already Ignored or Reminded for this specific visit — so
+// acting on one doesn't leave it reappearing every time Home reloads.
+async function getBiannualFollowUpCandidates(){
+  const [patients, plans, appointments, actions] = await Promise.all([
+    dbGetAll("patients"), dbGetAll("treatmentPlans"), dbGetAll("appointments"), dbGetAll("biannualFollowUpActions")
+  ]);
+  const now = Date.now();
+  const MIN_DAYS = 172, MAX_DAYS = 193; // ~3-week window centered on 182 days (6 months)
+  const actionsByKey = new Set(actions.map(a=> a.patientId+"|"+a.visitDate));
+  const lastVisitByPatient = {};
+  for(const pl of plans){
+    if(!pl.patientId || !Array.isArray(pl.items)) continue;
+    for(const item of pl.items){
+      if(item.status!=="Completed" || !item.treatmentDate) continue;
+      const t = new Date(item.treatmentDate).getTime();
+      if(!lastVisitByPatient[pl.patientId] || t>lastVisitByPatient[pl.patientId]) lastVisitByPatient[pl.patientId]=t;
+    }
+  }
+  for(const a of appointments){
+    if(a.status!=="Completed" || !a.patientId || !a.date) continue;
+    const t = new Date(a.date).getTime();
+    if(!lastVisitByPatient[a.patientId] || t>lastVisitByPatient[a.patientId]) lastVisitByPatient[a.patientId]=t;
+  }
+  const hasFutureAppt = new Set(
+    appointments.filter(a=> a.patientId && a.date && new Date(a.date).getTime()>now && !["Cancelled","NoShow"].includes(a.status)).map(a=>a.patientId)
+  );
+  const out = [];
+  for(const p of patients){
+    const lastVisit = lastVisitByPatient[p.id];
+    if(!lastVisit) continue;
+    const daysAgo = (now-lastVisit)/86400000;
+    if(daysAgo<MIN_DAYS || daysAgo>MAX_DAYS) continue;
+    if(hasFutureAppt.has(p.id)) continue;
+    const visitDateKey = toDateKey(new Date(lastVisit));
+    if(actionsByKey.has(p.id+"|"+visitDateKey)) continue;
+    out.push({ patient:p, lastVisit, visitDateKey });
+  }
+  out.sort((a,b)=> a.lastVisit-b.lastVisit);
+  return out;
+}
+
+function biannualFollowUpRowHtml(c){
+  return `
+    <div class="appt-row" data-bfrow="${c.patient.id}|${c.visitDateKey}">
+      <div class="appt-time">${new Date(c.lastVisit).toLocaleDateString(undefined,{day:'numeric',month:'short'})}</div>
+      <div class="appt-main">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span class="an">${escapeHtml(c.patient.name||"—")}</span>
+          <span class="status-pill prio-Normal">6-Month Follow-Up</span>
+        </div>
+        <div class="am">Last visit: ${new Date(c.lastVisit).toLocaleDateString()}</div>
+        <div class="appt-actions">
+          <button class="mini-btn" data-bfact="remind" data-id="${c.patient.id}" data-visit="${c.visitDateKey}">${icon('message',13)} Follow Up Remind</button>
+          <button class="mini-btn" data-bfact="ignore" data-id="${c.patient.id}" data-visit="${c.visitDateKey}">${icon('xcircle',13)} Ignore</button>
+          <button class="mini-btn" data-bfact="profile" data-id="${c.patient.id}">${icon('user',13)} Visit Profile</button>
+          <button class="mini-btn" data-bfact="call" data-id="${c.patient.id}">${icon('phone',13)} Call</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function wireBiannualFollowUpActions(candidates){
+  document.querySelectorAll("[data-bfact]").forEach(btn=>{
+    btn.addEventListener("click", async (e)=>{
+      e.stopPropagation();
+      const action = btn.dataset.bfact, patientId = btn.dataset.id, visitDateKey = btn.dataset.visit;
+      if(action==="profile"){
+        openPatientProfile(patientId);
+        return;
+      }
+      const c = candidates.find(x=>x.patient.id===patientId);
+      if(!c) return;
+      if(action==="call"){
+        callNumber(c.patient.mobile, c.patient.name);
+      }else if(action==="remind"){
+        openWhatsAppComposer({
+          toName: c.patient.name, toNumber: c.patient.mobile, patientId: c.patient.id, title:"Biannual Checkup Reminder",
+          message: `Hi ${c.patient.name||""}, it's been about 6 months since your last visit with us — time for your biannual dental checkup! Reply here or call us to book a convenient slot.`
+        });
+        await dbAdd("biannualFollowUpActions", { id: uid("bfa"), patientId, visitDate: visitDateKey||c.visitDateKey, action:"Reminded", createdAt: nowIso() }).catch(()=>{});
+        if(currentPage==="home") renderHome();
+      }else if(action==="ignore"){
+        await dbAdd("biannualFollowUpActions", { id: uid("bfa"), patientId, visitDate: visitDateKey||c.visitDateKey, action:"Ignored", createdAt: nowIso() }).catch(()=>{});
+        if(currentPage==="home") renderHome();
+      }
+    });
+  });
+}
+
 async function renderHome(){
   const main = document.getElementById("main");
   const settings = (await dbGetAll("settings"))[0] || {};
@@ -1796,6 +1891,9 @@ async function renderHome(){
 
         <div class="section-title">Reminders</div>
         <div id="promiseList"></div>
+
+        <div class="section-title">Biannual Follow Up</div>
+        <div id="biannualFollowUpList"></div>
 
         <div class="section-title">Recent Patients <span class="section-link" id="linkRecentPatients">View All</span></div>
         <div id="recentPatientsList"></div>
@@ -1904,6 +2002,17 @@ async function renderHome(){
       <div class="list-card">${shown.map(x=> x.kind==="commitment" ? commitmentRowHtml(x.data) : reminderRowHtml(x.data)).join("")}</div>
       ${combined.length>5 ? `<div class="empty-card" style="margin-top:8px;font-size:12.5px;">+${combined.length-5} more due — check Assist or the patient's profile.</div>` : ""}
     `;
+  }
+
+  const biannualFollowUpList = document.getElementById("biannualFollowUpList");
+  if(biannualFollowUpList){
+    const candidates = await getBiannualFollowUpCandidates();
+    if(!candidates.length){
+      biannualFollowUpList.innerHTML = `<div class="empty-card"><b>No follow-ups due</b>Patients treated or visited around 6 months ago will show up here automatically.</div>`;
+    }else{
+      biannualFollowUpList.innerHTML = `<div class="list-card">${candidates.map(c=>biannualFollowUpRowHtml(c)).join("")}</div>`;
+      wireBiannualFollowUpActions(candidates);
+    }
   }
 
   const shortcutGrid = document.getElementById("shortcutGrid");
@@ -6747,6 +6856,18 @@ function newBookingCardHtml(b){
   `;
 }
 
+// "Read"/"Delete"/"Add Appointment" on an appointment request handles the
+// request itself, but does nothing to the bell notification it came with —
+// without this, the bell badge keeps counting it as unread forever, even
+// after it's been fully dealt with. This finds that notification and marks
+// it read, refreshing the badge to match.
+async function markOnlineBookingNotificationRead(bookingId){
+  const notifs = await dbGetAll("notifications").catch(()=>[]);
+  const n = notifs.find(x=>x.type==="online_booking" && x.relatedId===bookingId && !x.read);
+  if(n){ n.read = true; await dbPut("notifications", n).catch(()=>{}); }
+  refreshNotificationBell();
+}
+
 function wireNewBookingPopupCards(wrap, bookings){
   const closeIfEmpty = ()=>{ if(!wrap.querySelector("[data-nbcard]")) wrap.remove(); };
   wrap.querySelectorAll("[data-nbact]").forEach(btn=>{
@@ -6758,8 +6879,10 @@ function wireNewBookingPopupCards(wrap, bookings){
       if(action==="add"){
         wrap.remove();
         await dbDelete("onlineBookings", b.id).catch(()=>{});
+        await markOnlineBookingNotificationRead(b.id);
         await prefillAppointmentFromOnlineBooking(b);
       }else if(action==="read"){
+        await markOnlineBookingNotificationRead(b.id);
         const card = wrap.querySelector(`[data-nbcard="${id}"]`);
         if(card) card.remove();
         closeIfEmpty();
@@ -6774,6 +6897,7 @@ function wireNewBookingPopupCards(wrap, bookings){
       }else if(action==="delete"){
         if(!confirm("Delete this appointment request?")) return;
         await dbDelete("onlineBookings", b.id).catch(()=>{});
+        await markOnlineBookingNotificationRead(b.id);
         const card = wrap.querySelector(`[data-nbcard="${id}"]`);
         if(card) card.remove();
         showToast("Request deleted");
@@ -7047,15 +7171,22 @@ async function openOnlineAppointmentsListSheet(){
   const deleteAllBtn = document.getElementById("btnOaDeleteAll");
   if(deleteAllBtn){
     deleteAllBtn.onclick = async ()=>{
-      if(!confirm(`Delete all ${requests.length} appointment request${requests.length>1?'s':''}? This can't be undone.`)) return;
-      for(const b of requests){
-        await dbDelete("onlineBookings", b.id).catch(()=>{});
+      // Re-read fresh rather than trusting the list captured when this
+      // screen opened, so anything that's arrived since (a new website
+      // submission, for instance) gets caught too.
+      const current = (await dbGetAll("onlineBookings")).filter(b=>!b.time);
+      if(!current.length){ showToast("Nothing to delete"); return; }
+      if(!confirm(`Delete all ${current.length} appointment request${current.length>1?'s':''}? This can't be undone.`)) return;
+      let failCount = 0;
+      for(const b of current){
+        const ok = await deleteOnlineBookingVerified(b.id);
+        if(!ok) failCount++;
       }
-      const reminders = await dbGetAll("reminders");
-      for(const r of reminders.filter(r=>r.type==="Online Appointment")){
-        await dbDelete("reminders", r.id).catch(()=>{});
+      if(failCount===0){
+        showToast("All requests deleted");
+      }else{
+        showToast(`${current.length-failCount} of ${current.length} deleted — ${failCount} couldn't be removed. Check your connection and try again.`);
       }
-      showToast("All requests deleted");
       openOnlineAppointmentsListSheet();
     };
   }
@@ -7117,14 +7248,21 @@ function wireSwipeToDelete(root, onDelete){
       content.style.transition = "transform 0.2s ease";
       if(decided && isHorizontal && dx < -80){
         content.style.transform = "translateX(-100%)";
+        const ok = await onDelete(id);
+        if(ok===false){
+          // Deletion failed — snap back rather than removing a card that's
+          // actually still there, so the UI never shows something as gone
+          // when it isn't.
+          content.style.transform = "translateX(0)";
+          return;
+        }
         wrap.style.maxHeight = wrap.offsetHeight+"px";
         wrap.style.transition = "max-height 0.2s ease 0.1s, margin 0.2s ease 0.1s";
-        setTimeout(async ()=>{
+        requestAnimationFrame(()=>{
           wrap.style.maxHeight = "0px";
           wrap.style.marginBottom = "0px";
-          await onDelete(id);
-          wrap.remove();
-        }, 200);
+          setTimeout(()=> wrap.remove(), 250);
+        });
       }else{
         content.style.transform = "translateX(0)";
       }
@@ -7132,23 +7270,45 @@ function wireSwipeToDelete(root, onDelete){
   });
 }
 
+// dbDelete resolving without an error doesn't guarantee the document is
+// actually gone — a rules issue or a stale/cached response can still leave
+// it there. This confirms by re-reading afterward, so "deleted" always
+// means actually deleted, and any real failure surfaces instead of being
+// silently swallowed.
+async function deleteOnlineBookingVerified(id){
+  try{
+    await dbDelete("onlineBookings", id);
+  }catch(e){
+    console.error("deleteOnlineBookingVerified: delete call failed for", id, e);
+    return false;
+  }
+  try{
+    const stillThere = (await dbGetAll("onlineBookings")).some(b=>b.id===id);
+    if(stillThere){
+      console.error("deleteOnlineBookingVerified: delete call succeeded but", id, "is still present — likely a Firestore rules issue");
+      return false;
+    }
+  }catch(e){
+    console.error("deleteOnlineBookingVerified: couldn't verify delete of", id, e);
+    return false;
+  }
+  const reminders = await dbGetAll("reminders").catch(()=>[]);
+  const rem = reminders.find(r=>r.caseId===id && r.type==="Online Appointment");
+  if(rem) await dbDelete("reminders", rem.id).catch(()=>{});
+  await markOnlineBookingNotificationRead(id);
+  return true;
+}
+
 function wireOnlineApptCardActions(requests){
   wireSwipeToDelete(document, async (id)=>{
-    const b = requests.find(x=>x.id===id);
-    if(!b) return;
-    await dbDelete("onlineBookings", b.id).catch(()=>{});
-    const reminders = await dbGetAll("reminders");
-    const rem = reminders.find(r=>r.caseId===b.id && r.type==="Online Appointment");
-    if(rem) await dbDelete("reminders", rem.id).catch(()=>{});
+    const ok = await deleteOnlineBookingVerified(id);
+    if(!ok) showToast("Couldn't delete that request — check your connection and try again");
   });
   document.querySelectorAll("[data-oaadd]").forEach(btn=>{
     btn.onclick = async ()=>{
       const b = requests.find(x=>x.id===btn.dataset.oaadd);
       if(!b) return;
-      await dbDelete("onlineBookings", b.id).catch(()=>{});
-      const reminders = await dbGetAll("reminders");
-      const rem = reminders.find(r=>r.caseId===b.id && r.type==="Online Appointment");
-      if(rem) await dbDelete("reminders", rem.id).catch(()=>{});
+      await deleteOnlineBookingVerified(b.id);
       closeSheet();
       await prefillAppointmentFromOnlineBooking(b);
     };
@@ -7175,11 +7335,8 @@ function wireOnlineApptCardActions(requests){
       if(!confirm("Delete this appointment request?")) return;
       const b = requests.find(x=>x.id===btn.dataset.oadelete);
       if(!b) return;
-      await dbDelete("onlineBookings", b.id).catch(()=>{});
-      const reminders = await dbGetAll("reminders");
-      const rem = reminders.find(r=>r.caseId===b.id && r.type==="Online Appointment");
-      if(rem) await dbDelete("reminders", rem.id).catch(()=>{});
-      showToast("Request deleted");
+      const ok = await deleteOnlineBookingVerified(b.id);
+      showToast(ok? "Request deleted" : "Couldn't delete that request — check your connection and try again");
       openOnlineAppointmentsListSheet();
     };
   });
@@ -14400,7 +14557,12 @@ async function openImplantCaseForm(patient, caseId){
 
     logActivity((existing?"Updated":"Added")+" implant case for "+patient.name, {patientId:patient.id});
     showToast("Implant case saved");
-    goBack();
+    if(isNew){
+      const teeth = implants.map(u=>u.tooth).filter(Boolean).join(", ");
+      promptForTreatmentCharge(patient, "Implant Placement — "+(rec.caseType||"Implant"), teeth, goBack);
+    }else{
+      goBack();
+    }
   };
 }
 
@@ -14998,7 +15160,11 @@ async function openAlignerCaseForm(patient, caseId){
 
     logActivity((existing?"Updated":"Added")+" aligner case for "+patient.name, {patientId:patient.id});
     showToast("Aligner case saved");
-    goBack();
+    if(!existing){
+      promptForTreatmentCharge(patient, "Clear Aligner Treatment"+(brand? " — "+brand:""), "", goBack);
+    }else{
+      goBack();
+    }
   };
 }
 
@@ -15250,7 +15416,11 @@ async function openBracesCaseForm(patient, caseId){
 
     logActivity((existing?"Updated":"Added")+" braces case for "+patient.name, {patientId:patient.id});
     showToast("Braces case saved");
-    goBack();
+    if(!existing){
+      promptForTreatmentCharge(patient, "Orthodontic Treatment (Braces)"+(rec.bracketType? " — "+rec.bracketType:""), "", goBack);
+    }else{
+      goBack();
+    }
   };
 }
 
@@ -17714,9 +17884,16 @@ async function openEndoDiagnosisForm(id, patient, body){
     await dbPut("endoCases", c);
     logActivity((isEdit?"Updated":"Started")+" endodontic case for tooth "+tooth+" — "+patient.name, {patientId: patient.id});
     showToast("Saved");
-    closeSheetOrReturn();
-    endoCaseSubTab = "Diagnosis";
-    openEndoCaseDetail(c.id, patient, body);
+    const goToCaseDetail = ()=>{
+      closeSheetOrReturn();
+      endoCaseSubTab = "Diagnosis";
+      openEndoCaseDetail(c.id, patient, body);
+    };
+    if(!isEdit){
+      promptForTreatmentCharge(patient, "Root Canal Treatment", tooth, goToCaseDetail);
+    }else{
+      goToCaseDetail();
+    }
   };
 }
 
@@ -18343,8 +18520,12 @@ async function openOralSurgeryForm(id, patient, body){
     await dbPut("oralSurgeryCases", c);
     logActivity((isEdit?"Updated":"Recorded")+" "+c.procedureType+" for "+patient.name, {patientId: patient.id});
     showToast("Saved");
-    closeSheetOrReturn();
-    renderOralSurgeryTab(body, patient);
+    const goToList = ()=>{ closeSheetOrReturn(); renderOralSurgeryTab(body, patient); };
+    if(!isEdit){
+      promptForTreatmentCharge(patient, c.procedureType, c.tooth, goToList);
+    }else{
+      goToList();
+    }
   };
 }
 
@@ -18457,8 +18638,12 @@ async function openOralMedForm(id, patient, body){
     await dbPut("oralMedRecords", r);
     logActivity((isEdit?"Updated":"Recorded")+" oral medicine record ("+r.complaintType+") for "+patient.name, {patientId: patient.id});
     showToast(r.followUpDate? "Saved — reminder set" : "Saved");
-    closeSheetOrReturn();
-    renderOralMedTab(body, patient);
+    const goToOralMedList = ()=>{ closeSheetOrReturn(); renderOralMedTab(body, patient); };
+    if(!isEdit){
+      promptForTreatmentCharge(patient, "Oral Medicine — "+(r.complaintType||"Consultation"), r.site, goToOralMedList);
+    }else{
+      goToOralMedList();
+    }
   };
 }
 
@@ -18659,9 +18844,16 @@ async function openProsthoForm(id, patient, body, presetType){
     await dbPut("prosthoCases", c);
     logActivity((isEdit?"Updated":"Recorded")+" "+c.type+" case for "+patient.name, {patientId: patient.id});
     showToast("Saved");
-    closeSheetOrReturn();
-    if(c.type==="Implant Prosthesis") renderImplantCrownTab(body, patient);
-    else renderProsthoTab(body, patient);
+    const goToProsthoList = ()=>{
+      closeSheetOrReturn();
+      if(c.type==="Implant Prosthesis") renderImplantCrownTab(body, patient);
+      else renderProsthoTab(body, patient);
+    };
+    if(!isEdit){
+      promptForTreatmentCharge(patient, c.type||"Prosthodontic Treatment", c.tooth, goToProsthoList);
+    }else{
+      goToProsthoList();
+    }
   };
 }
 
@@ -19070,6 +19262,68 @@ async function openTreatmentItemActionMenu(planId, itemId, patient, tabBody, pat
       openWhatsAppComposer({ toName: patient.name, toNumber: patient.whatsappNumber||patient.mobile, patientId: patient.id, title:"Treatment On WhatsApp", message: summary });
     } }
   ]);
+}
+
+// Creates a Treatment Done record with the exact same shape the regular
+// New Treatment form produces, so it shows up identically in the Treatment
+// Done list, invoices, reports, etc. Used by the post-save charge prompt
+// below, shared across every clinical module.
+async function saveTreatmentDoneRecord(patient, treatmentLabel, amount, tooth, diagnosis){
+  const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived);
+  const item = {
+    id: uid("planitem"),
+    treatmentDate: nowIso(),
+    tooth: tooth || "",
+    diagnosis: diagnosis || "",
+    treatment: treatmentLabel,
+    qty: 1,
+    fee: amount,
+    discount: 0,
+    discountType: "flat",
+    priority: "Normal",
+    status: "Completed",
+    performedBy: patient.treatingDoctor || "",
+    notes: ""
+  };
+  const plan = {
+    id: uid("plan"), patientId: patient.id,
+    clinicId: patient.preferredClinicId || getDefaultClinicId(clinics),
+    doctor: patient.treatingDoctor || "",
+    createdDate: item.treatmentDate,
+    items: [item]
+  };
+  await dbPut("treatmentPlans", plan);
+  logActivity("Added a treatment for "+patient.name, {patientId: patient.id});
+  return {item, plan};
+}
+
+// Shown right after saving a new clinical record (Implant, Endo, Oral
+// Surgery, Prosthodontics, etc.) — entering an amount logs it straight into
+// Treatment Done in the same step; Skip leaves it alone, exactly as if this
+// prompt hadn't appeared at all.
+async function promptForTreatmentCharge(patient, treatmentLabel, tooth, onDone){
+  const cur = await finCurrency();
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>Add to Treatment Done?</h2>
+    <p style="margin-bottom:10px;">${escapeHtml(treatmentLabel)}${tooth? " — Tooth "+escapeHtml(tooth):""} was saved. Enter an amount to log it as a billable treatment, or skip.</p>
+    <div class="field"><label>Amount / Charges</label><input type="number" min="0" id="ptcAmount" placeholder="0"></div>
+    <button class="btn btn-primary btn-block" id="btnPtcAdd" style="margin-top:10px;">Add to Treatment</button>
+    <button class="btn btn-outline btn-block" id="btnPtcSkip" style="margin-top:8px;">Skip</button>
+  `);
+  document.getElementById("ptcAmount").focus();
+  document.getElementById("btnPtcAdd").onclick = async ()=>{
+    const amount = parseFloat(document.getElementById("ptcAmount").value);
+    if(!amount || amount<=0){ showToast("Enter an amount, or tap Skip"); return; }
+    await saveTreatmentDoneRecord(patient, treatmentLabel, amount, tooth);
+    showToast("Added to Treatment Done — "+finMoney(amount,cur));
+    closeSheet();
+    if(onDone) onDone();
+  };
+  document.getElementById("btnPtcSkip").onclick = ()=>{
+    closeSheet();
+    if(onDone) onDone();
+  };
 }
 
 async function openNewTreatmentSheet(patient, tabBody, patientId, prefill, template){
