@@ -203,6 +203,11 @@
   @media (min-width:900px){ main{padding-bottom:24px;} }
 
   .page{padding:16px;max-width:980px;margin:0 auto;}
+  /* Some pages (the appointments calendar) specifically benefit from using
+     full desktop width rather than the standard readable-width cap other
+     pages (forms, lists) use — this opts a page out of that cap on wide
+     screens only, leaving every other .page untouched. */
+  @media (min-width:900px){ .page.page-wide{ max-width:none; } }
 
   /* ---------- Search ---------- */
   .search-bar{
@@ -893,6 +898,14 @@
   .cal-time-slot{font-size:10px;color:var(--grey);text-align:right;padding-right:6px;box-sizing:border-box;transform:translateY(-6px);border-bottom:1px solid var(--off-white);}
   .cal-day-col{width:92px;flex-shrink:0;position:relative;border-left:1px solid var(--grey-light);}
   .cal-day-col.wide{width:100%;flex:1 1 auto;}
+  /* On desktop-width screens, the week view's 7 day columns otherwise stay
+     pinned to their mobile width (92px each, ~700px total) leaving a large
+     empty gap next to the sidebar — this lets them share the full available
+     width instead. The time-label column stays fixed since it's just labels. */
+  @media (min-width:900px){
+    .cal-header-row:not(.cal-day-header-single) .cal-day-header:not(.wide){ width:auto; flex:1 1 0; min-width:0; }
+    .cal-grid .cal-day-col:not(.wide){ width:auto; flex:1 1 0; min-width:0; }
+  }
   .cal-time-col{border-right:1px solid var(--grey-light);}
   .cal-slot-row{border-bottom:1px solid var(--grey-light);box-sizing:border-box;cursor:pointer;}
   .cal-slot-row.hour-line{border-top:1px solid var(--grey-light);}
@@ -3567,7 +3580,7 @@ async function renderPatientProfileSheet(id){
 // =========================================================
 // PHASE 2 — Appointments module
 // =========================================================
-let apptView = "Day";
+let apptView = "Week";
 let apptSelectedDate = new Date();
 let apptDoctorFilter = "ALL";
 let pendingApptPrefillAfterNewPatient = null;
@@ -3580,7 +3593,7 @@ async function renderAppointments(){
   const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived);
   const doctors = await dbGetAll("users");
   main.innerHTML = `
-    <div class="page">
+    <div class="page page-wide">
       <div class="appt-live-clock" id="apptLiveClock"></div>
       <div class="appt-toolbar-row" id="apptToolbarRow">
         <div class="view-tabs" id="apptViewTabs" style="margin-bottom:0;flex-shrink:0;">
@@ -7161,7 +7174,18 @@ async function openOnlineAppointmentsListSheet(){
     <p style="margin-bottom:8px;">Every appointment request submitted through your website's Request Appointment button/form.</p>
     ${requests.length? `
       <p style="margin:0 0 10px;color:var(--grey);font-size:12px;">Swipe a card left to delete it.</p>
-      <button class="btn btn-block" id="btnOaDeleteAll" style="margin-bottom:14px;color:var(--red);border:1px solid var(--red);background:none;">${icon('trash',15)} Delete All</button>
+      <button class="btn btn-block" id="btnOaDeleteAll" style="margin-bottom:10px;color:var(--red);border:1px solid var(--red);background:none;">${icon('trash',15)} Delete All</button>
+      <details style="margin-bottom:14px;">
+        <summary style="font-size:12px;color:var(--grey);cursor:pointer;">If Delete says "couldn't be removed" — read this</summary>
+        <div style="font-size:12px;color:var(--charcoal-2);margin-top:6px;line-height:1.5;">
+          That message means Firestore itself is rejecting the delete — this app has no separate copy of the data to fall back on, so it can only report what Firestore actually did. In the <a href="https://console.firebase.google.com/" target="_blank" rel="noopener">Firebase Console</a> → your project → Firestore Database → Rules tab, confirm this exact block is present and published (merged into whatever else is there, not replacing it):
+          <pre style="background:#1a1a1a;color:#e8e8e8;padding:10px;border-radius:8px;font-size:11px;overflow-x:auto;white-space:pre;margin:8px 0;">match /onlineBookings/{docId} {
+  allow create: if true;
+  allow read, update, delete: if request.auth != null;
+}</pre>
+          A common cause: this block is present but sits <i>after</i> a broader rule that already matched and denied the request — rules stop at the first match, so ordering matters. If it's already there and published and deletes still fail, the exact error text now shown in the popup (tap "Delete All" or a card's Delete to see it) is the next thing to check.
+        </div>
+      </details>
     ` : ""}
     <div id="oaListZone">
       ${requests.length? requests.map(b=>onlineApptCardHtml(b)).join("") : `<div class="empty-card"><b>No requests yet</b>They'll show up here as soon as someone submits the form on your website.</div>`}
@@ -7178,14 +7202,15 @@ async function openOnlineAppointmentsListSheet(){
       if(!current.length){ showToast("Nothing to delete"); return; }
       if(!confirm(`Delete all ${current.length} appointment request${current.length>1?'s':''}? This can't be undone.`)) return;
       let failCount = 0;
+      let firstFailReason = "";
       for(const b of current){
-        const ok = await deleteOnlineBookingVerified(b.id);
-        if(!ok) failCount++;
+        const result = await deleteOnlineBookingVerified(b.id);
+        if(!result.ok){ failCount++; if(!firstFailReason) firstFailReason = result.reason; }
       }
       if(failCount===0){
         showToast("All requests deleted");
       }else{
-        showToast(`${current.length-failCount} of ${current.length} deleted — ${failCount} couldn't be removed. Check your connection and try again.`);
+        alert(`${current.length-failCount} of ${current.length} deleted.\n\n${failCount} couldn't be removed.\n\nReason: ${firstFailReason}\n\nThis is a permissions setting on your Firebase project, not something fixable by re-downloading the app file — see the note in Online Appointments for the fix.`);
       }
       openOnlineAppointmentsListSheet();
     };
@@ -7280,29 +7305,30 @@ async function deleteOnlineBookingVerified(id){
     await dbDelete("onlineBookings", id);
   }catch(e){
     console.error("deleteOnlineBookingVerified: delete call failed for", id, e);
-    return false;
+    return { ok:false, reason: (e && (e.code || e.message)) ? (e.code||"")+" "+(e.message||"") : "Delete call failed" };
   }
   try{
     const stillThere = (await dbGetAll("onlineBookings")).some(b=>b.id===id);
     if(stillThere){
       console.error("deleteOnlineBookingVerified: delete call succeeded but", id, "is still present — likely a Firestore rules issue");
-      return false;
+      return { ok:false, reason: "Delete didn't take effect — likely a Firestore permissions rule blocking it" };
     }
   }catch(e){
     console.error("deleteOnlineBookingVerified: couldn't verify delete of", id, e);
-    return false;
+    return { ok:false, reason: "Couldn't confirm the delete — "+(e && e.message ? e.message : "connection issue") };
   }
   const reminders = await dbGetAll("reminders").catch(()=>[]);
   const rem = reminders.find(r=>r.caseId===id && r.type==="Online Appointment");
   if(rem) await dbDelete("reminders", rem.id).catch(()=>{});
   await markOnlineBookingNotificationRead(id);
-  return true;
+  return { ok:true };
 }
 
 function wireOnlineApptCardActions(requests){
   wireSwipeToDelete(document, async (id)=>{
-    const ok = await deleteOnlineBookingVerified(id);
-    if(!ok) showToast("Couldn't delete that request — check your connection and try again");
+    const result = await deleteOnlineBookingVerified(id);
+    if(!result.ok){ alert("Couldn't delete that request.\n\nReason: "+result.reason); return false; }
+    return true;
   });
   document.querySelectorAll("[data-oaadd]").forEach(btn=>{
     btn.onclick = async ()=>{
@@ -7335,8 +7361,12 @@ function wireOnlineApptCardActions(requests){
       if(!confirm("Delete this appointment request?")) return;
       const b = requests.find(x=>x.id===btn.dataset.oadelete);
       if(!b) return;
-      const ok = await deleteOnlineBookingVerified(b.id);
-      showToast(ok? "Request deleted" : "Couldn't delete that request — check your connection and try again");
+      const result = await deleteOnlineBookingVerified(b.id);
+      if(result.ok){
+        showToast("Request deleted");
+      }else{
+        alert("Couldn't delete that request.\n\nReason: "+result.reason);
+      }
       openOnlineAppointmentsListSheet();
     };
   });
