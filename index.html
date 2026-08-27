@@ -969,7 +969,13 @@
     put: async (storeName, obj)=>{ await setDoc(doc(fbDb, storeName, obj.id), obj); return obj; },
     getAll: async (storeName)=>{
       const snap = await getDocs(collection(fbDb, storeName));
-      return snap.docs.map(d=>d.data());
+      // The document's real Firestore ID (d.id) is the source of truth —
+      // not whatever "id" field (if any) happens to be inside its data.
+      // Documents created via addDoc() (like website widget submissions,
+      // which auto-generate their path ID rather than storing one as a
+      // field) would otherwise come back with id:undefined here, breaking
+      // every piece of app logic that identifies a record by its id.
+      return snap.docs.map(d=>({...d.data(), id: d.id}));
     },
     delete: async (storeName, id)=>{ await deleteDoc(doc(fbDb, storeName, String(id))); return true; },
     clear: async (storeName)=>{
@@ -6984,8 +6990,31 @@ function requestApptFieldsHtml(){
 '    </select>',
 '    <label style="display:block;font-size:12.5px;font-weight:600;color:#555;margin-bottom:4px;">Preferred Date</label>',
 '    <input id="htdRaDate" type="date" style="width:100%;box-sizing:border-box;padding:10px;border:1px solid #ddd;border-radius:8px;margin-bottom:12px;font-size:14px;">',
-'    <label style="display:block;font-size:12.5px;font-weight:600;color:#555;margin-bottom:4px;">Reason (brief)</label>',
-'    <textarea id="htdRaReason" rows="2" style="width:100%;box-sizing:border-box;padding:10px;border:1px solid #ddd;border-radius:8px;margin-bottom:14px;font-size:14px;font-family:inherit;resize:vertical;"></textarea>',
+'    <label style="display:block;font-size:12.5px;font-weight:600;color:#555;margin-bottom:4px;">Service Interested</label>',
+'    <select id="htdRaReason" style="width:100%;box-sizing:border-box;padding:10px;border:1px solid #ddd;border-radius:8px;margin-bottom:12px;font-size:14px;background:#fff;">',
+'      <option value="">Select a service</option>',
+'      <option value="Consultation">Consultation</option>',
+'      <option value="Root Canal Treatment (RCT)">Root Canal Treatment (RCT)</option>',
+'      <option value="Fillings">Fillings</option>',
+'      <option value="Scaling (Cleaning)">Scaling (Cleaning)</option>',
+'      <option value="Bleaching (Teeth Whitening)">Bleaching (Teeth Whitening)</option>',
+'      <option value="Crowns / Bridges">Crowns / Bridges</option>',
+'      <option value="Dentures">Dentures</option>',
+'      <option value="Dental Implants">Dental Implants</option>',
+'      <option value="Braces">Braces</option>',
+'      <option value="Invisalign / Clear Aligners">Invisalign / Clear Aligners</option>',
+'      <option value="Tooth Extraction">Tooth Extraction</option>',
+'      <option value="Wisdom Tooth Removal">Wisdom Tooth Removal</option>',
+'      <option value="Gum Treatment">Gum Treatment</option>',
+'      <option value="Smile Designing / Veneers">Smile Designing / Veneers</option>',
+'      <option value="Kids\' Dental Care">Kids\' Dental Care</option>',
+'      <option value="Dental X-Ray / Checkup">Dental X-Ray / Checkup</option>',
+'      <option value="Other">Other</option>',
+'    </select>',
+'    <div id="htdRaReasonOtherWrap" style="display:none;">',
+'      <label style="display:block;font-size:12.5px;font-weight:600;color:#555;margin-bottom:4px;">Please specify</label>',
+'      <input id="htdRaReasonOther" style="width:100%;box-sizing:border-box;padding:10px;border:1px solid #ddd;border-radius:8px;margin-bottom:12px;font-size:14px;">',
+'    </div>',
 '    <div id="htdRaStatus" style="font-size:13px;margin-bottom:10px;"></div>'
   ].join("\n");
 }
@@ -6998,7 +7027,7 @@ function requestApptSubmitScript(mode){
     : '      document.getElementById("htdRaForm").innerHTML = "<p style=\\"text-align:center;padding:24px 0;color:#1F6F54;font-weight:600;\\">Thank you! Your request has been sent \u2014 we\'ll be in touch shortly.</p>";';
   return [
 '  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";',
-'  import { getFirestore, collection, addDoc } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";',
+'  import { getFirestore, collection, doc, setDoc } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";',
 '  const fbApp = initializeApp('+JSON.stringify(REQUEST_APPT_FC)+', "htd-request-appt-widget-'+mode+'-"+Date.now()+Math.random());',
 '  const fbDb = getFirestore(fbApp);',
 '  const submitBtn = document.getElementById("htdRaSubmit");',
@@ -7018,6 +7047,14 @@ function requestApptSubmitScript(mode){
 '  if(cancelBtn) cancelBtn.onclick = () => { overlay.style.display = "none"; };',
 '  if(overlay) overlay.addEventListener("click", (e) => { if(e.target === overlay) overlay.style.display = "none"; });'
 ].join("\n") : ""),
+'  const reasonSelect = document.getElementById("htdRaReason");',
+'  const reasonOtherWrap = document.getElementById("htdRaReasonOtherWrap");',
+'  if(reasonSelect && reasonOtherWrap && !reasonSelect.dataset.htdWired){',
+'    reasonSelect.dataset.htdWired = "1";',
+'    reasonSelect.addEventListener("change", () => {',
+'      reasonOtherWrap.style.display = reasonSelect.value === "Other" ? "block" : "none";',
+'    });',
+'  }',
 '  if(submitBtn){',
 '  submitBtn.dataset.htdWired = "1";',
 '  submitBtn.onclick = async () => {',
@@ -7030,12 +7067,14 @@ function requestApptSubmitScript(mode){
 '    submitBtn.dataset.htdSubmitting = "1";',
 '    submitBtn.disabled = true; submitBtn.textContent = "Submitting...";',
 '    try{',
-'      await addDoc(collection(fbDb, "onlineBookings"), {',
+'      const newRef = doc(collection(fbDb, "onlineBookings"));',
+'      await setDoc(newRef, {',
+'        id: newRef.id,',
 '        name, age, phone: mobile,',
 '        email: document.getElementById("htdRaEmail").value.trim(),',
 '        clinicLocation: document.getElementById("htdRaClinic").value,',
 '        date: document.getElementById("htdRaDate").value,',
-'        reason: document.getElementById("htdRaReason").value.trim(),',
+'        reason: reasonSelect.value === "Other" ? document.getElementById("htdRaReasonOther").value.trim() : reasonSelect.value,',
 '        processed: false,',
 '        createdAt: new Date().toISOString()',
 '      });',
