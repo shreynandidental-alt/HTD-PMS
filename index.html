@@ -891,7 +891,7 @@
   .cal-day-header.today{color:var(--green);background:var(--green-mist);font-weight:800;border-radius:6px 6px 0 0;}
   .cal-day-col.today-col{background:rgba(63,168,138,0.06);}
   .cal-day-header.wide{width:100%;}
-  .cal-grid-scroll{max-height:520px;overflow-y:auto;border-top:1px solid var(--off-white);}
+  .cal-grid-scroll{max-height:520px;overflow-y:auto;width:max-content;min-width:100%;border-top:1px solid var(--off-white);}
   @media (min-width:900px){ .cal-grid-scroll{max-height:none;overflow-y:visible;} }
   .cal-grid{display:flex;position:relative;}
   .cal-time-col{width:48px;flex-shrink:0;}
@@ -1944,20 +1944,23 @@ async function renderHome(){
   const counts = await getDashboardCounts();
   const statGrid = document.getElementById("statGrid");
   statGrid.innerHTML = [
-    {label:"Today's Appointments", val:counts.apptsToday, cls:"accent"},
-    {label:"Today's Reminder", val:counts.remindersToday, cls: counts.remindersToday>0?"warn":""},
-    {label:"Treatment Due", val:counts.treatmentDueToday, cls:""},
-    {label:"Follow-ups Due", val:counts.followUpsDue, cls:"warn"},
-    {label:"Overdue Reminders", val:counts.overdueReminders, cls:"risk"},
-    {label:"To Do Task Today", val:counts.todoTasksToday, cls: counts.todoTasksToday>0?"warn":""},
-    {label:"Outstanding Balance", val: settings.currency+counts.outstandingBalance.toLocaleString(), cls:"warn"},
-    {label:"Today's Collection", val: settings.currency+counts.todaysCollection.toLocaleString(), cls:"accent"},
+    {key:"apptsToday", label:"Today's Appointments", val:counts.apptsToday, cls:"accent"},
+    {key:"remindersToday", label:"Today's Reminder", val:counts.remindersToday, cls: counts.remindersToday>0?"warn":""},
+    {key:"treatmentDueToday", label:"Treatment Due", val:counts.treatmentDueToday, cls:""},
+    {key:"followUpsDue", label:"Follow-ups Due", val:counts.followUpsDue, cls:"warn"},
+    {key:"overdueReminders", label:"Overdue Reminders", val:counts.overdueReminders, cls:"risk"},
+    {key:"todoTasksToday", label:"To Do Task Today", val:counts.todoTasksToday, cls: counts.todoTasksToday>0?"warn":""},
+    {key:"outstandingBalance", label:"Outstanding Balance", val: settings.currency+counts.outstandingBalance.toLocaleString(), cls:"warn"},
+    {key:"todaysCollection", label:"Today's Collection", val: settings.currency+counts.todaysCollection.toLocaleString(), cls:"accent"},
   ].map(c=>`
-    <div class="stat-card ${c.cls}">
+    <div class="stat-card ${c.cls}" data-stat="${c.key}" style="cursor:pointer;">
       <div class="num">${c.val}</div>
       <div class="label">${c.label}</div>
     </div>
   `).join("");
+  statGrid.querySelectorAll("[data-stat]").forEach(el=>{
+    el.onclick = ()=> openStatDetailSheet(el.dataset.stat);
+  });
 
   const todayList = document.getElementById("todayList");
   if(counts.todayAppts.length===0){
@@ -2391,6 +2394,83 @@ async function promptChairThenSetInChair(id, onDone){
   document.getElementById("btnUseDefaultChair").onclick = ()=> finish("Operatory 1");
   document.getElementById("btnSkipChairPick").onclick = ()=> finish("Operatory 1");
 }
+
+// Each Home-tab stat card opens this to show exactly what makes up its
+// number — not just "1 overdue reminder" but which one, for which patient.
+async function openStatDetailSheet(statKey){
+  const todayKey = toDateKey(new Date());
+  const nowTs = Date.now();
+  const patients = await dbGetAll("patients");
+  const patientById = {}; patients.forEach(p=>patientById[p.id]=p);
+  const cur = await finCurrency();
+  let title = "", rows = [];
+
+  if(statKey==="apptsToday"){
+    title = "Today's Appointments";
+    const appts = (await dbGetAll("appointments")).filter(a=> a.status!=="Reserved" && a.date===todayKey)
+      .sort((a,b)=> (a.startTime||"").localeCompare(b.startTime||""));
+    rows = appts.map(a=>({ id: a.patientId, primary: a.patientName||"—", secondary: (formatTime(a.startTime)||"")+(a.status?" · "+a.status:"") }));
+  }else if(statKey==="remindersToday"){
+    title = "Today's Reminders";
+    const reminders = (await dbGetAll("reminders")).filter(r=> r.status==="Pending" && r.dueDate && toDateKey(new Date(r.dueDate))===todayKey);
+    rows = reminders.map(r=>({ id: r.patientId, primary: r.patientName||"—", secondary: r.title||r.type||"Reminder" }));
+  }else if(statKey==="treatmentDueToday"){
+    title = "Treatment Due Today";
+    const plans = await dbGetAll("treatmentPlans");
+    plans.forEach(plan=>{
+      (plan.items||[]).forEach(item=>{
+        if(item.status!=="Completed" && item.treatmentDate && toDateKey(new Date(item.treatmentDate))===todayKey){
+          const p = patientById[plan.patientId];
+          rows.push({ id: plan.patientId, primary: p? p.name : "—", secondary: item.treatment||"Treatment" });
+        }
+      });
+    });
+  }else if(statKey==="followUpsDue"){
+    title = "Follow-ups Due Today";
+    const commitments = (await dbGetAll("commitments")).filter(c=> c.followUpDate && c.status!=="Cancelled" && c.status!=="Done" && toDateKey(new Date(c.followUpDate))===todayKey);
+    rows = commitments.map(c=>({ id: c.patientId, primary: c.patientName||"—", secondary: c.category||c.notes||"Follow-up" }));
+  }else if(statKey==="overdueReminders"){
+    title = "Overdue Reminders";
+    const reminders = (await dbGetAll("reminders")).filter(r=> r.status==="Pending" && r.dueDate && new Date(r.dueDate).getTime()<nowTs)
+      .sort((a,b)=> new Date(a.dueDate)-new Date(b.dueDate));
+    rows = reminders.map(r=>({ id: r.patientId, primary: r.patientName||"—", secondary: (r.title||r.type||"Reminder")+" · due "+new Date(r.dueDate).toLocaleDateString() }));
+  }else if(statKey==="todoTasksToday"){
+    title = "To Do Tasks Today";
+    const tasks = (await dbGetAll("assistantChecklist")).filter(t=> t.status!=="done" && t.dueDate===todayKey);
+    rows = tasks.map(t=>({ id: null, primary: t.text||"Task", secondary: t.urgent? "Urgent" : "" }));
+  }else if(statKey==="outstandingBalance"){
+    title = "Outstanding Balance";
+    const invoices = (await dbGetAll("invoices")).filter(inv=> (inv.balance||0)>0).sort((a,b)=> (b.balance||0)-(a.balance||0));
+    rows = invoices.map(inv=>{
+      const p = patientById[inv.patientId];
+      return { id: inv.patientId, primary: p? p.name : "—", secondary: (inv.invoiceNumber||"Invoice")+" · Balance "+finMoney(inv.balance,cur) };
+    });
+  }else if(statKey==="todaysCollection"){
+    title = "Today's Collection";
+    const payments = (await dbGetAll("payments")).filter(p=> p.date && toDateKey(new Date(p.date))===todayKey);
+    rows = payments.map(pmt=>{
+      const p = patientById[pmt.patientId];
+      return { id: pmt.patientId, primary: p? p.name : "—", secondary: finMoney(pmt.amount,cur)+(pmt.mode? " · "+pmt.mode:"") };
+    });
+  }
+
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>${title}</h2>
+    ${rows.length? `<div class="list-card">${rows.map(r=>`
+      <div class="clinic-row" ${r.id? `data-statpatient="${r.id}"`:""} style="${r.id?'cursor:pointer;':''}">
+        <div>
+          <div class="name">${escapeHtml(r.primary)}</div>
+          <div class="addr">${escapeHtml(r.secondary)}</div>
+        </div>
+      </div>
+    `).join("")}</div>` : `<div class="empty-card"><b>Nothing here</b>Nothing currently falls under this.</div>`}
+  `);
+  document.querySelectorAll("[data-statpatient]").forEach(el=>{
+    el.onclick = ()=>{ closeSheet(); openPatientProfile(el.dataset.statpatient); };
+  });
+}
+
 
 async function getDashboardCounts(){
   const appts = (await dbGetAll("appointments")).filter(a=> a.status!=="Reserved");
@@ -5021,7 +5101,25 @@ function wireReminderRowActions(root){
       if(action==="done"){
         const reminders = await dbGetAll("reminders");
         const r = reminders.find(x=>x.id===btn.dataset.id);
-        if(r){ r.status = "Completed"; await dbPut("reminders", r); showToast("Reminder marked done"); if(currentPage==="home") renderHome(); }
+        if(r){
+          r.status = "Completed";
+          await dbPut("reminders", r);
+          // A Lab Case reminder's "Done" means the case has come back from
+          // the lab — flag it as ready to deliver so it surfaces in the
+          // Prosthesis Ready to Deliver tab, rather than just disappearing
+          // once the reminder itself is dismissed.
+          if(r.type==="Lab Case" && r.caseId){
+            const labCases = await dbGetAll("labCases");
+            const lc = labCases.find(x=>x.id===r.caseId);
+            if(lc){
+              lc.readyToDeliver = true;
+              if(lc.status!=="Delivered to Patient") lc.status = "Received";
+              await dbPut("labCases", lc);
+            }
+          }
+          showToast("Reminder marked done");
+          if(currentPage==="home") renderHome();
+        }
       }else if(action==="open"){
         openPatientProfile(btn.dataset.id);
       }else if(action==="remindlab"){
@@ -5627,8 +5725,25 @@ let labCaseSearchQuery = "";
 let labBillsReportPage = 1;
 let labCaseDateFrom = "", labCaseDateTo = "";
 let labCasePage = 1;
+let labCasesActiveTab = "All Cases";
 
 async function renderAssistLab(body){
+  body.innerHTML = `
+    <div class="filter-row" id="labCasesTabRow" style="flex-wrap:wrap;overflow-x:visible;margin-bottom:12px;">
+      <button class="filter-chip ${labCasesActiveTab==='All Cases'?'active':''}" data-lctab="All Cases">All Cases</button>
+      <button class="filter-chip ${labCasesActiveTab==='Prosthesis Ready'?'active':''}" data-lctab="Prosthesis Ready">Prosthesis Ready to Deliver</button>
+    </div>
+    <div id="labCasesTabBody"></div>
+  `;
+  body.querySelectorAll("[data-lctab]").forEach(btn=>{
+    btn.onclick = ()=>{ labCasesActiveTab = btn.dataset.lctab; renderAssistLab(body); };
+  });
+  const tabBody = document.getElementById("labCasesTabBody");
+  if(labCasesActiveTab==="Prosthesis Ready") await renderProsthesisReadyTab(tabBody, body);
+  else await renderAllLabCasesList(tabBody, body);
+}
+
+async function renderAllLabCasesList(body, outerBody){
   let cases = (await dbGetAll("labCases")).sort((a,b)=> new Date(b.createdAt||0)-new Date(a.createdAt||0));
   const nq = normalizeStr(labCaseSearchQuery);
   if(nq){
@@ -5669,11 +5784,82 @@ async function renderAssistLab(body){
   `;
   document.getElementById("btnAddLabCase").onclick = ()=>openLabCaseForm(null);
   document.getElementById("btnLabBillsReport").onclick = ()=> openLabBillsReportSheet();
-  document.getElementById("labCaseSearchInput").oninput = (e)=>{ labCaseSearchQuery = e.target.value; labCasePage=1; renderAssistLab(body); };
-  document.getElementById("labCaseDateFromInput").onchange = (e)=>{ labCaseDateFrom = e.target.value; labCasePage=1; renderAssistLab(body); };
-  document.getElementById("labCaseDateToInput").onchange = (e)=>{ labCaseDateTo = e.target.value; labCasePage=1; renderAssistLab(body); };
+  document.getElementById("labCaseSearchInput").oninput = (e)=>{ labCaseSearchQuery = e.target.value; labCasePage=1; renderAllLabCasesList(body, outerBody); };
+  document.getElementById("labCaseDateFromInput").onchange = (e)=>{ labCaseDateFrom = e.target.value; labCasePage=1; renderAllLabCasesList(body, outerBody); };
+  document.getElementById("labCaseDateToInput").onchange = (e)=>{ labCaseDateTo = e.target.value; labCasePage=1; renderAllLabCasesList(body, outerBody); };
   body.querySelectorAll("[data-lab]").forEach(el=> el.onclick = ()=>openLabCaseActionMenu(el.dataset.lab));
-  wirePaginationBar("labCase", cases.length, labCasePage, PAGE_SIZE, (newPage)=>{ labCasePage = newPage; renderAssistLab(body); });
+  wirePaginationBar("labCase", cases.length, labCasePage, PAGE_SIZE, (newPage)=>{ labCasePage = newPage; renderAllLabCasesList(body, outerBody); });
+}
+
+// Cases land here once a Lab Case follow-up reminder gets marked Done —
+// meaning the case is back from the lab and just needs handing to the
+// patient. "Delivered" closes the loop everywhere at once (this list, the
+// lab case record, and whichever clinical crown/prosthesis record it
+// belongs to); "Archive" just clears it from this list without touching
+// any of that, for anything that ended up handled a different way.
+async function renderProsthesisReadyTab(body, outerBody){
+  const cases = (await dbGetAll("labCases")).filter(lc=> lc.readyToDeliver && lc.status!=="Delivered to Patient").sort((a,b)=> new Date(b.createdAt||0)-new Date(a.createdAt||0));
+  body.innerHTML = `
+    <p style="margin:0 0 12px;color:var(--grey);font-size:12.5px;">Cases marked Done from a Lab Case follow-up reminder land here, ready to hand back to the patient.</p>
+    ${cases.length? `<div class="list-card">${cases.map(lc=>`
+      <div class="note-card" data-prcase="${lc.id}">
+        <div class="note-head"><b>${escapeHtml(lc.patientName||"—")}${lc.tooth? " · Tooth "+escapeHtml(lc.tooth):""}</b></div>
+        <div class="note-meta">${escapeHtml(lc.caseType||"")} — ${escapeHtml(lc.labName||"No lab set")}</div>
+        <div style="display:flex;gap:8px;margin-top:8px;">
+          <button class="btn btn-primary btn-sm" data-pract="delivered" data-id="${lc.id}">${icon('check',14)} Delivered</button>
+          <button class="btn btn-outline btn-sm" data-pract="archive" data-id="${lc.id}">${icon('box',14)} Archive</button>
+        </div>
+      </div>
+    `).join("")}</div>` : `<div class="empty-card"><b>Nothing waiting right now</b>Mark a Lab Case reminder Done to move it here once the case is back from the lab.</div>`}
+  `;
+  body.querySelectorAll("[data-pract]").forEach(btn=>{
+    btn.onclick = async ()=>{
+      const action = btn.dataset.pract;
+      const lcId = btn.dataset.id;
+      const labCases = await dbGetAll("labCases");
+      const lc = labCases.find(x=>x.id===lcId);
+      if(!lc) return;
+      if(action==="delivered"){
+        lc.status = "Delivered to Patient";
+        lc.deliveryDate = nowIso();
+        lc.readyToDeliver = false;
+        await dbPut("labCases", lc);
+        await syncDeliveryToClinicalCase(lc);
+        showToast("Marked delivered");
+      }else if(action==="archive"){
+        lc.readyToDeliver = false;
+        lc.archivedFromReadyTab = true;
+        await dbPut("labCases", lc);
+        showToast("Archived");
+      }
+      renderProsthesisReadyTab(body, outerBody);
+    };
+  });
+}
+
+// Finds whichever clinical record (Prosthodontics or Implant case) this lab
+// case's tooth belongs to for the same patient, and notes the delivery
+// there too — without overwriting any of that record's own clinical
+// fields, since exactly which sub-field means "delivered" varies by
+// prosthesis type (denture insertion, RPD delivery, crown cementation...).
+async function syncDeliveryToClinicalCase(lc){
+  if(!lc.patientId || !lc.tooth) return;
+  const deliveryNote = "Prosthesis delivered on "+new Date(lc.deliveryDate||nowIso()).toLocaleDateString()+" (synced from Lab Case tracking).";
+  const prosthoCases = await dbGetAll("prosthoCases");
+  const matchingProstho = prosthoCases.find(p=> p.patientId===lc.patientId && p.tooth===lc.tooth);
+  if(matchingProstho){
+    matchingProstho.notes = (matchingProstho.notes? matchingProstho.notes+"\n":"") + deliveryNote;
+    matchingProstho.updatedAt = nowIso();
+    await dbPut("prosthoCases", matchingProstho);
+    return;
+  }
+  const implantCases = await dbGetAll("implantCases");
+  const matchingImplant = implantCases.find(ic=> ic.patientId===lc.patientId && (ic.implants||[]).some(u=>u.tooth===lc.tooth));
+  if(matchingImplant){
+    matchingImplant.notes = (matchingImplant.notes? matchingImplant.notes+"\n":"") + deliveryNote;
+    matchingImplant.updatedAt = nowIso();
+    await dbPut("implantCases", matchingImplant);
+  }
 }
 
 // =========================================================
@@ -7892,7 +8078,7 @@ async function printDocument(opts){
     <style>
       *{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact;color-adjust:exact;}
       @page{ size:${pageSize} ${orientation}; margin:${mTop}mm ${mRight}mm ${mBottom}mm ${mLeft}mm; }
-      body{font-family:Arial,Helvetica,sans-serif;color:#14171A;padding:32px;padding-bottom:90px;max-width:760px;margin:0 auto;zoom:${zoomLevel};}
+      body{font-family:Arial,Helvetica,sans-serif;color:#14171A;padding:32px;max-width:760px;margin:0 auto;zoom:${zoomLevel};}
       .letterhead{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #14171A;padding-bottom:12px;margin-bottom:16px;gap:16px;}
       .letterhead-left{display:flex;align-items:center;gap:14px;}
       .letterhead-logo{width:130px;height:130px;object-fit:contain;flex-shrink:0;}
@@ -7903,7 +8089,7 @@ async function printDocument(opts){
       .contact-item svg{flex-shrink:0;color:#666;}
       .doctitle{font-size:14px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;text-align:right;white-space:nowrap;}
       .docnum{font-size:11.5px;color:#666;text-align:right;margin-top:2px;}
-      .patient-block{background:rgba(130,130,130,0.3);border:1px solid rgba(130,130,130,0.45);border-radius:12px;padding:12px 16px;margin-bottom:18px;}
+      .patient-block{background:rgba(130,130,130,0.3);border:1px solid rgba(130,130,130,0.45);border-radius:12px;padding:12px 16px;margin-bottom:18px;page-break-inside:avoid;}
       .patient-block .pb-row{font-size:13px;line-height:1.6;color:#14171A;}
       .patient-block .pb-row b{font-weight:700;}
       h2{font-size:14px;}
@@ -7912,13 +8098,13 @@ async function printDocument(opts){
       td{padding:7px 8px;border-bottom:1px solid #ddd;}
       .row{padding:7px 0;border-bottom:1px solid #eee;font-size:13px;}
       .row b{display:inline-block;width:150px;color:#555;}
-      .sign-block{margin-top:50px;text-align:right;}
+      .sign-block{margin-top:50px;text-align:right;page-break-inside:avoid;}
       .sign-block img{height:52px;object-fit:contain;display:block;margin-left:auto;}
       .sign-block .sign-blank-line{height:40px;border-bottom:1px solid #999;width:160px;margin-left:auto;}
       .sign-block .stamp{height:64px;object-fit:contain;display:block;margin-left:auto;margin-top:4px;}
       .sign-block .sign-name{font-size:12.5px;font-weight:700;margin-top:4px;}
       .sign-line{margin-top:60px;text-align:right;font-size:13px;}
-      .footer{position:fixed;bottom:0;left:0;right:0;text-align:center;font-size:10.5px;color:#999;border-top:1px solid #eee;padding-top:10px;background:#fff;}
+      .footer{position:static;margin-top:40px;text-align:center;font-size:10.5px;color:#999;border-top:1px solid #eee;padding-top:10px;background:#fff;page-break-inside:avoid;}
       .footer-meta span:not(:last-child)::after{content:" · ";}
       .footer-custom{margin-top:6px;color:#555;font-size:11px;text-align:center;}
       .pdf-hint{background:#eef8f0;border:1px solid #cfe8d6;border-radius:8px;padding:10px 14px;font-size:12.5px;color:#1F6E42;margin-bottom:16px;}
@@ -8728,13 +8914,39 @@ async function checkPaymentDueReminders(){
   const monthKey = now.getFullYear()+"-"+String(now.getMonth()+1).padStart(2,"0");
   const cur = await finCurrency();
   const allTx = await dbGetAll("financeTransactions");
+  const allNotifs = await dbGetAll("notifications");
   let firedAny = false;
   for(const r of reminders){
     if(now.getDate() < r.dueDay) continue;
-    if(await wasNotificationLogged("payment_due", r.id, monthKey)) continue;
     let amountStr;
     if(r.type==="Fixed"){
       amountStr = finMoney(r.fixedAmount||0, cur);
+    }else if(r.category==="Lab Bills"){
+      // A "Lab Bills" reminder falling early in the month is naturally
+      // about settling up on what got recorded last month, not the
+      // barely-started current month — and rather than one lump sum, this
+      // breaks it down by lab so it's actually actionable: which labs,
+      // how much each, how many cases.
+      const lastMonthDate = new Date(now.getFullYear(), now.getMonth()-1, 1);
+      const lastMonthLabCases = (await dbGetAll("labCases")).filter(lc=>{
+        if(!lc.dateSent || !(Number(lc.labCharges)>0)) return false;
+        const d = fromDateKey(lc.dateSent);
+        return d.getFullYear()===lastMonthDate.getFullYear() && d.getMonth()===lastMonthDate.getMonth();
+      });
+      if(!lastMonthLabCases.length){
+        amountStr = "nothing recorded for "+lastMonthDate.toLocaleDateString(undefined,{month:'long'});
+      }else{
+        const byLab = {};
+        for(const lc of lastMonthLabCases){
+          const key = lc.labName || "Unspecified Lab";
+          byLab[key] = byLab[key] || {total:0, count:0};
+          byLab[key].total += Number(lc.labCharges)||0;
+          byLab[key].count += 1;
+        }
+        const grandTotal = lastMonthLabCases.reduce((s,lc)=> s+(Number(lc.labCharges)||0), 0);
+        const breakdown = Object.entries(byLab).map(([lab,v])=> lab+": "+finMoney(v.total,cur)+" ("+v.count+" case"+(v.count>1?"s":"")+")").join(", ");
+        amountStr = finMoney(grandTotal,cur)+" pending from "+lastMonthDate.toLocaleDateString(undefined,{month:'long'})+" — "+breakdown;
+      }
     }else{
       const monthTx = allTx.filter(t=>{
         if(t.type!=="Expense" || t.category!==r.category || !t.date) return false;
@@ -8744,13 +8956,27 @@ async function checkPaymentDueReminders(){
       const total = monthTx.reduce((s,t)=> s+Number(t.amount||0), 0);
       amountStr = finMoney(total, cur) + " so far this month";
     }
-    await createLoggedNotification({
-      id: uid("notif"), type:"payment_due", relatedId: r.id, monthKey,
-      title: "Payment Due: "+r.category,
-      message: r.category+" payment is due — "+amountStr+".",
-      read: false, createdAt: nowIso()
-    });
-    firedAny = true;
+    const newMessage = r.category+" payment is due — "+amountStr+".";
+    const existing = allNotifs.find(n=> n.type==="payment_due" && n.relatedId===r.id && n.monthKey===monthKey);
+    if(!existing){
+      if(await wasNotificationLogged("payment_due", r.id, monthKey)) continue; // logged but notification itself got deleted — don't recreate
+      await createLoggedNotification({
+        id: uid("notif"), type:"payment_due", relatedId: r.id, monthKey,
+        title: "Payment Due: "+r.category,
+        message: newMessage,
+        read: false, createdAt: nowIso()
+      });
+      firedAny = true;
+    }else if(existing.message !== newMessage){
+      // The underlying figures changed since this first fired (a lab case
+      // recorded after the fact, more expenses logged this month, or the
+      // calculation itself was corrected) — keep it accurate rather than
+      // leaving a stale number sitting in the bell indefinitely.
+      existing.message = newMessage;
+      existing.read = false;
+      await dbPut("notifications", existing);
+      firedAny = true;
+    }
   }
   if(firedAny) refreshNotificationBell();
 }
