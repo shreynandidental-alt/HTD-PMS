@@ -231,7 +231,7 @@
   @media (min-width:980px){ .stat-grid{grid-template-columns:repeat(4,1fr);} }
   .shortcut-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;}
   @media (min-width:640px){ .shortcut-grid{grid-template-columns:repeat(3,1fr);} }
-  @media (min-width:980px){ .shortcut-grid{grid-template-columns:repeat(6,1fr);} }
+  @media (min-width:980px){ .shortcut-grid{grid-template-columns:repeat(7,1fr);} }
   .shortcut-item{background:var(--white);border-radius:var(--radius);box-shadow:var(--shadow);padding:14px 8px;text-align:center;cursor:pointer;}
   .shortcut-item .ico{width:34px;height:34px;border-radius:9px;background:var(--green-mist);color:var(--green);display:flex;align-items:center;justify-content:center;margin:0 auto 8px;}
   .shortcut-item .lbl{font-size:11.5px;font-weight:600;color:var(--charcoal-2);}
@@ -651,6 +651,21 @@
   .cda-table th:first-child{background:var(--off-white);z-index:3;}
 
   .plan-item-card{background:var(--off-white);border:1px solid var(--grey-light);border-radius:10px;padding:12px;margin-bottom:10px;}
+  /* Quick OPD accordion — one colored, collapsible card per step, so the
+     whole visit doesn't have to be visible (and scrolled through) at once. */
+  .qopd-section{background:#fff;border:1px solid var(--grey-light);border-radius:14px;margin-bottom:12px;overflow:hidden;}
+  .qopd-section-header{display:flex;align-items:center;gap:12px;padding:14px 16px;cursor:pointer;user-select:none;}
+  .qopd-icon-circle{width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+  .qopd-section-titlewrap{flex:1;min-width:0;}
+  .qopd-section-step{font-size:10.5px;font-weight:700;letter-spacing:0.04em;color:var(--grey);text-transform:uppercase;}
+  .qopd-section-name{font-size:14.5px;font-weight:700;color:var(--charcoal);}
+  .qopd-filled-dot{width:8px;height:8px;border-radius:50%;background:var(--green);flex-shrink:0;display:none;}
+  .qopd-section.qopd-filled .qopd-filled-dot{display:block;}
+  .qopd-chevron{transition:transform 0.2s ease;color:var(--grey);flex-shrink:0;}
+  .qopd-section.qopd-open .qopd-chevron{transform:rotate(90deg);}
+  .qopd-section-body{display:none;padding:2px 16px 18px;}
+  .qopd-section.qopd-open .qopd-section-body{display:block;}
+  .qopd-quickstart{background:linear-gradient(135deg, var(--green-mist), #fff);border:1px solid var(--grey-light);border-radius:14px;padding:16px;margin-bottom:16px;}
   .plan-item-card .item-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;}
   .plan-item-card .item-remove{background:none;border:none;color:var(--red);cursor:pointer;display:flex;}
   .plan-totals{background:var(--white);border-radius:var(--radius);box-shadow:var(--shadow);padding:14px;margin-top:6px;}
@@ -2049,6 +2064,8 @@ async function renderHome(){
     {label:"Print Blank Rx", ico:"print", action:()=>openPatientPickerThen("Select Patient for Blank Prescription", p=>printBlankPrescription(p))},
     {label:"Print Letter", ico:"edit", action:()=>openLetterComposer()},
     {label:"Print Pre/Post-Op Instructions", ico:"print", action:()=>openPatientPickerThen("Select Patient", p=>openSendInstructionsSheet(p))},
+    {label:"Print Consent Form", ico:"file", action:()=>openPatientPickerThen("Select Patient for Consent Form", p=>openConsentFormsListSheet(p))},
+    {label:"New Pharmacy Bill", ico:"pill", action:()=>openPharmacySaleForm()},
     {label:"Send Message", ico:"sms", action:()=>goTo("communication")},
     {label:"View Reports", ico:"reports", action:()=>goTo("reports")},
   ];
@@ -2523,6 +2540,16 @@ function toDateKey(d){
 function fromDateKey(key){
   const [y,m,d] = key.split("-").map(Number);
   return new Date(y, m-1, d);
+}
+// Used for Registration Date: keeps the chosen day, but preserves whatever
+// time-of-day the record already had (or "now", for a genuinely new
+// patient) — so re-saving an existing patient for an unrelated edit
+// doesn't silently drift their original registration timestamp forward.
+function combineDateKeyWithTime(dateKey, referenceIso){
+  const chosen = fromDateKey(dateKey);
+  const ref = referenceIso ? new Date(referenceIso) : new Date();
+  chosen.setHours(ref.getHours(), ref.getMinutes(), ref.getSeconds(), ref.getMilliseconds());
+  return chosen.toISOString();
 }
 function formatTime(t){
   if(!t) return "";
@@ -3174,6 +3201,7 @@ async function renderPatientFormSheet(p, clinics, isEdit, dupWarningHtml){
       <div class="field"><label>Full Name *</label><input id="pfName" value="${escapeAttr(p.name)}"></div>
     </div>
     <div class="field"><label>Patient ID</label><input id="pfCode" value="${escapeAttr(p.code||'')}" placeholder="${isEdit? '' : 'Leave blank to auto-generate'}"></div>
+    <div class="field"><label>Registration Date</label><input id="pfRegDate" type="date" value="${toDateKey(new Date(p.createdAt||Date.now()))}"></div>
     <div class="field-row">
       <div class="field"><label>Mobile *</label><input id="pfMobile" value="${escapeAttr(p.mobile)}" inputmode="tel"></div>
       <div class="field"><label>WhatsApp Number</label><input id="pfWhatsapp" value="${escapeAttr(p.whatsappNumber)}" inputmode="tel"></div>
@@ -3380,6 +3408,7 @@ async function savePatientFromForm(p, clinics, isEdit){
       return sel==="Custom" ? document.getElementById("pfMembershipCustom").value.trim() : sel;
     })(),
     status: document.getElementById("pfStatus").value,
+    createdAt: combineDateKeyWithTime(document.getElementById("pfRegDate").value || toDateKey(new Date()), p.createdAt),
     updatedAt: nowIso()
   });
 
@@ -3610,10 +3639,12 @@ async function renderPatientProfileSheet(id){
         <div class="list-card" id="profileFamilyList">${await familyMembersRowsHtml(p.familyMembers)}</div>
       ` : ""}
       <button class="btn btn-outline btn-block" id="btnOpenClinicalRecord" style="margin-top:16px;">${icon('tooth',16)} Dental Chart &amp; SOAP Notes</button>
+      <button class="btn btn-primary btn-block" id="btnQuickOpd" style="margin-top:10px;">${icon('check',16)} Quick OPD</button>
     `;
     const famList = document.getElementById("profileFamilyList");
     if(famList) famList.querySelectorAll("[data-openfam]").forEach(row=> row.onclick = ()=> openPatientProfile(row.dataset.openfam));
     document.getElementById("btnOpenClinicalRecord").onclick = ()=>{ openClinicalForPatient(id); };
+    document.getElementById("btnQuickOpd").onclick = ()=>{ openQuickOpdForm(p); };
   } else if(patientProfileTab==="Appointments"){
     const appts = (await dbGetAll("appointments")).filter(a=>a.patientId===id).sort((a,b)=> (b.date+b.startTime).localeCompare(a.date+a.startTime));
     const followUps = (await dbGetAll("commitments")).filter(c=>c.patientId===id && c.followUpDate && c.status!=="Cancelled" && c.status!=="Done").sort((a,b)=> new Date(a.followUpDate)-new Date(b.followUpDate));
@@ -5066,6 +5097,7 @@ function reminderRowHtml(r){
   const overdue = r.dueDate && new Date(r.dueDate).getTime() < Date.now();
   const isLabCase = r.type==="Lab Case";
   const isOnlineAppt = r.type==="Online Appointment";
+  const isImplant = r.type==="Implant";
   return `
     <div class="appt-row">
       <div class="appt-time" style="${overdue?'color:var(--red);':''}">${r.dueDate? new Date(r.dueDate).toLocaleDateString(undefined,{day:'numeric',month:'short'}) : '—'}</div>
@@ -5086,6 +5118,7 @@ function reminderRowHtml(r){
             <button class="mini-btn" data-ract="done" data-id="${r.id}">${icon('check',13)} Done</button>
             ${r.patientId? `<button class="mini-btn" data-ract="open" data-id="${r.patientId}">${icon('user',13)} Open Patient</button>` : ""}
             ${isLabCase? `<button class="mini-btn" data-ract="remindlab" data-id="${r.id}">${icon('message',13)} Remind Lab</button>` : ""}
+            ${isImplant? `<button class="mini-btn" data-ract="snoozeimplant" data-id="${r.id}">${icon('bell',13)} Snooze</button>` : ""}
           `}
         </div>
       </div>
@@ -5141,8 +5174,49 @@ function wireReminderRowActions(root){
       }else if(action==="oa-delete"){
         if(!confirm("Delete this appointment request?")) return;
         await resolveOnlineApptReminder(btn.dataset.id, "delete");
+      }else if(action==="snoozeimplant"){
+        openImplantSnoozeSheet(btn.dataset.id);
       }
     });
+  });
+}
+
+// Lets staff push an implant-prosthesis-due reminder forward by a chosen
+// amount, rather than either acting on it now or losing track of it
+// entirely — calendar-accurate month math (setMonth), not fixed day counts,
+// so "1 month" always lands on the same day next month.
+function openImplantSnoozeSheet(reminderId){
+  const options = [
+    {label:"1 Week", unit:"days", amount:7},
+    {label:"15 Days", unit:"days", amount:15},
+    {label:"1 Month", unit:"months", amount:1},
+    {label:"2 Months", unit:"months", amount:2},
+    {label:"3 Months", unit:"months", amount:3},
+  ];
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>Snooze Reminder</h2>
+    <p style="margin-bottom:12px;">Remind again after:</p>
+    <div class="list-card">
+      ${options.map((o,i)=>`<button class="btn btn-outline btn-block" data-snoozeopt="${i}" style="margin-bottom:8px;">${o.label}</button>`).join("")}
+    </div>
+  `);
+  document.querySelectorAll("[data-snoozeopt]").forEach(btn=>{
+    btn.onclick = async ()=>{
+      const opt = options[parseInt(btn.dataset.snoozeopt)];
+      const reminders = await dbGetAll("reminders");
+      const r = reminders.find(x=>x.id===reminderId);
+      if(!r){ showToast("Reminder not found"); return; }
+      const newDue = new Date();
+      if(opt.unit==="days") newDue.setDate(newDue.getDate()+opt.amount);
+      else newDue.setMonth(newDue.getMonth()+opt.amount);
+      r.dueDate = newDue.toISOString();
+      r.status = "Pending";
+      await dbPut("reminders", r);
+      showToast("Reminder snoozed for "+opt.label.toLowerCase());
+      closeSheet();
+      if(currentPage==="home") renderHome();
+    };
   });
 }
 
@@ -8104,7 +8178,7 @@ async function printDocument(opts){
       .sign-block .stamp{height:64px;object-fit:contain;display:block;margin-left:auto;margin-top:4px;}
       .sign-block .sign-name{font-size:12.5px;font-weight:700;margin-top:4px;}
       .sign-line{margin-top:60px;text-align:right;font-size:13px;}
-      .footer{position:static;margin-top:40px;text-align:center;font-size:10.5px;color:#999;border-top:1px solid #eee;padding-top:10px;background:#fff;page-break-inside:avoid;}
+      .footer{position:static;margin-top:20px;text-align:center;font-size:10.5px;color:#999;border-top:1px solid #eee;padding-top:10px;background:#fff;}
       .footer-meta span:not(:last-child)::after{content:" · ";}
       .footer-custom{margin-top:6px;color:#555;font-size:11px;text-align:center;}
       .pdf-hint{background:#eef8f0;border:1px solid #cfe8d6;border-radius:8px;padding:10px 14px;font-size:12.5px;color:#1F6E42;margin-bottom:16px;}
@@ -21669,35 +21743,679 @@ async function openEditPaymentSheet(paymentId, patient, tabBody, patientId, cur)
   };
 }
 
+// ---- Quick OPD (Examination + Treatment Advised + Treatment Done/Charges
+// + Prescription + Follow-up, all filled in one pass and filed automatically
+// into their normal places) ----
+async function openQuickOpdForm(patient){
+  const doctors = await dbGetAll("users");
+  const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived);
+  const cur = await finCurrency();
+  const templates = (await dbGetAll("clinicalTemplates")).sort((a,b)=>(a.name||"").localeCompare(b.name||""));
+  const rxTemplates = (await dbGetAll("rxTemplates")).sort((a,b)=>(a.name||"").localeCompare(b.name||""));
+  const obsPresets = (await dbGetAll("observationPresets")).map(o=>o.text);
+  const diagPresets = (await dbGetAll("diagnosisPresets")).map(d=>d.text);
+  const medPresets = await dbGetAll("medicinePresets");
+  const goBack = ()=> renderPatientProfileSheet(patient.id);
+
+  let qopdRows = [{ treatment:"", tooth:"", toothCount:0, toothMultiply:false, fee:0 }];
+  let qopdRx = [];
+
+  function rowQty(row){ return (row.toothMultiply && row.toothCount>1) ? row.toothCount : 1; }
+  function rowGross(row){ return (Number(row.fee)||0) * rowQty(row); }
+
+  function treatmentRowHtml(row, idx){
+    const qty = rowQty(row);
+    return `
+      <div class="note-card" data-qopdrow="${idx}" style="margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <b style="font-size:12.5px;color:var(--grey);">Treatment ${idx+1}</b>
+          ${qopdRows.length>1? `<button type="button" class="btn btn-outline btn-sm" data-qopdremove="${idx}" style="color:var(--red);border-color:var(--red);padding:4px 8px;">${icon('xcircle',13)} Remove</button>` : ""}
+        </div>
+        <div class="field"><label>Treatment</label><input data-qopdfield="treatment" data-qopdidx="${idx}" placeholder="e.g. Scaling" value="${escapeAttr(row.treatment)}"></div>
+        <div class="field-row">
+          <div class="field"><label>Tooth (optional)</label>
+            <div class="kiosk-select-display" id="qopdToothDisplay${idx}">${row.tooth ? (qty>1? `${escapeHtml(row.tooth)} (× ${qty} teeth)` : escapeHtml(row.tooth)) : "Tap Add Tooth to select"}</div>
+            <button type="button" class="btn btn-outline btn-sm" data-qopdtooth="${idx}" style="margin-top:6px;">Add Tooth</button>
+          </div>
+          <div class="field"><label>Fee</label><input type="number" min="0" data-qopdfield="fee" data-qopdidx="${idx}" value="${row.fee}"></div>
+        </div>
+      </div>
+    `;
+  }
+
+  function rxRowHtml(m, idx){
+    return `
+      <div class="plan-item-card" data-qopdrx="${idx}">
+        <div class="item-head"><b style="font-size:12.5px;color:var(--grey);">MEDICINE ${idx+1}</b><button type="button" class="item-remove" data-qopdrxremove="${idx}">${icon('trash',15)}</button></div>
+        <div class="field-row">
+          <div class="field"><label>Drug Name</label><input data-qopdrxfield="drugName" data-qopdrxidx="${idx}" value="${escapeAttr(m.drugName)}"></div>
+          <div class="field"><label>Strength</label><input data-qopdrxfield="strength" data-qopdrxidx="${idx}" value="${escapeAttr(m.strength)}" placeholder="e.g. 500mg"></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label>Form</label>
+            <select data-qopdrxfield="form" data-qopdrxidx="${idx}">${RX_FORMS.map(f=>`<option value="${f}" ${m.form===f?'selected':''}>${f}</option>`).join("")}</select>
+          </div>
+          <div class="field"><label>Dose</label><input data-qopdrxfield="dose" data-qopdrxidx="${idx}" list="rxDoseDatalist" value="${escapeAttr(m.dose)}" placeholder="e.g. 1-0-1"></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label>Frequency</label><input data-qopdrxfield="frequency" data-qopdrxidx="${idx}" list="rxFrequencyDatalist" value="${escapeAttr(m.frequency)}" placeholder="e.g. Twice daily"></div>
+          <div class="field"><label>Duration</label><input data-qopdrxfield="duration" data-qopdrxidx="${idx}" list="rxDurationDatalist" value="${escapeAttr(m.duration)}" placeholder="e.g. 5 days"></div>
+        </div>
+        <div class="field"><label>Instructions</label><input data-qopdrxfield="instructions" data-qopdrxidx="${idx}" value="${escapeAttr(m.instructions)}" placeholder="e.g. After food"></div>
+      </div>
+    `;
+  }
+
+  function renderTreatmentRows(){
+    document.getElementById("qopdRowsWrap").innerHTML = qopdRows.map((r,i)=>treatmentRowHtml(r,i)).join("");
+    wireTreatmentRows();
+    recalc();
+  }
+  function renderRxRows(){
+    document.getElementById("qopdRxWrap").innerHTML = qopdRx.length? qopdRx.map((m,i)=>rxRowHtml(m,i)).join("") : `<div class="empty-card" style="margin-bottom:12px;">No medicines yet. Tap + Add Medicine below.</div>`;
+    wireRxRows();
+  }
+
+  function wireTreatmentRows(){
+    document.querySelectorAll("[data-qopdfield]").forEach(el=>{
+      el.addEventListener("input", ()=>{
+        const idx = parseInt(el.dataset.qopdidx);
+        const field = el.dataset.qopdfield;
+        qopdRows[idx][field] = field==="fee" ? (parseFloat(el.value)||0) : el.value;
+        recalc();
+      });
+    });
+    qopdRows.forEach((r,i)=>{
+      const treatmentEl = document.querySelector(`[data-qopdfield="treatment"][data-qopdidx="${i}"]`);
+      const feeEl = document.querySelector(`[data-qopdfield="fee"][data-qopdidx="${i}"]`);
+      wireTreatmentPresetAutofill(treatmentEl, feeEl);
+      if(feeEl) feeEl.addEventListener("input", recalc);
+    });
+    document.querySelectorAll("[data-qopdtooth]").forEach(el=>{
+      el.onclick = ()=>{
+        const idx = parseInt(el.dataset.qopdtooth);
+        openToothPicker(qopdRows[idx].tooth, (value, count, multiply)=>{
+          qopdRows[idx].tooth = value;
+          qopdRows[idx].toothCount = count;
+          qopdRows[idx].toothMultiply = multiply;
+          const qty = (multiply && count>1) ? count : 1;
+          document.getElementById("qopdToothDisplay"+idx).textContent = value ? (qty>1 ? `${value} (× ${qty} teeth)` : value) : "Tap Add Tooth to select";
+          recalc();
+        });
+      };
+    });
+    document.querySelectorAll("[data-qopdremove]").forEach(el=>{
+      el.onclick = ()=>{
+        qopdRows.splice(parseInt(el.dataset.qopdremove),1);
+        renderTreatmentRows();
+      };
+    });
+  }
+
+  function wireRxRows(){
+    const wrap = document.getElementById("qopdRxWrap");
+    wrap.querySelectorAll("[data-qopdrxfield]").forEach(el=>{
+      const evt = el.tagName==="SELECT" ? "change" : "input";
+      el.addEventListener(evt, ()=>{ qopdRx[parseInt(el.dataset.qopdrxidx)][el.dataset.qopdrxfield] = el.value; });
+    });
+    wrap.querySelectorAll("[data-qopdrxremove]").forEach(el=>{
+      el.onclick = ()=>{ qopdRx.splice(parseInt(el.dataset.qopdrxremove),1); renderRxRows(); };
+    });
+    wrap.querySelectorAll('[data-qopdrxfield="drugName"]').forEach(drugEl=>{
+      const idx = drugEl.dataset.qopdrxidx;
+      drugEl.setAttribute("list","medicinePresetsDatalist");
+      drugEl.addEventListener("input", ()=>{
+        const match = medPresets.find(p=>p.name===drugEl.value);
+        if(!match) return;
+        const setField = (f, val)=>{
+          const el = wrap.querySelector(`[data-qopdrxfield="${f}"][data-qopdrxidx="${idx}"]`);
+          if(el) el.value = val;
+          qopdRx[idx][f] = val;
+        };
+        setField("strength", match.strength||"");
+        setField("form", match.form||"Tablet");
+        setField("dose", match.dose||"");
+        setField("frequency", match.frequency||"");
+        setField("duration", match.duration||"");
+        setField("instructions", match.instructions||"");
+      });
+    });
+  }
+
+  function recalc(){
+    const grossTotal = qopdRows.reduce((s,r)=> s+rowGross(r), 0);
+    const discount = parseFloat(document.getElementById("qopdDiscount").value)||0;
+    const discountType = document.getElementById("qopdDiscountType").value;
+    const discountAmt = discountType==="flat" ? Math.min(grossTotal, discount) : grossTotal*(discount/100);
+    const net = Math.max(0, grossTotal - discountAmt);
+    document.getElementById("qopdTotalsBox").innerHTML = `
+      ${qopdRows.map(r=> rowGross(r)>0 ? `<div class="row"><span>${escapeHtml(r.treatment||"Treatment")}${rowQty(r)>1?" × "+rowQty(r)+" teeth":""}</span><span>${finMoney(rowGross(r),cur)}</span></div>` : "").join("")}
+      <div class="row"><span>Combined Total</span><span>${finMoney(grossTotal,cur)}</span></div>
+      <div class="row"><span>Overall Discount</span><span>${finMoney(discountAmt,cur)}</span></div>
+      <div class="row final"><span>Net Total</span><span>${finMoney(net,cur)}</span></div>
+    `;
+    document.getElementById("qopdAmountPaid").value = net;
+    return {grossTotal, discount, discountType, discountAmt, net};
+  }
+
+  renderFormAsPage(`
+    <h2>Quick OPD — ${escapeHtml(patient.name)}</h2>
+    <p style="margin-bottom:14px;">One form for the whole visit. Tap a step to open it — fill in only what applies, and each one files itself into its normal place automatically when you save.</p>
+
+    <div class="qopd-quickstart">
+      <div class="field-row">
+        <div class="field"><label>Doctor</label>${doctorSelectHtml("qopdDoctor", patient.treatingDoctor||"", doctors)}</div>
+        <div class="field"><label>Clinic</label>
+          <select id="qopdClinic">${clinics.map(c=>`<option value="${c.id}" ${patient.preferredClinicId===c.id?'selected':''}>${escapeHtml(c.name.replace('Healing Touch Dental – ',''))}</option>`).join("")}</select>
+        </div>
+      </div>
+      <div class="field" style="margin-bottom:0;"><label>Load a Clinical Template (optional)</label>
+        <select id="qopdTemplate">
+          <option value="">— Choose to auto-fill treatment &amp; medicines —</option>
+          ${templates.map((t,i)=>`<option value="${i}">${escapeHtml(t.name)}</option>`).join("")}
+        </select>
+      </div>
+    </div>
+
+    <div class="qopd-section qopd-open" data-qopdsection="1">
+      <div class="qopd-section-header" data-qopdtoggle="1">
+        <div class="qopd-icon-circle" style="background:#E4F2ED;color:#0E6F5C;">${icon('search',18)}</div>
+        <div class="qopd-section-titlewrap">
+          <div class="qopd-section-step">Step 1</div>
+          <div class="qopd-section-name">On Examination</div>
+        </div>
+        <div class="qopd-filled-dot"></div>
+        <div class="qopd-chevron">${icon('chevron',18)}</div>
+      </div>
+      <div class="qopd-section-body">
+        <div class="field">
+          <label>Chief Complaint</label>
+          <div class="chip-wrap" id="qopdCcChips">
+            ${CHIEF_COMPLAINT_PRESETS.map(c=>`<span class="filter-chip" data-cc="${escapeAttr(c)}">${escapeHtml(c)}</span>`).join("")}
+          </div>
+          <textarea id="qopdChiefComplaint" rows="2" placeholder="Tap a common complaint above, or type your own..."></textarea>
+        </div>
+        <div class="field"><label>Observations</label><textarea id="qopdObservations" rows="3"></textarea></div>
+        <div class="field"><label>Diagnosis</label><textarea id="qopdDiagnosis" rows="2"></textarea></div>
+      </div>
+    </div>
+
+    <div class="qopd-section" data-qopdsection="2">
+      <div class="qopd-section-header" data-qopdtoggle="2">
+        <div class="qopd-icon-circle" style="background:#F3EDE4;color:#8B6F47;">${icon('edit',18)}</div>
+        <div class="qopd-section-titlewrap">
+          <div class="qopd-section-step">Step 2</div>
+          <div class="qopd-section-name">Treatment Advised</div>
+        </div>
+        <div class="qopd-filled-dot"></div>
+        <div class="qopd-chevron">${icon('chevron',18)}</div>
+      </div>
+      <div class="qopd-section-body">
+        <div class="field"><textarea id="qopdTreatmentAdvised" rows="2" placeholder="What's being recommended based on this exam..."></textarea></div>
+      </div>
+    </div>
+
+    <div class="qopd-section" data-qopdsection="3">
+      <div class="qopd-section-header" data-qopdtoggle="3">
+        <div class="qopd-icon-circle" style="background:#FDF3E3;color:#B8863B;">${icon('wallet',18)}</div>
+        <div class="qopd-section-titlewrap">
+          <div class="qopd-section-step">Step 3</div>
+          <div class="qopd-section-name">Treatment Done &amp; Charges</div>
+        </div>
+        <div class="qopd-filled-dot"></div>
+        <div class="qopd-chevron">${icon('chevron',18)}</div>
+      </div>
+      <div class="qopd-section-body">
+        <div id="qopdRowsWrap"></div>
+        <button type="button" class="btn btn-outline btn-block" id="btnQopdAddRow" style="margin-bottom:14px;">${icon('check',15)} Add Another Treatment</button>
+        <div class="field-row">
+          <div class="field"><label>Overall Discount</label><input type="number" min="0" id="qopdDiscount" value="0"></div>
+          <div class="field"><label>Discount Type</label>
+            <select id="qopdDiscountType"><option value="flat" selected>₹ Flat Amount</option><option value="percent">% Percent</option></select>
+          </div>
+        </div>
+        <div class="plan-totals" id="qopdTotalsBox"></div>
+        <div class="field-row">
+          <div class="field"><label>Amount Being Paid Now</label><input type="number" min="0" id="qopdAmountPaid" value="0"></div>
+          <div class="field"><label>Payment Mode</label><select id="qopdMode">${FIN_PAYMENT_MODES.map(m=>`<option value="${m}">${m}</option>`).join("")}</select></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="qopd-section" data-qopdsection="4">
+      <div class="qopd-section-header" data-qopdtoggle="4">
+        <div class="qopd-icon-circle" style="background:#EDF0F7;color:#3F5C82;">${icon('pill',18)}</div>
+        <div class="qopd-section-titlewrap">
+          <div class="qopd-section-step">Step 4</div>
+          <div class="qopd-section-name">Prescription</div>
+        </div>
+        <div class="qopd-filled-dot"></div>
+        <div class="qopd-chevron">${icon('chevron',18)}</div>
+      </div>
+      <div class="qopd-section-body">
+        <div class="field"><label>Use a Medicine Treatment Template</label>
+          <select id="qopdRxTemplate">
+            <option value="">+ Choose a treatment to auto-fill medicines...</option>
+            ${rxTemplates.map((t,i)=>`<option value="${i}">${escapeHtml(t.name)}</option>`).join("")}
+          </select>
+        </div>
+        <div id="qopdRxWrap"></div>
+        <button type="button" class="btn btn-outline btn-block" id="btnQopdAddRx" style="margin-bottom:14px;">+ Add Medicine</button>
+        <div class="field"><label>Advice</label><textarea id="qopdAdvice" rows="2"></textarea></div>
+      </div>
+    </div>
+
+    <div class="qopd-section" data-qopdsection="5">
+      <div class="qopd-section-header" data-qopdtoggle="5">
+        <div class="qopd-icon-circle" style="background:#EFE7F3;color:#6B4E7A;">${icon('calendar',18)}</div>
+        <div class="qopd-section-titlewrap">
+          <div class="qopd-section-step">Step 5</div>
+          <div class="qopd-section-name">Follow-up / Investigation Advised</div>
+        </div>
+        <div class="qopd-filled-dot"></div>
+        <div class="qopd-chevron">${icon('chevron',18)}</div>
+      </div>
+      <div class="qopd-section-body">
+        <div class="field">
+          <label>Investigations Advised</label>
+          <div class="chip-wrap" id="qopdInvChips">
+            ${INVESTIGATION_PRESETS.map(c=>`<span class="filter-chip" data-inv="${escapeAttr(c)}">${escapeHtml(c)}</span>`).join("")}
+          </div>
+          <textarea id="qopdInvestigations" rows="2" placeholder="Tap an investigation above, or type your own..."></textarea>
+        </div>
+        <div class="field"><label>Follow-up Date</label><input id="qopdFollowUp" type="date"></div>
+      </div>
+    </div>
+
+    <button class="btn btn-primary btn-block" id="btnSaveQuickOpd" style="margin-top:6px;">${icon('check',16)} Save Quick OPD Entry</button>
+    <button class="btn btn-outline btn-block" id="btnSaveAndPrintQuickOpd" style="margin-top:8px;">${icon('print',16)} Save and Print OPD</button>
+  `);
+  document.querySelectorAll("[data-qopdtoggle]").forEach(header=>{
+    header.onclick = ()=>{
+      header.closest(".qopd-section").classList.toggle("qopd-open");
+    };
+  });
+  function refreshFilledStatus(){
+    const checks = {
+      1: ()=> document.getElementById("qopdChiefComplaint").value.trim() || document.getElementById("qopdObservations").value.trim() || document.getElementById("qopdDiagnosis").value.trim(),
+      2: ()=> document.getElementById("qopdTreatmentAdvised").value.trim(),
+      3: ()=> qopdRows.some(r=> r.treatment.trim() && rowGross(r)>0),
+      4: ()=> qopdRx.some(m=> m.drugName && m.drugName.trim()),
+      5: ()=> document.getElementById("qopdInvestigations").value.trim() || document.getElementById("qopdFollowUp").value,
+    };
+    Object.entries(checks).forEach(([num, test])=>{
+      const section = document.querySelector(`.qopd-section[data-qopdsection="${num}"]`);
+      if(section) section.classList.toggle("qopd-filled", !!test());
+    });
+  }
+  document.querySelector(".page")?.addEventListener("input", refreshFilledStatus);
+  document.querySelector(".page")?.addEventListener("change", refreshFilledStatus);
+  wireFormBack(goBack);
+  wireDoctorSelect("qopdDoctor");
+  renderTreatmentRows();
+  renderRxRows();
+  wireCommaAutosuggest(document.getElementById("qopdObservations"), obsPresets);
+  wireCommaAutosuggest(document.getElementById("qopdDiagnosis"), diagPresets);
+
+  document.querySelectorAll("#qopdCcChips [data-cc]").forEach(chip=>{
+    chip.onclick = ()=>{
+      const ta = document.getElementById("qopdChiefComplaint");
+      const existing = ta.value.trim();
+      const val = chip.dataset.cc;
+      if(!existing) ta.value = val;
+      else if(!existing.split(",").map(s=>s.trim()).includes(val)) ta.value = existing + ", " + val;
+      ta.focus();
+    };
+  });
+  document.querySelectorAll("#qopdInvChips [data-inv]").forEach(chip=>{
+    chip.onclick = ()=>{
+      const ta = document.getElementById("qopdInvestigations");
+      const existing = ta.value.trim();
+      const val = chip.dataset.inv;
+      if(!existing) ta.value = val;
+      else if(!existing.split(",").map(s=>s.trim()).includes(val)) ta.value = existing + ", " + val;
+      ta.focus();
+    };
+  });
+
+  document.getElementById("qopdDiscount").addEventListener("input", recalc);
+  document.getElementById("qopdDiscountType").addEventListener("change", recalc);
+  document.getElementById("btnQopdAddRow").onclick = ()=>{
+    qopdRows.push({ treatment:"", tooth:"", toothCount:0, toothMultiply:false, fee:0 });
+    renderTreatmentRows();
+  };
+  document.getElementById("btnQopdAddRx").onclick = ()=>{
+    qopdRx.push({drugName:"", strength:"", form:"Tablet", dose:"", frequency:"", duration:"", instructions:""});
+    renderRxRows();
+  };
+  document.getElementById("qopdRxTemplate").onchange = (ev)=>{
+    const idx = ev.target.value;
+    if(idx==="") return;
+    const tmpl = rxTemplates[parseInt(idx)];
+    if(tmpl && tmpl.items && tmpl.items.length){
+      tmpl.items.forEach(it=> qopdRx.push(Object.assign({}, it)));
+      renderRxRows();
+      showToast(`Added ${tmpl.items.length} medicine(s) from "${tmpl.name}"`);
+    }
+    ev.target.value = "";
+  };
+
+  document.getElementById("qopdTemplate").onchange = (ev)=>{
+    const idx = ev.target.value;
+    if(idx==="") return;
+    const tmpl = templates[parseInt(idx)];
+    if(!tmpl) return;
+    if(tmpl.treatment){
+      const firstEmpty = qopdRows.find(r=>!r.treatment) || qopdRows[0];
+      firstEmpty.treatment = tmpl.treatment;
+    }
+    if(tmpl.notes){
+      const ta = document.getElementById("qopdTreatmentAdvised");
+      ta.value = ta.value.trim() ? ta.value.trim()+"\n"+tmpl.notes : tmpl.notes;
+    }
+    if(tmpl.prescriptionItems && tmpl.prescriptionItems.length){
+      tmpl.prescriptionItems.forEach(m=> qopdRx.push(Object.assign({form:"Tablet"}, m)));
+    }
+    if(tmpl.postOpInstructions){
+      const ta = document.getElementById("qopdAdvice");
+      ta.value = ta.value.trim() ? ta.value.trim()+"\n"+tmpl.postOpInstructions : tmpl.postOpInstructions;
+    }
+    renderTreatmentRows();
+    renderRxRows();
+    showToast(`Loaded "${tmpl.name}"`);
+    ev.target.value = "";
+  };
+
+  // Does all the saving, and returns everything needed to print a summary
+  // afterward — collected once here so "Save and Print" doesn't need to
+  // re-read the form (which may have been cleared/reset by then).
+  async function performQuickOpdSave(){
+    const chiefComplaint = document.getElementById("qopdChiefComplaint").value.trim();
+    const observations = document.getElementById("qopdObservations").value.trim();
+    const diagnosis = document.getElementById("qopdDiagnosis").value.trim();
+    const treatmentAdvised = document.getElementById("qopdTreatmentAdvised").value.trim();
+    const investigations = document.getElementById("qopdInvestigations").value.trim();
+    const followUpDateVal = document.getElementById("qopdFollowUp").value;
+    const clinicId = document.getElementById("qopdClinic").value;
+    const doctor = getDoctorSelectValue("qopdDoctor");
+    const advice = document.getElementById("qopdAdvice").value.trim();
+    const nowTs = nowIso();
+
+    const validTreatmentRows = qopdRows.filter(r=> r.treatment.trim() && rowGross(r)>0);
+    const validRxRows = qopdRx.filter(m=> m.drugName && m.drugName.trim());
+
+    if(!chiefComplaint && !observations && !diagnosis && !treatmentAdvised && !validTreatmentRows.length && !validRxRows.length && !investigations && !followUpDateVal){
+      showToast("Nothing to save — fill in at least one section");
+      return null;
+    }
+
+    const createdParts = [];
+    let billing = null;
+
+    if(chiefComplaint || observations || diagnosis || treatmentAdvised || investigations){
+      await dbAdd("examinations", {
+        id: uid("exam"), patientId: patient.id, date: nowTs, doctor,
+        chiefComplaint: chiefComplaint || "—",
+        observations, diagnosis, investigations, treatmentAdvised, notes:""
+      });
+      createdParts.push("Examination");
+    }
+
+    if(validTreatmentRows.length){
+      const grossTotal = validTreatmentRows.reduce((s,r)=> s+rowGross(r), 0);
+      const discount = parseFloat(document.getElementById("qopdDiscount").value)||0;
+      const discountType = document.getElementById("qopdDiscountType").value;
+      const discountAmt = discountType==="flat" ? Math.min(grossTotal, discount) : grossTotal*(discount/100);
+      const net = Math.max(0, grossTotal - discountAmt);
+      const amountPaid = parseFloat(document.getElementById("qopdAmountPaid").value)||0;
+      const mode = document.getElementById("qopdMode").value;
+
+      const plan = {
+        id: uid("plan"), patientId: patient.id, clinicId, doctor, createdDate: nowTs,
+        items: validTreatmentRows.map(r=> ({ id: uid("planitem"), treatmentDate: nowTs, tooth: r.tooth, diagnosis, treatment: r.treatment.trim(),
+          qty: rowQty(r), fee: Number(r.fee)||0, discount:0, discountType:"flat", priority:"Normal", status:"Completed", performedBy: doctor })),
+        overallDiscount: discount, overallDiscountType: discountType, quickOpd:true, createdAt: nowTs
+      };
+      await dbAdd("treatmentPlans", plan);
+      createdParts.push("Treatment Done");
+
+      const invItems = validTreatmentRows.map(r=> ({ description: r.treatment.trim()+(r.tooth?" (Tooth "+r.tooth+")":""), qty: rowQty(r), unitPrice: Number(r.fee)||0, discount:0, discountType:"flat" }));
+      const invoice = {
+        id: uid("inv"), patientId: patient.id, clinicId,
+        invoiceNumber: await nextInvoiceNumber(),
+        date: toDateKey(new Date()), items: invItems, taxPercent:0,
+        totalGross: grossTotal, totalDiscount: discountAmt, totalTax: 0, totalNet: net,
+        amountPaid: 0, balance: net, quickOpd:true, createdAt: nowTs
+      };
+      await dbAdd("invoices", invoice);
+      createdParts.push("Invoice");
+
+      let payment = null;
+      if(amountPaid>0){
+        const receiptNumber = await nextReceiptNumber(invoice.id);
+        payment = { id: uid("pmt"), patientId: patient.id, invoiceId: invoice.id, receiptNumber,
+          amount: Math.min(amountPaid, net), mode, notes:"Quick OPD", date: nowTs, quickOpd:true };
+        await dbAdd("payments", payment);
+        invoice.amountPaid = payment.amount;
+        invoice.balance = Math.max(0, net - payment.amount);
+        await dbPut("invoices", invoice);
+        createdParts.push("Receipt");
+      }
+      billing = { rows: validTreatmentRows, grossTotal, discountAmt, discount, discountType, net, amountPaid, mode, invoice, payment };
+    }
+
+    if(validRxRows.length){
+      await dbAdd("prescriptions", {
+        id: uid("rx"), patientId: patient.id, clinicId, doctor, date: nowTs,
+        diagnosis, advice,
+        followUpDate: followUpDateVal || "",
+        items: validRxRows.map(m=> Object.assign({id: uid("rxitem")}, m))
+      });
+      createdParts.push("Prescription");
+    }
+
+    if(followUpDateVal){
+      await dbAdd("reminders", {
+        id: uid("rem"), patientId: patient.id, patientName: patient.name,
+        title: "Follow-up for "+patient.name+(diagnosis? " — "+diagnosis:""),
+        type: "Follow-up", dueDate: new Date(followUpDateVal).toISOString(), status:"Pending", createdAt: nowTs
+      });
+      createdParts.push("Follow-up Reminder");
+    }
+
+    logActivity("Quick OPD entry ("+createdParts.join(", ")+") for "+patient.name, {patientId: patient.id});
+    return {
+      createdParts, doctor, clinicId,
+      chiefComplaint, observations, diagnosis, treatmentAdvised, investigations, followUpDateVal, advice,
+      validTreatmentRows, validRxRows, billing
+    };
+  }
+
+  document.getElementById("btnSaveQuickOpd").onclick = async ()=>{
+    const result = await performQuickOpdSave();
+    if(!result) return;
+    showToast("Saved: "+result.createdParts.join(", "));
+    goBack();
+  };
+
+  document.getElementById("btnSaveAndPrintQuickOpd").onclick = async ()=>{
+    const result = await performQuickOpdSave();
+    if(!result) return;
+    showToast("Saved — printing");
+    await printQuickOpdSummary(patient, clinics.find(c=>c.id===result.clinicId), result);
+    goBack();
+  };
+}
+
+// Prints only the sections/fields that were actually filled in — an
+// entirely empty section (say, no follow-up date and no investigations)
+// simply doesn't appear, rather than printing blank labels.
+async function printQuickOpdSummary(patient, clinic, r){
+  const cur = await finCurrency();
+  const sections = [];
+
+  if(r.chiefComplaint || r.observations || r.diagnosis){
+    let rows = "";
+    if(r.chiefComplaint) rows += `<tr><td style="width:150px;color:#555;font-weight:700;">Chief Complaint</td><td>${escapeHtml(r.chiefComplaint)}</td></tr>`;
+    if(r.observations) rows += `<tr><td style="color:#555;font-weight:700;">Observations</td><td>${escapeHtml(r.observations)}</td></tr>`;
+    if(r.diagnosis) rows += `<tr><td style="color:#555;font-weight:700;">Diagnosis</td><td>${escapeHtml(r.diagnosis)}</td></tr>`;
+    sections.push(`<h3>On Examination</h3><table>${rows}</table>`);
+  }
+
+  if(r.treatmentAdvised){
+    sections.push(`<h3>Treatment Advised</h3><p>${escapeHtml(r.treatmentAdvised)}</p>`);
+  }
+
+  if(r.billing && r.billing.rows.length){
+    const b = r.billing;
+    const itemRows = b.rows.map(row=>{
+      const qty = (row.toothMultiply && row.toothCount>1) ? row.toothCount : 1;
+      const gross = (Number(row.fee)||0)*qty;
+      return `<tr><td>${escapeHtml(row.treatment)}</td><td>${row.tooth? escapeHtml(row.tooth):"—"}</td><td>${qty}</td><td>${finMoney(gross,cur)}</td></tr>`;
+    }).join("");
+    let summaryRows = `<tr><td style="font-weight:700;">Combined Total</td><td>${finMoney(b.grossTotal,cur)}</td></tr>`;
+    if(b.discountAmt>0) summaryRows += `<tr><td style="font-weight:700;">Discount</td><td>${finMoney(b.discountAmt,cur)}</td></tr>`;
+    summaryRows += `<tr><td style="font-weight:700;">Net Total</td><td style="font-weight:700;">${finMoney(b.net,cur)}</td></tr>`;
+    if(b.payment) summaryRows += `<tr><td style="font-weight:700;">Paid (${escapeHtml(b.mode)}) — Receipt ${escapeHtml(b.payment.receiptNumber)}</td><td>${finMoney(b.payment.amount,cur)}</td></tr>`;
+    sections.push(`
+      <h3>Treatment Done &amp; Charges</h3>
+      <table><thead><tr><th>Treatment</th><th>Tooth</th><th>Qty</th><th>Fee</th></tr></thead><tbody>${itemRows}</tbody></table>
+      <table style="margin-top:8px;">${summaryRows}</table>
+    `);
+  }
+
+  if(r.validRxRows.length){
+    const rxRows = r.validRxRows.map(m=>
+      `<tr><td>${escapeHtml(m.drugName)}${m.strength? " "+escapeHtml(m.strength):""}</td><td>${escapeHtml(m.dose||"—")}</td><td>${escapeHtml(m.frequency||"—")}</td><td>${escapeHtml(m.duration||"—")}</td><td>${escapeHtml(m.instructions||"—")}</td></tr>`
+    ).join("");
+    let rxHtml = `<table><thead><tr><th>Medicine</th><th>Dose</th><th>Frequency</th><th>Duration</th><th>Instructions</th></tr></thead><tbody>${rxRows}</tbody></table>`;
+    if(r.advice) rxHtml += `<table style="margin-top:8px;"><tr><td style="width:150px;color:#555;font-weight:700;">Advice</td><td>${escapeHtml(r.advice)}</td></tr></table>`;
+    sections.push(`<h3>Prescription</h3>${rxHtml}`);
+  }
+
+  if(r.investigations || r.followUpDateVal){
+    let rows = "";
+    if(r.investigations) rows += `<tr><td style="width:150px;color:#555;font-weight:700;">Investigations Advised</td><td>${escapeHtml(r.investigations)}</td></tr>`;
+    if(r.followUpDateVal) rows += `<tr><td style="color:#555;font-weight:700;">Follow-up Date</td><td>${new Date(r.followUpDateVal).toLocaleDateString()}</td></tr>`;
+    sections.push(`<h3>Follow-up / Investigation Advised</h3><table>${rows}</table>`);
+  }
+
+  await printDocument({
+    title: "OPD Record",
+    patient, clinic,
+    docDate: new Date().toLocaleDateString(),
+    bodyHtml: sections.join(""),
+    signHtml: await buildSignBlock(r.doctor)
+  });
+}
+
 // ---- Add Quick Bill (Treatment + Invoice + Receipt in one step) ----
 async function openQuickBillForm(patient){
   const doctors = await dbGetAll("users");
   const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived);
   const cur = await finCurrency();
   const goBack = ()=> renderHome();
-  let qbToothValue = "";
-  let qbToothCount = 0;
-  let qbMultiply = false;
+  // Each row: {treatment, tooth, toothCount, toothMultiply, fee}
+  let qbRows = [{ treatment:"", tooth:"", toothCount:0, toothMultiply:false, fee:0 }];
+
+  function rowQty(row){ return (row.toothMultiply && row.toothCount>1) ? row.toothCount : 1; }
+  function rowGross(row){ return (Number(row.fee)||0) * rowQty(row); }
+
+  function rowHtml(row, idx){
+    const qty = rowQty(row);
+    return `
+      <div class="note-card" data-qbrow="${idx}" style="margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <b style="font-size:12.5px;color:var(--grey);">Treatment ${idx+1}</b>
+          ${qbRows.length>1? `<button type="button" class="btn btn-outline btn-sm" data-qbremove="${idx}" style="color:var(--red);border-color:var(--red);padding:4px 8px;">${icon('xcircle',13)} Remove</button>` : ""}
+        </div>
+        <div class="field"><label>Treatment</label><input data-qbfield="treatment" data-qbidx="${idx}" placeholder="e.g. Scaling" value="${escapeAttr(row.treatment)}"></div>
+        <div class="field-row">
+          <div class="field"><label>Tooth (optional)</label>
+            <div class="kiosk-select-display" id="qbToothDisplay${idx}">${row.tooth ? (qty>1? `${escapeHtml(row.tooth)} (× ${qty} teeth)` : escapeHtml(row.tooth)) : "Tap Add Tooth to select"}</div>
+            <button type="button" class="btn btn-outline btn-sm" data-qbtooth="${idx}" style="margin-top:6px;">Add Tooth</button>
+          </div>
+          <div class="field"><label>Fee</label><input type="number" min="0" data-qbfield="fee" data-qbidx="${idx}" value="${row.fee}"></div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderRows(){
+    document.getElementById("qbRowsWrap").innerHTML = qbRows.map((r,i)=>rowHtml(r,i)).join("");
+    wireRows();
+    recalc();
+  }
+
+  function wireRows(){
+    document.querySelectorAll("[data-qbfield]").forEach(el=>{
+      el.addEventListener("input", ()=>{
+        const idx = parseInt(el.dataset.qbidx);
+        const field = el.dataset.qbfield;
+        qbRows[idx][field] = field==="fee" ? (parseFloat(el.value)||0) : el.value;
+        recalc();
+      });
+    });
+    qbRows.forEach((r,i)=>{
+      const treatmentEl = document.querySelector(`[data-qbfield="treatment"][data-qbidx="${i}"]`);
+      const feeEl = document.querySelector(`[data-qbfield="fee"][data-qbidx="${i}"]`);
+      wireTreatmentPresetAutofill(treatmentEl, feeEl);
+      if(feeEl) feeEl.addEventListener("input", recalc);
+    });
+    document.querySelectorAll("[data-qbtooth]").forEach(el=>{
+      el.onclick = ()=>{
+        const idx = parseInt(el.dataset.qbtooth);
+        openToothPicker(qbRows[idx].tooth, (value, count, multiply)=>{
+          qbRows[idx].tooth = value;
+          qbRows[idx].toothCount = count;
+          qbRows[idx].toothMultiply = multiply;
+          const qty = (multiply && count>1) ? count : 1;
+          document.getElementById("qbToothDisplay"+idx).textContent = value ? (qty>1 ? `${value} (× ${qty} teeth)` : value) : "Tap Add Tooth to select";
+          recalc();
+        });
+      };
+    });
+    document.querySelectorAll("[data-qbremove]").forEach(el=>{
+      el.onclick = ()=>{
+        const idx = parseInt(el.dataset.qbremove);
+        qbRows.splice(idx,1);
+        renderRows();
+      };
+    });
+  }
+
+  function recalc(){
+    const grossTotal = qbRows.reduce((s,r)=> s+rowGross(r), 0);
+    const discount = parseFloat(document.getElementById("qbDiscount").value)||0;
+    const discountType = document.getElementById("qbDiscountType").value;
+    const discountAmt = discountType==="flat" ? Math.min(grossTotal, discount) : grossTotal*(discount/100);
+    const net = Math.max(0, grossTotal - discountAmt);
+    document.getElementById("qbTotalsBox").innerHTML = `
+      ${qbRows.map(r=> rowGross(r)>0 ? `<div class="row"><span>${escapeHtml(r.treatment||"Treatment")}${rowQty(r)>1?" × "+rowQty(r)+" teeth":""}</span><span>${finMoney(rowGross(r),cur)}</span></div>` : "").join("")}
+      <div class="row"><span>Combined Total</span><span>${finMoney(grossTotal,cur)}</span></div>
+      <div class="row"><span>Overall Discount</span><span>${finMoney(discountAmt,cur)}</span></div>
+      <div class="row final"><span>Net Total</span><span>${finMoney(net,cur)}</span></div>
+    `;
+    document.getElementById("qbAmountPaid").value = net;
+    return {grossTotal, discount, discountType, discountAmt, net};
+  }
+
   renderFormAsPage(`
     <h2>Add Quick Bill — ${escapeHtml(patient.name)}</h2>
-    <p style="margin-bottom:12px;">For when there's no time for the full Treatment Done → Invoice → Receipt flow. This records the completed treatment, generates the invoice, and records the payment — all in one step, with a receipt number exactly like the regular flow would produce.</p>
-    <div class="field"><label>Treatment</label><input id="qbTreatment" placeholder="e.g. Scaling"></div>
+    <p style="margin-bottom:12px;">For when there's no time for the full Treatment Done → Invoice → Receipt flow. Add one or more treatments below — this records them, generates a single invoice for the combined total, and records the payment, all in one step.</p>
+    <div id="qbRowsWrap"></div>
+    <button type="button" class="btn btn-outline btn-block" id="btnQbAddRow" style="margin-bottom:14px;">${icon('check',15)} Add Another Treatment</button>
     <div class="field-row">
-      <div class="field"><label>Tooth (optional)</label>
-        <div class="kiosk-select-display" id="qbToothDisplay">Tap Add Tooth to select</div>
-        <button type="button" class="btn btn-outline btn-sm" id="btnQbAddTooth" style="margin-top:6px;">Add Tooth</button>
-      </div>
       <div class="field"><label>Doctor</label>${doctorSelectHtml("qbDoctor", patient.treatingDoctor||"", doctors)}</div>
-    </div>
-    <div class="field"><label>Clinic</label>
-      <select id="qbClinic">${clinics.map(c=>`<option value="${c.id}" ${patient.preferredClinicId===c.id?'selected':''}>${escapeHtml(c.name.replace('Healing Touch Dental – ',''))}</option>`).join("")}</select>
+      <div class="field"><label>Clinic</label>
+        <select id="qbClinic">${clinics.map(c=>`<option value="${c.id}" ${patient.preferredClinicId===c.id?'selected':''}>${escapeHtml(c.name.replace('Healing Touch Dental – ',''))}</option>`).join("")}</select>
+      </div>
     </div>
     <div class="field-row">
-      <div class="field"><label>Fee</label><input type="number" min="0" id="qbFee" value="0"></div>
-      <div class="field"><label>Discount</label><input type="number" min="0" id="qbDiscount" value="0"></div>
-    </div>
-    <div class="field"><label>Discount Type</label>
-      <select id="qbDiscountType"><option value="flat" selected>₹ Flat Amount</option><option value="percent">% Percent</option></select>
+      <div class="field"><label>Overall Discount</label><input type="number" min="0" id="qbDiscount" value="0"></div>
+      <div class="field"><label>Discount Type</label>
+        <select id="qbDiscountType"><option value="flat" selected>₹ Flat Amount</option><option value="percent">% Percent</option></select>
+      </div>
     </div>
     <div class="plan-totals" id="qbTotalsBox"></div>
     <div class="field-row">
@@ -21708,86 +22426,58 @@ async function openQuickBillForm(patient){
   `);
   wireFormBack(goBack);
   wireDoctorSelect("qbDoctor");
-  wireTreatmentPresetAutofill(document.getElementById("qbTreatment"), document.getElementById("qbFee"));
-
-  document.getElementById("btnQbAddTooth").onclick = ()=>{
-    openToothPicker(qbToothValue, (value, count, multiply)=>{
-      qbToothValue = value;
-      qbToothCount = count;
-      qbMultiply = multiply;
-      const qty = (qbMultiply && qbToothCount>1) ? qbToothCount : 1;
-      document.getElementById("qbToothDisplay").textContent = value ? (qty>1 ? `${value} (× ${qty} teeth)` : value) : "Tap Add Tooth to select";
-      recalc();
-    });
-  };
-
-  function recalc(){
-    const feePerUnit = parseFloat(document.getElementById("qbFee").value)||0;
-    const qty = (qbMultiply && qbToothCount>1) ? qbToothCount : 1;
-    const gross = feePerUnit*qty;
-    const discount = parseFloat(document.getElementById("qbDiscount").value)||0;
-    const discountType = document.getElementById("qbDiscountType").value;
-    const discountAmt = discountType==="flat" ? Math.min(gross, discount) : gross*(discount/100);
-    const net = Math.max(0, gross - discountAmt);
-    document.getElementById("qbTotalsBox").innerHTML = `
-      <div class="row"><span>${qty>1? `Fee × ${qty} teeth`:'Fee'}</span><span>${finMoney(gross,cur)}</span></div>
-      <div class="row"><span>Discount</span><span>${finMoney(discountAmt,cur)}</span></div>
-      <div class="row final"><span>Net Total</span><span>${finMoney(net,cur)}</span></div>
-    `;
-    document.getElementById("qbAmountPaid").value = net;
-    return {feePerUnit, qty, gross, discount, discountType, discountAmt, net};
-  }
-  document.getElementById("qbFee").addEventListener("input", recalc);
+  renderRows();
   document.getElementById("qbDiscount").addEventListener("input", recalc);
   document.getElementById("qbDiscountType").addEventListener("change", recalc);
-  recalc();
+  document.getElementById("btnQbAddRow").onclick = ()=>{
+    qbRows.push({ treatment:"", tooth:"", toothCount:0, toothMultiply:false, fee:0 });
+    renderRows();
+  };
 
   document.getElementById("btnGenerateQuickBill").onclick = async ()=>{
-    const treatment = document.getElementById("qbTreatment").value.trim();
-    if(!treatment){ showToast("Please enter a treatment name"); return; }
-    const {feePerUnit, qty, gross, discount, discountType, net} = recalc();
-    if(gross<=0){ showToast("Please enter a fee"); return; }
+    const validRows = qbRows.filter(r=> r.treatment.trim() && rowGross(r)>0);
+    if(!validRows.length){ showToast("Add at least one treatment with a name and fee"); return; }
+    const {grossTotal, discount, discountType, discountAmt, net} = recalc();
     const clinicId = document.getElementById("qbClinic").value;
     const doctor = getDoctorSelectValue("qbDoctor");
     const amountPaid = parseFloat(document.getElementById("qbAmountPaid").value)||0;
     const mode = document.getElementById("qbMode").value;
     const nowTs = nowIso();
+    const treatmentSummary = validRows.map(r=>r.treatment.trim()).join(", ");
 
-    // 1. Treatment plan with one Completed item
+    // Discount is applied once, across the combined total — not per line —
+    // so each plan/invoice line carries its own gross with zero discount,
+    // and the overall discount is recorded separately at the plan/invoice level.
     const plan = {
       id: uid("plan"), patientId: patient.id, clinicId, doctor, createdDate: nowTs,
-      items: [{ id: uid("planitem"), treatmentDate: nowTs, tooth: qbToothValue, diagnosis:"", treatment,
-        qty, fee: feePerUnit, discount, discountType, priority:"Normal", status:"Completed", performedBy: doctor }],
-      overallDiscount:0, overallDiscountType:"flat", quickBill:true, createdAt: nowTs
+      items: validRows.map(r=> ({ id: uid("planitem"), treatmentDate: nowTs, tooth: r.tooth, diagnosis:"", treatment: r.treatment.trim(),
+        qty: rowQty(r), fee: Number(r.fee)||0, discount:0, discountType:"flat", priority:"Normal", status:"Completed", performedBy: doctor })),
+      overallDiscount: discount, overallDiscountType: discountType, quickBill:true, createdAt: nowTs
     };
     await dbAdd("treatmentPlans", plan);
 
-    // 2. Invoice — numbered exactly like the traditional flow
-    const allInvoices = await dbGetAll("invoices");
-    const invItems = [{ description: treatment, qty, unitPrice: feePerUnit, discount, discountType }];
-    const totals = computeInvoiceTotals(invItems, 0, cur);
+    const invItems = validRows.map(r=> ({ description: r.treatment.trim()+(r.tooth?" (Tooth "+r.tooth+")":""), qty: rowQty(r), unitPrice: Number(r.fee)||0, discount:0, discountType:"flat" }));
     const invoice = {
       id: uid("inv"), patientId: patient.id, clinicId,
       invoiceNumber: await nextInvoiceNumber(),
       date: toDateKey(new Date()), items: invItems, taxPercent:0,
-      totalGross: totals.gross, totalDiscount: totals.discount, totalTax: totals.tax, totalNet: totals.net,
-      amountPaid: 0, balance: totals.net, quickBill:true, createdAt: nowTs
+      totalGross: grossTotal, totalDiscount: discountAmt, totalTax: 0, totalNet: net,
+      amountPaid: 0, balance: net, quickBill:true, createdAt: nowTs
     };
     await dbAdd("invoices", invoice);
 
-    // 3. Payment / Receipt — same receiptNumber mechanism as the traditional flow
     let payment = null;
     if(amountPaid>0){
       const receiptNumber = await nextReceiptNumber(invoice.id);
       payment = { id: uid("pmt"), patientId: patient.id, invoiceId: invoice.id, receiptNumber,
-        amount: Math.min(amountPaid, totals.net), mode, notes:"Quick Bill", date: nowTs, quickBill:true };
+        amount: Math.min(amountPaid, net), mode, notes:"Quick Bill", date: nowTs, quickBill:true };
       await dbAdd("payments", payment);
       invoice.amountPaid = payment.amount;
-      invoice.balance = Math.max(0, totals.net - payment.amount);
+      invoice.balance = Math.max(0, net - payment.amount);
       await dbPut("invoices", invoice);
     }
 
-    logActivity("Generated a Quick Bill ("+treatment+") for "+patient.name, {patientId:patient.id});
+    logActivity("Generated a Quick Bill ("+treatmentSummary+") for "+patient.name, {patientId:patient.id});
     showToast("Quick Bill generated");
     openQuickBillSuccessSheet(patient, plan, invoice, payment, clinics.find(c=>c.id===clinicId));
   };
