@@ -27397,28 +27397,40 @@ function downloadPatientExcelTemplate(){
   const wb = XLSX.utils.book_new();
   const sheets = {
     Patients: [
-      ["Name","Mobile","AltMobile","Email","DOB (YYYY-MM-DD)","Gender","Address","City","Occupation","ReferredBy","RegisteredOn (YYYY-MM-DD)","Status"],
-      ["Jane Doe","9876543210","","jane@example.com","1990-05-14","Female","123 Main St","Gurugram","Teacher","Walk-in","2024-01-10","Active"]
+      ["Name","Mobile","ExternalID","AltMobile","Email","DOB (YYYY-MM-DD)","Gender","Address","City","Occupation","ReferredBy","RegisteredOn (YYYY-MM-DD)","Status"],
+      ["Jane Doe","9876543210","","","jane@example.com","1990-05-14","Female","123 Main St","Gurugram","Teacher","Walk-in","2024-01-10","Active"]
     ],
     Appointments: [
-      ["PatientMobile","Date (YYYY-MM-DD)","StartTime (HH:MM)","DurationMinutes","Doctor","Chair","TreatmentType","Status","Notes"],
-      ["9876543210","2024-02-01","10:00","30","Dr. Sharma","Operatory 1","Consultation","Completed",""]
+      ["PatientMobile","ExternalID","Date (YYYY-MM-DD)","StartTime (HH:MM)","DurationMinutes","Doctor","Chair","TreatmentType","Status","Notes"],
+      ["9876543210","","2024-02-01","10:00","30","Dr. Sharma","Operatory 1","Consultation","Completed",""]
     ],
     Treatments: [
-      ["PatientMobile","TreatmentDate (YYYY-MM-DD)","Treatment","Tooth","Diagnosis","Qty","Fee","Discount","DiscountType (flat/percent)","Status","PerformedBy","Notes"],
-      ["9876543210","2024-02-01","Root Canal","46","Irreversible Pulpitis","1","8000","0","flat","Completed","Dr. Sharma",""]
+      ["PatientMobile","ExternalID","TreatmentDate (YYYY-MM-DD)","Treatment","Tooth","Diagnosis","Qty","Fee","Discount","DiscountType (flat/percent)","Status","PerformedBy","Notes"],
+      ["9876543210","","2024-02-01","Root Canal","46","Irreversible Pulpitis","1","8000","0","flat","Completed","Dr. Sharma",""]
     ],
     Invoices: [
-      ["PatientMobile","InvoiceNumber","Date (YYYY-MM-DD)","ItemDescription","Qty","UnitPrice","Discount","DiscountType (flat/percent)","TaxPercent","AmountPaid"],
-      ["9876543210","INV-0001","2024-02-01","Root Canal (Tooth 46)","1","8000","0","flat","0","8000"]
+      ["PatientMobile","ExternalID","InvoiceNumber","Date (YYYY-MM-DD)","ItemDescription","Qty","UnitPrice","Discount","DiscountType (flat/percent)","TaxPercent","AmountPaid"],
+      ["9876543210","","INV-0001","2024-02-01","Root Canal (Tooth 46)","1","8000","0","flat","0","8000"]
     ],
     Payments: [
-      ["PatientMobile","InvoiceNumber","ReceiptNumber","Date (YYYY-MM-DD)","Amount","Mode (Cash/Card/UPI/etc)","Notes"],
-      ["9876543210","INV-0001","RCPT-0001","2024-02-01","8000","Cash",""]
+      ["PatientMobile","ExternalID","InvoiceNumber","ReceiptNumber","Date (YYYY-MM-DD)","Amount","Mode (Cash/Card/UPI/etc)","Notes"],
+      ["9876543210","","INV-0001","RCPT-0001","2024-02-01","8000","Cash",""]
     ],
     Prescriptions: [
-      ["PatientMobile","Date (YYYY-MM-DD)","Doctor","Diagnosis","Advice","FollowUpDate (YYYY-MM-DD)","DrugName","Strength","Form","Dose","Frequency","Duration","Instructions"],
-      ["9876543210","2024-02-01","Dr. Sharma","Irreversible Pulpitis","Rest and hydration","2024-02-08","Amoxicillin","500mg","Tablet","1","Twice daily","5 days","After food"]
+      ["PatientMobile","ExternalID","Date (YYYY-MM-DD)","Doctor","Diagnosis","Advice","FollowUpDate (YYYY-MM-DD)","DrugName","Strength","Form","Dose","Frequency","Duration","Instructions"],
+      ["9876543210","","2024-02-01","Dr. Sharma","Irreversible Pulpitis","Rest and hydration","2024-02-08","Amoxicillin","500mg","Tablet","1","Twice daily","5 days","After food"]
+    ],
+    ClinicalNotes: [
+      ["PatientMobile","ExternalID","Date (YYYY-MM-DD)","Doctor","ChiefComplaint","Diagnosis","Notes"],
+      ["9876543210","","2024-02-01","Dr. Sharma","Tooth pain","Irreversible Pulpitis","Sensitivity noted on cold test"]
+    ],
+    TreatmentPresets: [
+      ["TreatmentName","Cost"],
+      ["Root Canal Treatment","8000"]
+    ],
+    MedicinePresets: [
+      ["MedicineName"],
+      ["Amoxicillin 500mg"]
     ]
   };
   Object.entries(sheets).forEach(([name, rows])=>{
@@ -27433,7 +27445,7 @@ function openPatientExcelRestoreSheet(){
   openSheet(`
     <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
     <h2>Restore Patient Data from Excel</h2>
-    <p>Upload the filled-in template (Patients, Appointments, Treatments, Invoices, Payments, Prescriptions sheets). Rows are matched to a patient by mobile number — a new patient is created automatically if none matches.</p>
+    <p>Upload the filled-in template (Patients, Appointments, Treatments, Invoices, Payments, Prescriptions, ClinicalNotes, TreatmentPresets, MedicinePresets sheets). Rows are matched to a patient by mobile number, or by ExternalID for a patient with no mobile on file — a new patient is created automatically if none matches.</p>
     <div class="field"><input type="file" id="peFile" accept=".xlsx,.xls"></div>
     <div id="peSummary"></div>
     <button class="btn btn-primary btn-block" id="btnConfirmPatientExcelRestore" disabled>Import Data</button>
@@ -27467,7 +27479,7 @@ function openPatientExcelRestoreSheet(){
     btn.disabled = true; btn.textContent = "Importing…";
     try{
       const result = await importPatientDataWorkbook(workbook);
-      logActivity(`Patient data imported from Excel (${result.patients} patients, ${result.appointments} appointments, ${result.treatments} treatments, ${result.invoices} invoices, ${result.payments} payments, ${result.prescriptions} prescriptions)`);
+      logActivity(`Patient data imported from Excel (${result.patients} patients, ${result.appointments} appointments, ${result.treatments} treatments, ${result.invoices} invoices, ${result.payments} payments, ${result.prescriptions} prescriptions, ${result.clinicalNotes} clinical notes, ${result.treatmentPresets} treatment presets, ${result.medicinePresets} medicine presets)`);
       showToast("Import complete");
       closeSheet();
       refreshClinicSelector();
@@ -27502,32 +27514,45 @@ async function importPatientDataWorkbook(workbook){
   const defaultClinicId = selectedClinicId!=="ALL" ? selectedClinicId : getDefaultClinicId(clinics);
   let patients = await dbGetAll("patients");
   const byMobile = {};
-  patients.forEach(p=>{ if(p.mobile) byMobile[p.mobile] = p; });
+  const byExternalId = {};
+  patients.forEach(p=>{
+    if(p.mobile) byMobile[p.mobile] = p;
+    if(p.importExternalId) byExternalId[p.importExternalId] = p;
+  });
 
-  async function findOrCreatePatient(mobile, extra){
+  // Matches by mobile first (the reliable, human-meaningful key), falling
+  // back to an imported system's own patient code when there's no mobile
+  // to match on — without this fallback, any patient missing a phone
+  // number would be silently skipped rather than imported.
+  async function findOrCreatePatient(mobile, extra, externalId){
     mobile = excelCellStr(mobile);
-    if(!mobile) return null;
-    if(byMobile[mobile]) return byMobile[mobile];
+    externalId = excelCellStr(externalId);
+    if(!mobile && !externalId) return null;
+    if(mobile && byMobile[mobile]) return byMobile[mobile];
+    if(externalId && byExternalId[externalId]) return byExternalId[externalId];
     const p = Object.assign({
-      id: uid("pat"), code: await nextPatientCode(), name: extra?.name || ("Patient "+mobile),
+      id: uid("pat"), code: await nextPatientCode(), name: extra?.name || (mobile? "Patient "+mobile : "Patient "+externalId),
       mobile, altMobile:"", email:"", dob:"", gender:"", address:"", city:"", occupation:"",
       referredBy:"", preferredClinicId: defaultClinicId, treatingDoctor:"", medicalAlerts:"",
-      allergies:"", currentMedications:"", generalNotes:"", status:"Active", createdAt: nowIso()
+      allergies:"", currentMedications:"", generalNotes:"", status:"Active", createdAt: nowIso(),
+      importExternalId: externalId || ""
     }, extra||{});
     await dbAdd("patients", p);
-    byMobile[mobile] = p;
+    if(mobile) byMobile[mobile] = p;
+    if(externalId) byExternalId[externalId] = p;
     patients.push(p);
     return p;
   }
 
-  let counts = {patients:0, appointments:0, treatments:0, invoices:0, payments:0, prescriptions:0};
+  let counts = {patients:0, appointments:0, treatments:0, invoices:0, payments:0, prescriptions:0, clinicalNotes:0, treatmentPresets:0, medicinePresets:0};
 
   // Patients
   for(const row of sheetRows(workbook, "Patients")){
     const mobile = excelCellStr(row["Mobile"]);
-    if(!mobile) continue;
+    const externalId = excelCellStr(row["ExternalID"]);
+    if(!mobile && !externalId) continue;
     const extra = {
-      name: excelCellStr(row["Name"]) || ("Patient "+mobile),
+      name: excelCellStr(row["Name"]) || ("Patient "+(mobile||externalId)),
       altMobile: excelCellStr(row["AltMobile"]),
       email: excelCellStr(row["Email"]),
       dob: excelDateKey(row["DOB (YYYY-MM-DD)"]),
@@ -27539,18 +27564,20 @@ async function importPatientDataWorkbook(workbook){
       status: excelCellStr(row["Status"]) || "Active",
       createdAt: (()=>{ const dk = excelDateKey(row["RegisteredOn (YYYY-MM-DD)"]); return dk ? new Date(dk).toISOString() : nowIso(); })()
     };
-    if(byMobile[mobile]){
-      Object.assign(byMobile[mobile], extra);
-      await dbPut("patients", byMobile[mobile]);
+    const existing = (mobile && byMobile[mobile]) || (externalId && byExternalId[externalId]);
+    if(existing){
+      Object.assign(existing, extra);
+      if(externalId) existing.importExternalId = externalId;
+      await dbPut("patients", existing);
     }else{
-      await findOrCreatePatient(mobile, extra);
+      await findOrCreatePatient(mobile, extra, externalId);
     }
     counts.patients++;
   }
 
   // Appointments
   for(const row of sheetRows(workbook, "Appointments")){
-    const patient = await findOrCreatePatient(row["PatientMobile"]);
+    const patient = await findOrCreatePatient(row["PatientMobile"], null, row["ExternalID"]);
     if(!patient) continue;
     const a = {
       id: uid("appt"), patientId: patient.id, patientName: patient.name,
@@ -27571,7 +27598,7 @@ async function importPatientDataWorkbook(workbook){
 
   // Treatments (as a treatment plan with one item, matching how the app creates them)
   for(const row of sheetRows(workbook, "Treatments")){
-    const patient = await findOrCreatePatient(row["PatientMobile"]);
+    const patient = await findOrCreatePatient(row["PatientMobile"], null, row["ExternalID"]);
     if(!patient) continue;
     const treatmentDate = excelDateKey(row["TreatmentDate (YYYY-MM-DD)"]);
     const item = {
@@ -27603,7 +27630,7 @@ async function importPatientDataWorkbook(workbook){
   // Invoices
   const invoiceByNumber = {};
   for(const row of sheetRows(workbook, "Invoices")){
-    const patient = await findOrCreatePatient(row["PatientMobile"]);
+    const patient = await findOrCreatePatient(row["PatientMobile"], null, row["ExternalID"]);
     if(!patient) continue;
     const invoiceNumber = excelCellStr(row["InvoiceNumber"]) || await nextInvoiceNumber();
     let inv = invoiceByNumber[invoiceNumber];
@@ -27641,7 +27668,7 @@ async function importPatientDataWorkbook(workbook){
 
   // Payments
   for(const row of sheetRows(workbook, "Payments")){
-    const patient = await findOrCreatePatient(row["PatientMobile"]);
+    const patient = await findOrCreatePatient(row["PatientMobile"], null, row["ExternalID"]);
     if(!patient) continue;
     const invoiceNumber = excelCellStr(row["InvoiceNumber"]);
     const linkedInv = invoiceNumber ? invoiceByNumber[invoiceNumber] : null;
@@ -27660,7 +27687,7 @@ async function importPatientDataWorkbook(workbook){
   // Prescriptions
   const rxByPatientDate = {};
   for(const row of sheetRows(workbook, "Prescriptions")){
-    const patient = await findOrCreatePatient(row["PatientMobile"]);
+    const patient = await findOrCreatePatient(row["PatientMobile"], null, row["ExternalID"]);
     if(!patient) continue;
     const date = excelDateKey(row["Date (YYYY-MM-DD)"]) || toDateKey(new Date());
     const key = patient.id+"|"+date;
@@ -27690,6 +27717,43 @@ async function importPatientDataWorkbook(workbook){
   }
   for(const rx of Object.values(rxByPatientDate)){
     await dbPut("prescriptions", rx);
+  }
+
+  // Clinical Notes (Examination records)
+  for(const row of sheetRows(workbook, "ClinicalNotes")){
+    const patient = await findOrCreatePatient(row["PatientMobile"], null, row["ExternalID"]);
+    if(!patient) continue;
+    const date = excelDateKey(row["Date (YYYY-MM-DD)"]) || toDateKey(new Date());
+    await dbAdd("examinations", {
+      id: uid("exam"), patientId: patient.id,
+      date: new Date(date).toISOString(),
+      doctor: excelCellStr(row["Doctor"]) || patient.treatingDoctor || "",
+      chiefComplaint: excelCellStr(row["ChiefComplaint"]) || "—",
+      observations: excelCellStr(row["Notes"]),
+      diagnosis: excelCellStr(row["Diagnosis"]),
+      investigations: "", treatmentAdvised: "", notes: ""
+    });
+    counts.clinicalNotes++;
+  }
+
+  // Treatment Type presets (name + default fee) — skips any name already present
+  const existingTxPresets = new Set((await dbGetAll("treatmentPresets")).map(t=>(t.name||"").trim().toLowerCase()));
+  for(const row of sheetRows(workbook, "TreatmentPresets")){
+    const name = excelCellStr(row["TreatmentName"]);
+    if(!name || existingTxPresets.has(name.toLowerCase())) continue;
+    await dbAdd("treatmentPresets", {id: uid("txp"), name, fee: parseFloat(row["Cost"])||0, createdAt: nowIso()});
+    existingTxPresets.add(name.toLowerCase());
+    counts.treatmentPresets++;
+  }
+
+  // Medicine presets (name only) — skips any name already present
+  const existingMedPresets = new Set((await dbGetAll("medicinePresets")).map(m=>(m.name||"").trim().toLowerCase()));
+  for(const row of sheetRows(workbook, "MedicinePresets")){
+    const name = excelCellStr(row["MedicineName"]);
+    if(!name || existingMedPresets.has(name.toLowerCase())) continue;
+    await dbAdd("medicinePresets", {id: uid("medp"), name, strength:"", form:"Tablet", dose:"", frequency:"", duration:"", instructions:"", createdAt: nowIso()});
+    existingMedPresets.add(name.toLowerCase());
+    counts.medicinePresets++;
   }
 
   return counts;
