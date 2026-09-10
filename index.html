@@ -174,6 +174,7 @@
     padding:6px 8px;
     font-size:12.5px;
     max-width:130px;
+    color-scheme:dark;
   }
 
   .header-search-wrap{position:relative;display:none;flex:1;max-width:420px;}
@@ -2047,8 +2048,18 @@ async function renderHome(){
     if(!candidates.length){
       biannualFollowUpList.innerHTML = `<div class="empty-card"><b>No follow-ups due</b>Patients treated or visited around 6 months ago will show up here automatically.</div>`;
     }else{
-      biannualFollowUpList.innerHTML = `<div class="list-card">${candidates.map(c=>biannualFollowUpRowHtml(c)).join("")}</div>`;
+      biannualFollowUpList.innerHTML = `
+        <button class="btn btn-outline btn-block" id="btnIgnoreAllFollowUp" style="margin-bottom:8px;">${icon('close',14)} Ignore All</button>
+        <div class="list-card">${candidates.map(c=>biannualFollowUpRowHtml(c)).join("")}</div>
+      `;
       wireBiannualFollowUpActions(candidates);
+      document.getElementById("btnIgnoreAllFollowUp").onclick = async ()=>{
+        if(!confirm(`Ignore all ${candidates.length} follow-up${candidates.length>1?'s':''} due? This can be tracked again next time they're due.`)) return;
+        for(const c of candidates){
+          await dbAdd("biannualFollowUpActions", { id: uid("bfa"), patientId: c.patient.id, visitDate: c.visitDateKey, action:"Ignored", createdAt: nowIso() }).catch(()=>{});
+        }
+        if(currentPage==="home") renderHome();
+      };
     }
   }
 
@@ -2458,10 +2469,21 @@ async function openStatDetailSheet(statKey){
   }else if(statKey==="outstandingBalance"){
     title = "Outstanding Balance";
     const invoices = (await dbGetAll("invoices")).filter(inv=> (inv.balance||0)>0).sort((a,b)=> (b.balance||0)-(a.balance||0));
+    const rawTotal = invoices.reduce((s,inv)=> s+(inv.balance||0), 0);
+    const settingsRow = (await dbGetAll("settings"))[0] || {};
+    const baseline = settingsRow.outstandingBaselineAmount||0;
+    const sinceReset = Math.max(0, rawTotal - baseline);
     rows = invoices.map(inv=>{
       const p = patientById[inv.patientId];
       return { id: inv.patientId, primary: p? p.name : "—", secondary: (inv.invoiceNumber||"Invoice")+" · Balance "+finMoney(inv.balance,cur) };
     });
+    var outstandingExtraHtml = `
+      <div class="warn-banner" style="margin-bottom:12px;">
+        <b>Total outstanding across all invoices:</b> ${finMoney(rawTotal,cur)}
+        ${baseline>0? `<br><b>Since counter reset${settingsRow.outstandingResetAt? " on "+new Date(settingsRow.outstandingResetAt).toLocaleDateString():""}:</b> ${finMoney(sinceReset,cur)}` : ""}
+      </div>
+      <button class="btn btn-outline btn-block" id="btnResetOutstandingCounter" style="margin-bottom:12px;">${icon('refresh',15)} Reset Counter to ₹0</button>
+    `;
   }else if(statKey==="todaysCollection"){
     title = "Today's Collection";
     const payments = (await dbGetAll("payments")).filter(p=> p.date && toDateKey(new Date(p.date))===todayKey);
@@ -2474,6 +2496,7 @@ async function openStatDetailSheet(statKey){
   openSheet(`
     <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
     <h2>${title}</h2>
+    ${typeof outstandingExtraHtml!=="undefined" && outstandingExtraHtml? outstandingExtraHtml : ""}
     ${rows.length? `<div class="list-card">${rows.map(r=>`
       <div class="clinic-row" ${r.id? `data-statpatient="${r.id}"`:""} style="${r.id?'cursor:pointer;':''}">
         <div>
@@ -2486,6 +2509,20 @@ async function openStatDetailSheet(statKey){
   document.querySelectorAll("[data-statpatient]").forEach(el=>{
     el.onclick = ()=>{ closeSheet(); openPatientProfile(el.dataset.statpatient); };
   });
+  const resetBtn = document.getElementById("btnResetOutstandingCounter");
+  if(resetBtn) resetBtn.onclick = async ()=>{
+    if(!confirm("Reset the Outstanding counter on Home to ₹0?\n\nThis only resets what's shown on the dashboard — it doesn't change any invoice, mark anything as paid, or affect billing records. The full outstanding total will still be visible in Billing and Reports, and here at the top of this list.")) return;
+    const invoicesNow = await dbGetAll("invoices");
+    const rawTotalNow = invoicesNow.reduce((s,inv)=> s+(inv.balance||0), 0);
+    const settingsRows = await dbGetAll("settings");
+    const s = settingsRows[0] || {id: uid("settings")};
+    s.outstandingBaselineAmount = rawTotalNow;
+    s.outstandingResetAt = nowIso();
+    if(settingsRows.length) await dbPut("settings", s); else await dbAdd("settings", s);
+    showToast("Outstanding counter reset");
+    closeSheet();
+    if(currentPage==="home") renderHome();
+  };
 }
 
 
@@ -2516,14 +2553,17 @@ async function getDashboardCounts(){
   });
 
   const invoices = await dbGetAll("invoices");
-  const outstandingBalance = invoices.reduce((sum,inv)=> sum + (inv.balance||0), 0);
+  const outstandingBalanceRaw = invoices.reduce((sum,inv)=> sum + (inv.balance||0), 0);
+  const settingsForBaseline = (await dbGetAll("settings"))[0] || {};
+  const outstandingBaseline = settingsForBaseline.outstandingBaselineAmount||0;
+  const outstandingBalance = Math.max(0, outstandingBalanceRaw - outstandingBaseline);
 
   const payments = await dbGetAll("payments");
   const todaysCollection = payments
     .filter(p=> p.date && toDateKey(new Date(p.date))===todayKey)
     .reduce((sum,p)=> sum + (p.amount||0), 0);
 
-  return {apptsToday, overdueReminders, patientsWaiting, todayAppts, remindersToday, todoTasksToday, treatmentDueToday, outstandingBalance, todaysCollection, followUpsDue};
+  return {apptsToday, overdueReminders, patientsWaiting, todayAppts, remindersToday, todoTasksToday, treatmentDueToday, outstandingBalance, outstandingBalanceRaw, todaysCollection, followUpsDue};
 }
 
 
@@ -4368,12 +4408,14 @@ async function openProfileMoreMenu(patient){
     <button class="btn btn-outline btn-block" data-mact="outstanding" style="margin-top:8px;">${icon('wallet',16)} Send Outstanding Message</button>
     <button class="btn btn-outline btn-block" data-mact="refer" style="margin-top:8px;">${icon('share',16)} Refer Patient</button>
     <button class="btn btn-outline btn-block" data-mact="refund" style="margin-top:8px;">${icon('receipt',16)} Refund Payment</button>
+    <button class="btn btn-outline btn-block" data-mact="splitrecords" style="margin-top:8px;">${icon('share',16)} Move Records to Another Patient</button>
   `);
   const bind = (act, fn)=>{ const el = document.querySelector(`[data-mact="${act}"]`); if(el) el.onclick = fn; };
   bind("comms", ()=>{ closeSheet(); openCommunicationsHistorySheet(patient); });
   bind("outstanding", async ()=>{ closeSheet(); await sendOutstandingPaymentMessage(patient); });
   bind("refer", ()=>{ closeSheet(); openReferPatientSheet(patient); });
   bind("refund", ()=>{ closeSheet(); openRefundPaymentSheet(patient); });
+  bind("splitrecords", ()=>{ closeSheet(); openSplitPatientRecordsSheet(patient); });
 }
 
 // ---- Communications history ----
@@ -4394,6 +4436,242 @@ async function openCommunicationsHistorySheet(patient){
       </div>
     `).join("")}</div>` : `<div class="empty-card"><b>No communications logged yet</b>Messages sent via WhatsApp, SMS, or Email from this app will show up here with the date and time.</div>`}
   `);
+}
+
+// ---- Move Records to Another Patient (repairs a merged/misattributed
+// profile — e.g. two people who shared a phone number ended up as one
+// record, and one person's clinical history needs separating out) ----
+async function openSplitPatientRecordsSheet(patient){
+  const [plans, invoices, payments, prescriptions, exams, appts] = await Promise.all([
+    dbGetAll("treatmentPlans"), dbGetAll("invoices"), dbGetAll("payments"),
+    dbGetAll("prescriptions"), dbGetAll("examinations"), dbGetAll("appointments")
+  ]);
+  const myPlans = plans.filter(p=>p.patientId===patient.id);
+  const myInvoices = invoices.filter(i=>i.patientId===patient.id);
+  const myPrescriptions = prescriptions.filter(r=>r.patientId===patient.id);
+  const myExams = exams.filter(e=>e.patientId===patient.id);
+  const myAppts = appts.filter(a=>a.patientId===patient.id);
+
+  // Flatten every treatment plan's items into individually-selectable rows,
+  // since a merged profile usually has one person's treatments scattered
+  // across several plans rather than neatly grouped.
+  const treatmentRows = [];
+  myPlans.forEach(plan=>{
+    (plan.items||[]).forEach(item=>{
+      treatmentRows.push({planId: plan.id, itemId: item.id, item});
+    });
+  });
+
+  let destMode = "new";
+  let destPatient = null; // set if "existing" mode and a patient was picked
+  let checkedState = { treatment: new Set(), invoice: new Set(), rx: new Set(), exam: new Set(), appt: new Set() };
+  let newNameDraft = "", newMobileDraft = "";
+
+  function treatmentRowHtml(r, idx){
+    const it = r.item;
+    const dateStr = it.treatmentDate ? new Date(it.treatmentDate).toLocaleDateString() : "—";
+    return `
+      <label class="list-row" style="align-items:flex-start;cursor:pointer;">
+        <input type="checkbox" data-splittreatment="${idx}" ${checkedState.treatment.has(idx)?'checked':''} style="margin-top:3px;">
+        <div class="txt" style="flex:1;">
+          <div style="font-weight:600;">${escapeHtml(it.treatment||"Treatment")}${it.tooth? " · Tooth "+escapeHtml(it.tooth):""}</div>
+          <div style="font-size:11.5px;color:var(--grey);">${dateStr} · ${escapeHtml(it.performedBy||"—")} · ${finMoney(it.fee||0)}</div>
+        </div>
+      </label>
+    `;
+  }
+  function invoiceRowHtml(inv, idx){
+    const linkedPay = payments.filter(p=>p.invoiceId===inv.id);
+    return `
+      <label class="list-row" style="align-items:flex-start;cursor:pointer;">
+        <input type="checkbox" data-splitinvoice="${idx}" ${checkedState.invoice.has(idx)?'checked':''} style="margin-top:3px;">
+        <div class="txt" style="flex:1;">
+          <div style="font-weight:600;">Invoice ${escapeHtml(String(inv.invoiceNumber))} · ${finMoney(inv.totalNet||0)}</div>
+          <div style="font-size:11.5px;color:var(--grey);">${inv.date||"—"} · ${(inv.items||[]).map(it=>it.description).join(", ")}${linkedPay.length? " · "+linkedPay.length+" payment(s) will move with it":""}</div>
+        </div>
+      </label>
+    `;
+  }
+  function simpleRowHtml(rec, idx, kind, label){
+    return `
+      <label class="list-row" style="align-items:flex-start;cursor:pointer;">
+        <input type="checkbox" data-split${kind}="${idx}" ${checkedState[kind].has(idx)?'checked':''} style="margin-top:3px;">
+        <div class="txt" style="flex:1;">
+          <div style="font-weight:600;">${escapeHtml(label)}</div>
+          <div style="font-size:11.5px;color:var(--grey);">${(rec.date? new Date(rec.date).toLocaleDateString(): "—")}</div>
+        </div>
+      </label>
+    `;
+  }
+
+  function render(){
+    openSheet(`
+      <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+      <h2>Move Records — ${escapeHtml(patient.name)}</h2>
+      <p style="margin-bottom:12px;">Select anything on this profile that actually belongs to a different person, then choose where it should go. Nothing you don't select is touched.</p>
+
+      ${treatmentRows.length? `
+        <div class="section-title">Treatments</div>
+        <div class="list-card">${treatmentRows.map((r,i)=>treatmentRowHtml(r,i)).join("")}</div>
+      ` : ""}
+      ${myInvoices.length? `
+        <div class="section-title">Invoices</div>
+        <div class="list-card">${myInvoices.map((inv,i)=>invoiceRowHtml(inv,i)).join("")}</div>
+      ` : ""}
+      ${myPrescriptions.length? `
+        <div class="section-title">Prescriptions</div>
+        <div class="list-card">${myPrescriptions.map((r,i)=>simpleRowHtml(r,i,"rx", "Prescription — "+(r.items||[]).map(m=>m.drugName).join(", "))).join("")}</div>
+      ` : ""}
+      ${myExams.length? `
+        <div class="section-title">Examinations</div>
+        <div class="list-card">${myExams.map((r,i)=>simpleRowHtml(r,i,"exam", r.chiefComplaint||"Examination")).join("")}</div>
+      ` : ""}
+      ${myAppts.length? `
+        <div class="section-title">Appointments</div>
+        <div class="list-card">${myAppts.map((r,i)=>simpleRowHtml(r,i,"appt", (r.treatmentType||"Appointment")+" · "+(r.status||""))).join("")}</div>
+      ` : ""}
+
+      <div class="section-title">Move Selected To</div>
+      <div class="field-row">
+        <label class="list-row" style="cursor:pointer;"><input type="radio" name="splitDest" id="splitDestNew" ${destMode==="new"?'checked':''}> New Patient</label>
+        <label class="list-row" style="cursor:pointer;"><input type="radio" name="splitDest" id="splitDestExisting" ${destMode==="existing"?'checked':''}> Existing Patient</label>
+      </div>
+      <div id="splitNewFields" style="${destMode==="existing"?'display:none;':''}">
+        <div class="field"><label>New Patient's Name</label><input id="splitNewName" placeholder="e.g. Kashvi Yadav" value="${escapeAttr(newNameDraft)}"></div>
+        <div class="field"><label>Mobile (optional)</label><input id="splitNewMobile" inputmode="tel" value="${escapeAttr(newMobileDraft)}"></div>
+      </div>
+      <div id="splitExistingFields" style="${destMode==="new"?'display:none;':''}">
+        <button type="button" class="btn btn-outline btn-block" id="btnSplitPickPatient">Choose Existing Patient…</button>
+        <div id="splitExistingChosen" style="margin-top:8px;font-size:13px;color:var(--charcoal-2);">${destPatient? "Selected: "+escapeHtml(destPatient.name)+(destPatient.mobile? " ("+escapeHtml(destPatient.mobile)+")":"") : ""}</div>
+      </div>
+
+      <button class="btn btn-primary btn-block" id="btnConfirmSplit" style="margin-top:14px;">${icon('share',16)} Move Selected Records</button>
+    `);
+    wire();
+  }
+
+  function captureState(){
+    checkedState.treatment = new Set(Array.from(document.querySelectorAll('[data-splittreatment]:checked')).map(el=>parseInt(el.dataset.splittreatment)));
+    checkedState.invoice = new Set(Array.from(document.querySelectorAll('[data-splitinvoice]:checked')).map(el=>parseInt(el.dataset.splitinvoice)));
+    checkedState.rx = new Set(Array.from(document.querySelectorAll('[data-splitrx]:checked')).map(el=>parseInt(el.dataset.splitrx)));
+    checkedState.exam = new Set(Array.from(document.querySelectorAll('[data-splitexam]:checked')).map(el=>parseInt(el.dataset.splitexam)));
+    checkedState.appt = new Set(Array.from(document.querySelectorAll('[data-splitappt]:checked')).map(el=>parseInt(el.dataset.splitappt)));
+    const nameEl = document.getElementById("splitNewName");
+    const mobEl = document.getElementById("splitNewMobile");
+    if(nameEl) newNameDraft = nameEl.value;
+    if(mobEl) newMobileDraft = mobEl.value;
+  }
+
+  function wire(){
+    document.getElementById("splitDestNew").onchange = ()=>{
+      captureState();
+      destMode = "new";
+      render();
+    };
+    document.getElementById("splitDestExisting").onchange = ()=>{
+      captureState();
+      destMode = "existing";
+      render();
+    };
+    document.getElementById("btnSplitPickPatient").onclick = ()=>{
+      captureState();
+      openPatientPickerThen("Choose the patient to move records to", (picked)=>{
+        if(picked.id===patient.id){ showToast("Choose a different patient than the one you're moving records from"); render(); return; }
+        destPatient = picked;
+        render();
+      });
+    };
+
+    document.getElementById("btnConfirmSplit").onclick = async ()=>{
+      captureState();
+      const checkedTreatments = Array.from(checkedState.treatment);
+      const checkedInvoices = Array.from(checkedState.invoice);
+      const checkedRx = Array.from(checkedState.rx);
+      const checkedExam = Array.from(checkedState.exam);
+      const checkedAppt = Array.from(checkedState.appt);
+
+      const totalSelected = checkedTreatments.length + checkedInvoices.length + checkedRx.length + checkedExam.length + checkedAppt.length;
+      if(totalSelected===0){ showToast("Select at least one record to move"); return; }
+
+      let destId, destName;
+      if(destMode==="new"){
+        const name = newNameDraft.trim();
+        if(!name){ showToast("Enter a name for the new patient"); return; }
+        const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived);
+        const newPatient = {
+          id: uid("pat"), code: await nextPatientCode(), name,
+          mobile: newMobileDraft.trim(), altMobile:"", email:"", dob:"",
+          gender:"", address:"", city:"", occupation:"", referredBy:"",
+          preferredClinicId: patient.preferredClinicId || getDefaultClinicId(clinics),
+          treatingDoctor:"", medicalAlerts:"", allergies:"", currentMedications:"",
+          generalNotes: "Split off from "+patient.name+"'s profile on "+new Date().toLocaleDateString()+" — records that had been merged together were separated out.",
+          status:"Active", createdAt: nowIso()
+        };
+        await dbAdd("patients", newPatient);
+        destId = newPatient.id; destName = newPatient.name;
+      }else{
+        if(!destPatient){ showToast("Choose an existing patient first"); return; }
+        destId = destPatient.id; destName = destPatient.name;
+      }
+
+      if(!confirm(`Move ${totalSelected} record(s) from ${patient.name} to ${destName}? This can't be automatically undone.`)) return;
+
+      if(checkedTreatments.length){
+        const movedItems = checkedTreatments.map(idx=>treatmentRows[idx].item);
+        const affectedPlanIds = new Set(checkedTreatments.map(idx=>treatmentRows[idx].planId));
+        const movedItemIds = new Set(checkedTreatments.map(idx=>treatmentRows[idx].itemId));
+        for(const planId of affectedPlanIds){
+          const plan = myPlans.find(p=>p.id===planId);
+          plan.items = (plan.items||[]).filter(it=>!movedItemIds.has(it.id));
+          if(plan.items.length===0){
+            await dbDelete("treatmentPlans", plan.id);
+          }else{
+            await dbPut("treatmentPlans", plan);
+          }
+        }
+        const firstMoved = myPlans.find(p=>p.id===treatmentRows[checkedTreatments[0]].planId);
+        await dbAdd("treatmentPlans", {
+          id: uid("plan"), patientId: destId,
+          clinicId: firstMoved? firstMoved.clinicId : patient.preferredClinicId,
+          doctor: firstMoved? firstMoved.doctor : "",
+          createdDate: nowIso(), items: movedItems
+        });
+      }
+
+      for(const idx of checkedInvoices){
+        const inv = myInvoices[idx];
+        inv.patientId = destId;
+        await dbPut("invoices", inv);
+        const linkedPay = payments.filter(p=>p.invoiceId===inv.id);
+        for(const pay of linkedPay){
+          pay.patientId = destId;
+          await dbPut("payments", pay);
+        }
+      }
+      for(const idx of checkedRx){
+        const rec = myPrescriptions[idx];
+        rec.patientId = destId;
+        await dbPut("prescriptions", rec);
+      }
+      for(const idx of checkedExam){
+        const rec = myExams[idx];
+        rec.patientId = destId;
+        await dbPut("examinations", rec);
+      }
+      for(const idx of checkedAppt){
+        const rec = myAppts[idx];
+        rec.patientId = destId; rec.patientName = destName;
+        await dbPut("appointments", rec);
+      }
+
+      logActivity(`Moved ${totalSelected} record(s) from ${patient.name} to ${destName}`, {patientId: patient.id});
+      showToast("Records moved to "+destName);
+      closeSheet();
+      renderPatientProfileSheet(patient.id);
+    };
+  }
+
+  render();
 }
 
 // ---- Refer Patient ----
@@ -4819,7 +5097,7 @@ function renderApptFormSheet(a, clinics, isEdit, doctors){
     </div>
     <div class="field-row">
       <div class="field"><label>Date</label><input id="apDate" type="date" value="${a.date}"></div>
-      <div class="field"><label>Time</label><input id="apTime" type="time" value="${a.startTime}"></div>
+      <div class="field"><label>Time</label>${time12HourPickerHtml("apTime", a.startTime)}</div>
     </div>
     <div class="field-row">
       <div class="field"><label>Duration (minutes)</label><input id="apDuration" type="number" min="5" step="5" value="${a.durationMinutes}"></div>
@@ -4841,6 +5119,7 @@ function renderApptFormSheet(a, clinics, isEdit, doctors){
 
   let selectedPatientId = a.patientId || null;
   wireDoctorSelect("apDoctor");
+  wireTime12HourPicker("apTime");
   const searchInput = document.getElementById("apPatientSearch");
   const resultsBox = document.getElementById("apPatientResults");
   const viewProfileBtn = document.getElementById("apViewProfile");
@@ -4917,7 +5196,7 @@ function renderApptFormSheet(a, clinics, isEdit, doctors){
     showToast("Appointment saved");
     closeSheet();
     if(currentPage==="home") renderHome();
-    else if(currentPage==="appointments"){ apptSelectedDate = fromDateKey(date); apptView="Day"; renderAppointments(); }
+    else if(currentPage==="appointments"){ apptSelectedDate = fromDateKey(date); renderAppointments(); }
     if(sendWhatsapp && patient){
       sendAppointmentWhatsApp(updated, patient);
     }
@@ -5016,7 +5295,7 @@ function renderReserveSlotFormSheet(a, clinics, isEdit){
     showToast("Time slot reserved");
     closeSheet();
     if(currentPage==="home") renderHome();
-    else if(currentPage==="appointments"){ apptSelectedDate = fromDateKey(date); apptView="Day"; renderAppointments(); }
+    else if(currentPage==="appointments"){ apptSelectedDate = fromDateKey(date); renderAppointments(); }
   };
   const relBtn = document.getElementById("btnReleaseSlot");
   if(relBtn) relBtn.onclick = async ()=>{
@@ -6514,6 +6793,9 @@ async function openLabCaseForm(id, prefillPatient){
       notes: document.getElementById("lfNotes").value.trim(),
       updatedAt: nowIso()
     });
+    if(updated.status==="Ready"){
+      updated.readyToDeliver = true;
+    }
     await upsertFollowupReminder(
       updated,
       {id: selectedPatientId, name: patientName},
@@ -8138,7 +8420,7 @@ async function printDocument(opts){
   const footerTextHtml = s.printFooterHtml || (clinic.printFooter? escapeHtml(clinic.printFooter) : "");
   const footerHtml = footerEnabled ? `
     <div class="footer">
-      <div class="footer-meta">${dateTimeEnabled? `<span>Printed on ${escapeHtml(printedOn)}</span>` : `<span></span>`}<span>${escapeHtml(clinic.name? clinicName : "Healing Touch Dental")}</span></div>
+      <div class="footer-meta">${dateTimeEnabled? `<span>Printed on ${escapeHtml(printedOn)}</span>` : ""}</div>
       ${footerTextHtml? `<div class="footer-custom">${footerTextHtml}</div>`:""}
     </div>
   ` : "";
@@ -13591,11 +13873,35 @@ async function renderDentalChart(body, patient){
     record.entries.push(entry);
     record.updatedAt = nowIso();
     await dbPut("dentalCharts", record);
+    await syncChartEntryToExamination(patient, entry, clinicalChartViewDate, record.doctor);
     logActivity("Dental chart entry added ("+entry.examination+") for "+patient.name, {patientId: patient.id});
     showToast("Added");
     clinicalChartSelectedTeeth.clear();
     renderDentalChart(body, patient);
   };
+}
+
+// Keeps Profile > Examination > Observations in sync with what gets
+// recorded on the dental chart, so staff don't have to type the same
+// finding twice in two different places. Appends to that date's existing
+// examination if one exists, or creates one if this is the first entry
+// recorded for the patient that day.
+async function syncChartEntryToExamination(patient, entry, dateKey, doctor){
+  const teethLabel = (entry.teeth||[]).length? "Tooth "+entry.teeth.join(", ") : "";
+  const line = [teethLabel, entry.examination].filter(Boolean).join(": ") + (entry.notes? " — "+entry.notes : "");
+  if(!line.trim()) return;
+  const exams = await dbGetAll("examinations");
+  const existing = exams.find(e=> e.patientId===patient.id && toDateKey(new Date(e.date))===dateKey);
+  if(existing){
+    existing.observations = existing.observations? existing.observations+"\n"+line : line;
+    await dbPut("examinations", existing);
+  }else{
+    await dbAdd("examinations", {
+      id: uid("exam"), patientId: patient.id, date: new Date(dateKey).toISOString(),
+      doctor: doctor||"", chiefComplaint: "—", observations: line,
+      diagnosis:"", investigations:"", treatmentAdvised:"", notes:""
+    });
+  }
 }
 
 async function openEditChartEntrySheet(entry, record, patient, body, examOptions, chartTreatmentTypes){
@@ -24656,6 +24962,7 @@ function renderPharmacySaleFormSheet(cur, existingSale){
     <div class="field" style="margin-top:8px;"><label>Payment Mode</label><select id="psMode">${FIN_PAYMENT_MODES.map(m=>`<option value="${m}" ${existingSale&&existingSale.mode===m?'selected':''}>${m}</option>`).join("")}</select></div>
     <div class="field"><label>Notes</label><input id="psNotes" placeholder="Optional" value="${existingSale?escapeAttr(existingSale.notes):''}"></div>
     <button class="btn btn-primary btn-block" id="btnSaveSale" style="margin-top:8px;">${isEdit?"Save Changes":"Save Bill"}</button>
+    <button class="btn btn-outline btn-block" id="btnSaveSaleAndPrint" style="margin-top:8px;">${icon('print',16)} Save &amp; Print</button>
   `);
 
   const pInput = document.getElementById("psPatientSearch");
@@ -24707,7 +25014,8 @@ function renderPharmacySaleFormSheet(cur, existingSale){
   });
 
   renderPharmacySaleItems(cur);
-  document.getElementById("btnSaveSale").onclick = ()=> savePharmacySale(cur);
+  document.getElementById("btnSaveSale").onclick = ()=> savePharmacySale(cur, false);
+  document.getElementById("btnSaveSaleAndPrint").onclick = ()=> savePharmacySale(cur, true);
 }
 
 function renderPharmacySaleItems(cur){
@@ -24746,7 +25054,7 @@ function renderPharmacySaleItems(cur){
   `;
 }
 
-async function savePharmacySale(cur){
+async function savePharmacySale(cur, shouldPrint){
   if(pharmacySaleItemsDraft.length===0){ showToast("Add at least one product"); return; }
   const totalAmount = pharmacySaleItemsDraft.reduce((s,it)=> s + it.price*it.qty, 0);
   const isEdit = !!editingPharmacySaleId;
@@ -24782,7 +25090,7 @@ async function savePharmacySale(cur){
   }
   editingPharmacySaleId = null;
   closeSheet();
-  printPharmacyBill(sale, cur);
+  if(shouldPrint) printPharmacyBill(sale, cur);
   renderPharmacy();
 }
 
@@ -25812,7 +26120,13 @@ async function wireTreatmentPresetAutofill(treatmentEl, feeEl){
   treatmentEl.setAttribute("list","treatmentPresetsDatalist");
   treatmentEl.addEventListener("input", ()=>{
     const match = presets.find(p=>p.name===treatmentEl.value);
-    if(match) feeEl.value = match.fee;
+    if(match){
+      feeEl.value = match.fee;
+      // Setting .value programmatically doesn't fire an input event, so
+      // anything listening for real user input on the fee field (e.g. a
+      // running total) would otherwise never notice this change.
+      feeEl.dispatchEvent(new Event("input", {bubbles:true}));
+    }
   });
 }
 
@@ -26556,6 +26870,54 @@ function wireCommaAutosuggest(fieldEl, presetList){
   fieldEl.addEventListener("focus", renderSuggestions);
   fieldEl.addEventListener("blur", ()=> setTimeout(()=> box.classList.remove("show"), 150));
   window.addEventListener("resize", positionBox);
+}
+
+// A 12-hour Hour/Minute/AM-PM picker that always displays AM/PM regardless
+// of the device's own locale/time-format setting (native <input type="time">
+// silently follows the device's 24hr-vs-12hr preference, which isn't
+// something the page can override). Keeps a hidden field with the real
+// 24hr "HH:MM" value so all existing read/save code keeps working
+// unchanged - callers should still read this element's .value as before.
+function time12HourPickerHtml(id, value24hr){
+  let h24 = 9, m = 0; // sensible default: 9:00 AM
+  if(value24hr){
+    const parts = value24hr.split(":");
+    h24 = parseInt(parts[0])||0; m = parseInt(parts[1])||0;
+  }
+  const ampm = h24>=12 ? "PM" : "AM";
+  let h12 = h24%12; if(h12===0) h12=12;
+  const hourOpts = Array.from({length:12},(_,i)=>i+1).map(h=>`<option value="${h}" ${h===h12?'selected':''}>${h}</option>`).join("");
+  const minOpts = Array.from({length:60},(_,i)=>i).map(mm=>`<option value="${mm}" ${mm===m?'selected':''}>${String(mm).padStart(2,'0')}</option>`).join("");
+  return `
+    <input type="hidden" id="${id}" value="${escapeAttr(value24hr||'')}">
+    <div style="display:flex;gap:6px;">
+      <select id="${id}Hour" style="flex:1;">${hourOpts}</select>
+      <select id="${id}Minute" style="flex:1;">${minOpts}</select>
+      <select id="${id}AmPm" style="flex:0.9;">
+        <option value="AM" ${ampm==='AM'?'selected':''}>AM</option>
+        <option value="PM" ${ampm==='PM'?'selected':''}>PM</option>
+      </select>
+    </div>
+  `;
+}
+function wireTime12HourPicker(id){
+  const hourEl = document.getElementById(id+"Hour");
+  const minEl = document.getElementById(id+"Minute");
+  const ampmEl = document.getElementById(id+"AmPm");
+  const hiddenEl = document.getElementById(id);
+  if(!hourEl || !minEl || !ampmEl || !hiddenEl) return;
+  function sync(){
+    let h12 = parseInt(hourEl.value)||12;
+    const m = parseInt(minEl.value)||0;
+    const ampm = ampmEl.value;
+    let h24 = h12%12;
+    if(ampm==="PM") h24 += 12;
+    hiddenEl.value = String(h24).padStart(2,'0')+":"+String(m).padStart(2,'0');
+  }
+  hourEl.addEventListener("change", sync);
+  minEl.addEventListener("change", sync);
+  ampmEl.addEventListener("change", sync);
+  sync();
 }
 
 function doctorSelectHtml(fieldId, currentName, doctors){
@@ -27397,8 +27759,8 @@ function downloadPatientExcelTemplate(){
   const wb = XLSX.utils.book_new();
   const sheets = {
     Patients: [
-      ["Name","Mobile","ExternalID","AltMobile","Email","DOB (YYYY-MM-DD)","Gender","Address","City","Occupation","ReferredBy","RegisteredOn (YYYY-MM-DD)","Status"],
-      ["Jane Doe","9876543210","","","jane@example.com","1990-05-14","Female","123 Main St","Gurugram","Teacher","Walk-in","2024-01-10","Active"]
+      ["Name","Mobile","ExternalID","AltMobile","Email","DOB (YYYY-MM-DD)","Gender","Address","City","Occupation","ReferredBy","RegisteredOn (YYYY-MM-DD)","Status","MedicalAlerts","Notes"],
+      ["Jane Doe","9876543210","","","jane@example.com","1990-05-14","Female","123 Main St","Gurugram","Teacher","Walk-in","2024-01-10","Active","","" ]
     ],
     Appointments: [
       ["PatientMobile","ExternalID","Date (YYYY-MM-DD)","StartTime (HH:MM)","DurationMinutes","Doctor","Chair","TreatmentType","Status","Notes"],
@@ -27478,7 +27840,9 @@ function openPatientExcelRestoreSheet(){
     const btn = document.getElementById("btnConfirmPatientExcelRestore");
     btn.disabled = true; btn.textContent = "Importing…";
     try{
-      const result = await importPatientDataWorkbook(workbook);
+      const result = await importPatientDataWorkbook(workbook, (done, total, label)=>{
+        document.getElementById("peSummary").innerHTML = `<div class="warn-banner">Importing — ${done} of ${total} rows processed (currently: ${label})…</div>`;
+      });
       logActivity(`Patient data imported from Excel (${result.patients} patients, ${result.appointments} appointments, ${result.treatments} treatments, ${result.invoices} invoices, ${result.payments} payments, ${result.prescriptions} prescriptions, ${result.clinicalNotes} clinical notes, ${result.treatmentPresets} treatment presets, ${result.medicinePresets} medicine presets)`);
       showToast("Import complete");
       closeSheet();
@@ -27509,7 +27873,17 @@ function excelDateKey(v){
   return isNaN(d.getTime()) ? s : toDateKey(d);
 }
 
-async function importPatientDataWorkbook(workbook){
+async function importPatientDataWorkbook(workbook, onProgress){
+  // A large workbook means thousands of sequential writes, easily minutes
+  // long — report progress every so often so the screen doesn't look
+  // frozen with nothing but a static "Importing…" label the whole time.
+  const totalRows = ["Patients","Appointments","Treatments","Invoices","Payments","Prescriptions","ClinicalNotes","TreatmentPresets","MedicinePresets"]
+    .reduce((s,name)=> s + sheetRows(workbook, name).length, 0);
+  let rowsDone = 0;
+  const report = (label)=>{
+    rowsDone++;
+    if(onProgress && (rowsDone % 25===0 || rowsDone===totalRows)) onProgress(rowsDone, totalRows, label);
+  };
   const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived);
   const defaultClinicId = selectedClinicId!=="ALL" ? selectedClinicId : getDefaultClinicId(clinics);
   let patients = await dbGetAll("patients");
@@ -27520,25 +27894,47 @@ async function importPatientDataWorkbook(workbook){
     if(p.importExternalId) byExternalId[p.importExternalId] = p;
   });
 
-  // Matches by mobile first (the reliable, human-meaningful key), falling
-  // back to an imported system's own patient code when there's no mobile
-  // to match on — without this fallback, any patient missing a phone
-  // number would be silently skipped rather than imported.
+  // nextPatientCode() re-scans the whole (growing) patients collection on
+  // every call — fine for a one-off add, but calling it once per new
+  // patient here would turn a large import into a quadratic-time (and,
+  // against a real network-latent database, a many-times-slower) crawl.
+  // Compute the starting sequence once and hand out the rest from memory.
+  const codeSettings = (await dbGetAll("settings"))[0] || {};
+  const codePrefix = codeSettings.patientIdPrefix!=null && codeSettings.patientIdPrefix!=="" ? codeSettings.patientIdPrefix : "HTD-";
+  let codeSeq = 0;
+  patients.forEach(p=>{
+    if(p.code && p.code.startsWith(codePrefix)){
+      const n = parseInt(p.code.slice(codePrefix.length), 10);
+      if(!isNaN(n) && n>codeSeq) codeSeq = n;
+    }
+  });
+  codeSeq = Math.max(codeSeq, (Number(codeSettings.patientIdStartAt)||1)-1);
+  function nextPatientCodeFast(){
+    codeSeq++;
+    return codePrefix + String(codeSeq).padStart(4,"0");
+  }
+
+  // Matches by ExternalID first when provided — a source system's own
+  // patient code is the one truly unique key, whereas mobile numbers can
+  // legitimately repeat across different people (family members sharing a
+  // phone, or a placeholder number reused across many source records).
+  // Falls back to mobile-only matching when no ExternalID is given at all,
+  // preserving the simpler behavior for a manually-filled template.
   async function findOrCreatePatient(mobile, extra, externalId){
     mobile = excelCellStr(mobile);
     externalId = excelCellStr(externalId);
     if(!mobile && !externalId) return null;
-    if(mobile && byMobile[mobile]) return byMobile[mobile];
     if(externalId && byExternalId[externalId]) return byExternalId[externalId];
+    if(!externalId && mobile && byMobile[mobile]) return byMobile[mobile];
     const p = Object.assign({
-      id: uid("pat"), code: await nextPatientCode(), name: extra?.name || (mobile? "Patient "+mobile : "Patient "+externalId),
+      id: uid("pat"), code: nextPatientCodeFast(), name: extra?.name || (mobile? "Patient "+mobile : "Patient "+externalId),
       mobile, altMobile:"", email:"", dob:"", gender:"", address:"", city:"", occupation:"",
       referredBy:"", preferredClinicId: defaultClinicId, treatingDoctor:"", medicalAlerts:"",
       allergies:"", currentMedications:"", generalNotes:"", status:"Active", createdAt: nowIso(),
       importExternalId: externalId || ""
     }, extra||{});
     await dbAdd("patients", p);
-    if(mobile) byMobile[mobile] = p;
+    if(mobile && !byMobile[mobile]) byMobile[mobile] = p;
     if(externalId) byExternalId[externalId] = p;
     patients.push(p);
     return p;
@@ -27561,10 +27957,12 @@ async function importPatientDataWorkbook(workbook){
       city: excelCellStr(row["City"]),
       occupation: excelCellStr(row["Occupation"]),
       referredBy: excelCellStr(row["ReferredBy"]),
+      medicalAlerts: excelCellStr(row["MedicalAlerts"]),
+      generalNotes: excelCellStr(row["Notes"]),
       status: excelCellStr(row["Status"]) || "Active",
       createdAt: (()=>{ const dk = excelDateKey(row["RegisteredOn (YYYY-MM-DD)"]); return dk ? new Date(dk).toISOString() : nowIso(); })()
     };
-    const existing = (mobile && byMobile[mobile]) || (externalId && byExternalId[externalId]);
+    const existing = (externalId && byExternalId[externalId]) || (!externalId && mobile && byMobile[mobile]);
     if(existing){
       Object.assign(existing, extra);
       if(externalId) existing.importExternalId = externalId;
@@ -27572,7 +27970,7 @@ async function importPatientDataWorkbook(workbook){
     }else{
       await findOrCreatePatient(mobile, extra, externalId);
     }
-    counts.patients++;
+    counts.patients++; report("patients");
   }
 
   // Appointments
@@ -27593,7 +27991,7 @@ async function importPatientDataWorkbook(workbook){
       createdAt: nowIso()
     };
     await dbAdd("appointments", a);
-    counts.appointments++;
+    counts.appointments++; report("appointments");
   }
 
   // Treatments (as a treatment plan with one item, matching how the app creates them)
@@ -27624,11 +28022,12 @@ async function importPatientDataWorkbook(workbook){
       items: [item]
     };
     await dbPut("treatmentPlans", plan);
-    counts.treatments++;
+    counts.treatments++; report("treatments");
   }
 
   // Invoices
   const invoiceByNumber = {};
+  const invCur = await finCurrency();
   for(const row of sheetRows(workbook, "Invoices")){
     const patient = await findOrCreatePatient(row["PatientMobile"], null, row["ExternalID"]);
     if(!patient) continue;
@@ -27645,8 +28044,7 @@ async function importPatientDataWorkbook(workbook){
     if(inv){
       inv.items.push(items[0]);
     }else{
-      const cur = await finCurrency();
-      const totals = computeInvoiceTotals(items, parseFloat(row["TaxPercent"])||0, cur);
+      const totals = computeInvoiceTotals(items, parseFloat(row["TaxPercent"])||0, invCur);
       inv = {
         id: uid("inv"), patientId: patient.id, clinicId: patient.preferredClinicId || defaultClinicId,
         invoiceNumber, date: excelDateKey(row["Date (YYYY-MM-DD)"]) || toDateKey(new Date()),
@@ -27656,11 +28054,10 @@ async function importPatientDataWorkbook(workbook){
       };
       invoiceByNumber[invoiceNumber] = inv;
     }
-    counts.invoices++;
+    counts.invoices++; report("invoices");
   }
   for(const inv of Object.values(invoiceByNumber)){
-    const cur = await finCurrency();
-    const totals = computeInvoiceTotals(inv.items, inv.taxPercent, cur);
+    const totals = computeInvoiceTotals(inv.items, inv.taxPercent, invCur);
     inv.totalGross = totals.gross; inv.totalDiscount = totals.discount; inv.totalTax = totals.tax; inv.totalNet = totals.net;
     inv.balance = Math.max(0, totals.net - (inv.amountPaid||0));
     await dbPut("invoices", inv);
@@ -27681,7 +28078,7 @@ async function importPatientDataWorkbook(workbook){
       date: excelDateKey(row["Date (YYYY-MM-DD)"]) || toDateKey(new Date())
     };
     await dbAdd("payments", payment);
-    counts.payments++;
+    counts.payments++; report("payments");
   }
 
   // Prescriptions
@@ -27713,7 +28110,7 @@ async function importPatientDataWorkbook(workbook){
       };
       rxByPatientDate[key] = rx;
     }
-    counts.prescriptions++;
+    counts.prescriptions++; report("prescriptions");
   }
   for(const rx of Object.values(rxByPatientDate)){
     await dbPut("prescriptions", rx);
@@ -27733,7 +28130,7 @@ async function importPatientDataWorkbook(workbook){
       diagnosis: excelCellStr(row["Diagnosis"]),
       investigations: "", treatmentAdvised: "", notes: ""
     });
-    counts.clinicalNotes++;
+    counts.clinicalNotes++; report("clinical notes");
   }
 
   // Treatment Type presets (name + default fee) — skips any name already present
@@ -27743,7 +28140,7 @@ async function importPatientDataWorkbook(workbook){
     if(!name || existingTxPresets.has(name.toLowerCase())) continue;
     await dbAdd("treatmentPresets", {id: uid("txp"), name, fee: parseFloat(row["Cost"])||0, createdAt: nowIso()});
     existingTxPresets.add(name.toLowerCase());
-    counts.treatmentPresets++;
+    counts.treatmentPresets++; report("treatment presets");
   }
 
   // Medicine presets (name only) — skips any name already present
@@ -27753,7 +28150,7 @@ async function importPatientDataWorkbook(workbook){
     if(!name || existingMedPresets.has(name.toLowerCase())) continue;
     await dbAdd("medicinePresets", {id: uid("medp"), name, strength:"", form:"Tablet", dose:"", frequency:"", duration:"", instructions:"", createdAt: nowIso()});
     existingMedPresets.add(name.toLowerCase());
-    counts.medicinePresets++;
+    counts.medicinePresets++; report("medicine presets");
   }
 
   return counts;
