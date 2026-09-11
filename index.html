@@ -25682,6 +25682,7 @@ async function openClinicForm(id){
     <p style="margin-top:-8px;">Set opening and closing hours for each day — the Appointments calendar will show this clinic's time slots accordingly, and mark closed days.</p>
     <div id="clinicTimingsWrap"></div>
     <button class="btn btn-primary btn-block" id="btnSaveClinic" style="margin-top:10px;">Save Clinic</button>
+    ${id? `<button class="btn btn-block" id="btnDeleteClinic" style="margin-top:8px;background:var(--red);color:#fff;border:none;">Delete Clinic</button>` : ""}
   `);
   const WEEKDAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
   const timings = c.timings || {};
@@ -25754,6 +25755,32 @@ async function openClinicForm(id){
     await dbPut("clinics", c);
     logActivity((id?"Updated":"Added")+" clinic: "+c.name);
     showToast("Clinic saved");
+    refreshClinicSelector();
+    openClinicsSheet();
+  };
+
+  const deleteBtn = document.getElementById("btnDeleteClinic");
+  if(deleteBtn) deleteBtn.onclick = async ()=>{
+    deleteBtn.disabled = true; deleteBtn.textContent = "Checking for linked data…";
+    let totalLinked = 0;
+    const foundIn = [];
+    for(const store of PATIENT_DATA_STORES){
+      const rows = await window.__fb.getAll(store); // unfiltered - checking across every clinic's own restriction too
+      const matches = rows.filter(r => (r.clinicId || r.preferredClinicId) === c.id).length;
+      if(matches>0){ totalLinked += matches; foundIn.push(store+" ("+matches+")"); }
+    }
+    if(totalLinked>0){
+      deleteBtn.disabled = false; deleteBtn.textContent = "Delete Clinic";
+      alert("This clinic can't be deleted — it still has "+totalLinked+" linked record(s): "+foundIn.join(", ")+".\n\nA clinic can only be permanently deleted once it has no patients, appointments, invoices, or other records of its own. If you just want to stop it from showing up as a choice going forward, use Archive instead.");
+      return;
+    }
+    if(!confirm(`Permanently delete "${c.name}"? This clinic has no linked patients or records, so this can't be undone.`)){
+      deleteBtn.disabled = false; deleteBtn.textContent = "Delete Clinic";
+      return;
+    }
+    await dbDelete("clinics", c.id);
+    logActivity("Deleted clinic: "+c.name);
+    showToast("Clinic deleted");
     refreshClinicSelector();
     openClinicsSheet();
   };
