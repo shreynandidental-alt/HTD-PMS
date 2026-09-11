@@ -176,6 +176,16 @@
     max-width:130px;
     color-scheme:dark;
   }
+  /* The collapsed select box is styled above for the dark header it sits
+     in, but the dropdown's OWN popup list is a separate, OS-rendered
+     surface that doesn't reliably follow color-scheme on every desktop
+     browser — explicitly forcing each option's own colors (rather than
+     leaving them to inherit) guarantees the list stays readable instead
+     of silently landing on white-on-white for the unselected rows. */
+  select.clinic-select option{
+    background:#FFFFFF;
+    color:#1A1A1A;
+  }
 
   .header-search-wrap{position:relative;display:none;flex:1;max-width:420px;}
   @media (min-width:900px){ .header-search-wrap{display:block;} }
@@ -1311,8 +1321,14 @@ function dbPut(storeName, obj){
   if(!obj.id) obj.id = uid(storeName);
   return window.__fb.put(storeName, obj);
 }
-function dbGetAll(storeName){
-  return window.__fb.getAll(storeName);
+const CLINIC_FILTERED_STORES = new Set(PATIENT_DATA_STORES);
+async function dbGetAll(storeName){
+  const rows = await window.__fb.getAll(storeName);
+  if(!currentUserRestrictedClinicId || !CLINIC_FILTERED_STORES.has(storeName)) return rows;
+  // A record with no clinic info at all (a rare legacy/import edge case)
+  // is hidden rather than shown, so a clinic restriction can never
+  // accidentally leak data across clinics by failing open.
+  return rows.filter(r => (r.clinicId || r.preferredClinicId) === currentUserRestrictedClinicId);
 }
 function dbDelete(storeName, id){
   return window.__fb.delete(storeName, id);
@@ -1688,6 +1704,7 @@ let selectedClinicId = "ALL";
 let fbCurrentUserEmail = "";
 let currentUserIsAdmin = true;
 let currentUserPermissions = {};
+let currentUserRestrictedClinicId = null; // null = sees every clinic's data; a clinic id = locked to that clinic only
 
 // Modules a reception/staff login can be given access to via
 // Admin Panel > Manage Users. Admin Panel, Settings, Backup & Restore,
@@ -1712,12 +1729,24 @@ async function loadCurrentUserAccess(){
   if(!s.adminEmail || s.adminEmail.toLowerCase()===email){
     currentUserIsAdmin = true;
     currentUserPermissions = {};
+    currentUserRestrictedClinicId = null;
     return;
   }
   const staffUsers = await dbGetAll("staffUsers");
   const match = staffUsers.find(u=> (u.email||"").toLowerCase()===email);
   currentUserIsAdmin = false;
   currentUserPermissions = match ? (match.permissions||{}) : {};
+  const restrictedId = match ? (match.restrictedClinicId||"") : "";
+  if(!restrictedId){
+    currentUserRestrictedClinicId = null;
+  }else{
+    const clinics = await dbGetAll("clinics");
+    const restrictedClinic = clinics.find(c=>c.id===restrictedId);
+    // A staff login assigned to the Admin Hub clinic sees everything, same
+    // as the admin account - the restriction only takes effect for every
+    // other clinic.
+    currentUserRestrictedClinicId = (restrictedClinic && restrictedClinic.isAdminHub) ? null : restrictedId;
+  }
 }
 
 function canAccessModule(key){
@@ -2068,7 +2097,7 @@ async function renderHome(){
     {label:"New Patient", ico:"user", action:()=>openPatientForm(null)},
     {label:"New Appointment", ico:"calendar", action:()=>openAppointmentForm(null)},
     {label:"New Prescription", ico:"pill", action:()=>openPatientPickerThen("Select Patient for Prescription", p=>openPrescriptionForm(null,p))},
-    {label:"New Invoice", ico:"receipt", action:()=>openPatientPickerThen("Select Patient for Invoice", p=>openNewInvoiceTreatmentPicker(p))},
+    {label:"Quick OPD", ico:"check", action:()=>openPatientPickerThen("Select Patient for Quick OPD", p=>openQuickOpdForm(p))},
     {label:"Add Quick Bill", ico:"wallet", action:()=>openPatientPickerThen("Select Patient for Quick Bill", p=>openQuickBillForm(p))},
     {label:"New Reminder", ico:"bell", action:()=>openCommitmentForm(null)},
     {label:"New Lab Case", ico:"flask", action:()=>openLabCaseForm(null)},
@@ -19805,7 +19834,7 @@ function treatmentItemCardHtml(it, cur){
       <div class="note-head">
         <b>${escapeHtml(it.treatment||"Untitled treatment")}${it.tooth? ' · Tooth '+escapeHtml(it.tooth):''}</b>
         <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
-          ${treatmentStatusPill(it.status)}
+          <span class="status-pill ${treatmentStatusClass(it.status)}" data-statuspill="${it.id}" data-statusplan="${it.planId}" style="cursor:pointer;">${escapeHtml(it.status||"Proposed")} ${icon('chevron',10)}</span>
           <button class="qmenu-btn" data-tmenu="${it.id}" data-plan="${it.planId}" style="transform:none;">${icon('settings',16)}</button>
         </div>
       </div>
@@ -19841,6 +19870,10 @@ function wireTreatmentItemActions(root, patient, tabBody, patientId){
   root.querySelectorAll('[data-tmenu]').forEach(btn=> btn.onclick = (ev)=>{
     ev.stopPropagation();
     openTreatmentItemActionMenu(btn.dataset.plan, btn.dataset.tmenu, patient, tabBody, patientId);
+  });
+  root.querySelectorAll('[data-statuspill]').forEach(el=> el.onclick = (ev)=>{
+    ev.stopPropagation();
+    openTreatmentStatusPicker(el.dataset.statusplan, el.dataset.statuspill, patient, tabBody, patientId);
   });
   root.querySelectorAll('[data-sitting]').forEach(el=> el.onclick = (ev)=>{
     ev.stopPropagation();
@@ -19937,6 +19970,30 @@ async function openTreatmentItemActionMenu(planId, itemId, patient, tabBody, pat
       openWhatsAppComposer({ toName: patient.name, toNumber: patient.whatsappNumber||patient.mobile, patientId: patient.id, title:"Treatment On WhatsApp", message: summary });
     } }
   ]);
+}
+
+// A quick, one-tap way to change just the status of a treatment, without
+// opening the full Edit Treatment form for a change this small.
+async function openTreatmentStatusPicker(planId, itemId, patient, tabBody, patientId){
+  const plan = (await dbGetAll("treatmentPlans")).find(p=>p.id===planId);
+  const item = plan && (plan.items||[]).find(it=>it.id===itemId);
+  if(!item){ showToast("Treatment not found"); return; }
+  const statusIcon = {Proposed:"edit", Accepted:"check", "Partially Accepted":"check", Declined:"xcircle", Started:"edit", Completed:"check", Deferred:"edit"};
+  openEntryActionMenu("Change Status — "+(item.treatment||"Treatment"), TREATMENT_ITEM_STATUSES.map(s=>({
+    key: "status-"+s.replace(/\s+/g,""),
+    icon: statusIcon[s] || "edit",
+    text: s + (item.status===s ? " (current)" : ""),
+    onClick: async ()=>{
+      if(item.status===s){ closeSheet(); return; }
+      item.status = s;
+      plan.updatedAt = nowIso();
+      await dbPut("treatmentPlans", plan);
+      logActivity("Changed treatment status to "+s+" for "+patient.name, {patientId: patient.id});
+      showToast("Status updated to "+s);
+      closeSheet();
+      renderTreatmentTab(tabBody, patientId, patient);
+    }
+  })));
 }
 
 // Creates a Treatment Done record with the exact same shape the regular
@@ -22839,7 +22896,7 @@ async function openNewInvoiceTreatmentPicker(patient){
             <input type="checkbox" data-tpick="${idx}" style="width:18px;height:18px;flex-shrink:0;">
             <div>
               <div class="name">${escapeHtml(w.item.treatment||"Untitled treatment")}${w.item.tooth?" · Tooth "+escapeHtml(w.item.tooth):""}</div>
-              <div class="addr">${treatmentStatusPill(w.item.status)} · ${w.alreadyInvoiced>0? "Balance to invoice: ":"To invoice: "}${finMoney(w.remaining,cur)}${w.alreadyInvoiced>0? " of "+finMoney(w.itemNet,cur):""}</div>
+              <div class="addr">${(w.item.treatmentDate||w.item.planDate)? new Date(w.item.treatmentDate||w.item.planDate).toLocaleDateString()+" · ":""}${treatmentStatusPill(w.item.status)} · ${w.alreadyInvoiced>0? "Balance to invoice: ":"To invoice: "}${finMoney(w.remaining,cur)}${w.alreadyInvoiced>0? " of "+finMoney(w.itemNet,cur):""}</div>
             </div>
           </div>
         </label>
@@ -24513,31 +24570,41 @@ function openStaffUserForm(existing){
       </label>
     `).join("")}
     <p style="margin:6px 0 14px;color:var(--grey);">Admin Panel, Settings, Backup &amp; Restore, Clinics, Doctors, and Trash always stay Admin-only.</p>
+    <div class="field" id="suClinicRestrictWrap"><label>Which clinic's data can they see?</label><select id="suClinicRestrict"></select></div>
+    <p style="margin-top:-10px;">Choosing a specific clinic hides every other clinic's patients, appointments, billing, and lab cases from this login entirely — they won't show up anywhere in the app, not even in search. Choosing the Admin Hub clinic (or "All clinics") gives them the same full visibility as the admin account.</p>
     <button class="btn btn-primary btn-block" id="btnSaveStaffUser">${isEdit? "Save Changes" : "Create Login"}</button>
     ${isEdit? `
       <button class="btn btn-outline btn-block" id="btnResetStaffPassword" style="margin-top:8px;">Send Password Reset Email</button>
       <button class="btn btn-block" id="btnRemoveStaffUser" style="margin-top:8px;background:var(--red);color:#fff;border:none;">Remove Access</button>
     ` : ""}
   `);
+  (async ()=>{
+    const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived);
+    const sel = document.getElementById("suClinicRestrict");
+    sel.innerHTML = `<option value="">All clinics (same as admin)</option>` +
+      clinics.map(c=>`<option value="${c.id}" ${existing?.restrictedClinicId===c.id?'selected':''}>${escapeHtml(c.name.replace('Healing Touch Dental – ',''))}${c.isAdminHub?' (Admin Hub)':''}</option>`).join("");
+  })();
   document.getElementById("btnSaveStaffUser").onclick = async ()=>{
     const name = document.getElementById("suName").value.trim();
     const email = document.getElementById("suEmail").value.trim();
     if(!email){ showToast("Enter an email"); return; }
     const permissions = {};
     document.querySelectorAll(".suPerm").forEach(cb=>{ permissions[cb.dataset.perm] = cb.checked; });
+    const restrictedClinicId = document.getElementById("suClinicRestrict").value || "";
     const btn = document.getElementById("btnSaveStaffUser");
     btn.disabled = true; btn.textContent = "Saving…";
     try{
       if(isEdit){
         existing.displayName = name;
         existing.permissions = permissions;
+        existing.restrictedClinicId = restrictedClinicId;
         await dbPut("staffUsers", existing);
         logActivity("Updated access for "+email);
       }else{
         const password = document.getElementById("suPassword").value;
         if(!password || password.length<6){ showToast("Password must be at least 6 characters"); btn.disabled=false; btn.textContent="Create Login"; return; }
         await window.__fbAuth.createStaffAccount(email, password);
-        await dbAdd("staffUsers", { id: uid("staff"), email, displayName: name, permissions, createdAt: nowIso() });
+        await dbAdd("staffUsers", { id: uid("staff"), email, displayName: name, permissions, restrictedClinicId, createdAt: nowIso() });
         logActivity("Added staff login: "+email);
       }
       showToast(isEdit? "Updated" : "Login created");
@@ -25571,7 +25638,7 @@ async function openClinicsSheet(){
 
 async function openClinicForm(id){
   const clinics = await dbGetAll("clinics");
-  const c = id ? clinics.find(x=>x.id===id) : {id:uid("clinic"), name:"", address:"", phone:"", email:"", website:"", logo:"", printFooter:"", googleReviewLink:"", reviewMessageTemplate:"", archived:false, createdAt: nowIso()};
+  const c = id ? clinics.find(x=>x.id===id) : {id:uid("clinic"), name:"", address:"", phone:"", email:"", website:"", logo:"", printFooter:"", googleReviewLink:"", reviewMessageTemplate:"", archived:false, isAdminHub:false, createdAt: nowIso()};
   let logoDataUrl = c.logo || "";
   openSheet(`
     <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
@@ -25587,6 +25654,10 @@ async function openClinicForm(id){
       <input type="checkbox" id="fClinicIsDefault" ${c.isDefault?"checked":""} style="width:16px;height:16px;flex-shrink:0;"> Set as Default Clinic
     </label>
     <p style="margin-top:-10px;">New patients and appointments will be assigned to this clinic automatically, until changed manually. Only one clinic can be default at a time.</p>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;margin:4px 2px 14px;cursor:pointer;">
+      <input type="checkbox" id="fClinicIsAdminHub" ${c.isAdminHub?"checked":""} style="width:16px;height:16px;flex-shrink:0;"> Set as Admin Hub
+    </label>
+    <p style="margin-top:-10px;">Staff logins restricted to this clinic (in Manage Users) see every clinic's data. Staff restricted to any other clinic only see that clinic's patients, appointments, billing, and lab cases. Only one clinic can be the Admin Hub at a time.</p>
     <div class="section-title" style="margin-top:6px;">Print Header &amp; Footer</div>
     <div class="field">
       <label>Clinic Logo</label>
@@ -25655,6 +25726,15 @@ async function openClinicForm(id){
       for(const other of clinics){
         if(other.id!==c.id && other.isDefault){
           other.isDefault = false;
+          await dbPut("clinics", other);
+        }
+      }
+    }
+    c.isAdminHub = document.getElementById("fClinicIsAdminHub").checked;
+    if(c.isAdminHub){
+      for(const other of clinics){
+        if(other.id!==c.id && other.isAdminHub){
+          other.isAdminHub = false;
           await dbPut("clinics", other);
         }
       }
@@ -28302,6 +28382,15 @@ function getDefaultClinicId(clinics){
 async function refreshClinicSelector(){
   const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived);
   const sel = document.getElementById("clinicSelect");
+  if(currentUserRestrictedClinicId){
+    const mine = clinics.find(c=>c.id===currentUserRestrictedClinicId);
+    selectedClinicId = currentUserRestrictedClinicId;
+    sel.innerHTML = mine? `<option value="${mine.id}">${escapeHtml(mine.name.replace('Healing Touch Dental – ',''))}</option>` : `<option value="ALL">All Clinics</option>`;
+    sel.value = selectedClinicId;
+    sel.disabled = true;
+    return;
+  }
+  sel.disabled = false;
   sel.innerHTML = `<option value="ALL">All Clinics</option>` +
     clinics.map(c=>`<option value="${c.id}">${escapeHtml(c.name.replace('Healing Touch Dental – ',''))}</option>`).join("") +
     `<option value="MANAGE">Manage Clinics…</option>`;
