@@ -1322,13 +1322,41 @@ function dbPut(storeName, obj){
   return window.__fb.put(storeName, obj);
 }
 const CLINIC_FILTERED_STORES = new Set(PATIENT_DATA_STORES);
+// reminders and notifications don't carry their own clinicId - most are
+// tied to a patientId instead, so their effective clinic is looked up
+// through that patient. Ones tied to no patient at all (a low-stock
+// alert, a vendor bill) aren't clinic-specific and stay visible to
+// everyone regardless of restriction.
+const CLINIC_LOOKUP_VIA_PATIENT_STORES = new Set(["reminders", "notifications"]);
 async function dbGetAll(storeName){
   const rows = await window.__fb.getAll(storeName);
-  if(!currentUserRestrictedClinicId || !CLINIC_FILTERED_STORES.has(storeName)) return rows;
-  // A record with no clinic info at all (a rare legacy/import edge case)
-  // is hidden rather than shown, so a clinic restriction can never
-  // accidentally leak data across clinics by failing open.
-  return rows.filter(r => (r.clinicId || r.preferredClinicId) === currentUserRestrictedClinicId);
+  if(!currentUserRestrictedClinicId) return rows;
+
+  if(CLINIC_FILTERED_STORES.has(storeName)){
+    // A record with no clinic specified at all is shown rather than
+    // hidden - these are typically legacy/unassigned records that still
+    // need someone to be able to see and handle them.
+    return rows.filter(r => {
+      const rc = r.clinicId || r.preferredClinicId;
+      return !rc || rc === currentUserRestrictedClinicId;
+    });
+  }
+
+  if(CLINIC_LOOKUP_VIA_PATIENT_STORES.has(storeName)){
+    const allPatients = await window.__fb.getAll("patients");
+    const clinicByPatientId = {};
+    allPatients.forEach(p => { clinicByPatientId[p.id] = p.preferredClinicId; });
+    return rows.filter(r => {
+      if(r.clinicId) return r.clinicId === currentUserRestrictedClinicId;
+      if(r.patientId){
+        const pc = clinicByPatientId[r.patientId];
+        return !pc || pc === currentUserRestrictedClinicId;
+      }
+      return true;
+    });
+  }
+
+  return rows;
 }
 function dbDelete(storeName, id){
   return window.__fb.delete(storeName, id);
@@ -1720,7 +1748,8 @@ const PERMISSION_MODULES = [
   {key:"reports", label:"Reports"},
   {key:"communication", label:"Communication"},
   {key:"pharmacy", label:"Pharmacy"},
-  {key:"labcases", label:"Lab Cases"}
+  {key:"labcases", label:"Lab Cases"},
+  {key:"dataImport", label:"Import Patient Data (Excel/CSV)"}
 ];
 
 async function loadCurrentUserAccess(){
@@ -24477,6 +24506,7 @@ async function renderMore(){
         ${canAccessModule("pharmacy")? `<div class="list-row" id="rowPharmacy"><span class="row-ico">${icon('pill',18)}</span><span class="txt">Pharmacy</span><span class="meta">Products, stock &amp; billing</span><span class="chev">${icon('chevron',16)}</span></div>` : ""}
         ${canAccessModule("labcases")? `<div class="list-row" id="rowLabCases"><span class="row-ico">${icon('flask',18)}</span><span class="txt">Lab Cases</span><span class="meta">Track lab work by patient</span><span class="chev">${icon('chevron',16)}</span></div>` : ""}
         ${canAccessModule("reports")? `<div class="list-row" id="rowReports"><span class="row-ico">${icon('reports',18)}</span><span class="txt">Reports</span><span class="meta">Generate &amp; export PDF/Excel</span><span class="chev">${icon('chevron',16)}</span></div>` : ""}
+        ${(!currentUserIsAdmin && canAccessModule("dataImport"))? `<div class="list-row" id="rowDataImport"><span class="row-ico">${icon('backup',18)}</span><span class="txt">Import Patient Data</span><span class="meta">From Excel / CSV</span><span class="chev">${icon('chevron',16)}</span></div>` : ""}
         <div class="list-row" id="rowKiosk"><span class="row-ico">${icon('kiosk',18)}</span><span class="txt">Kiosk Mode</span><span class="meta">Patient self check-in</span><span class="chev">${icon('chevron',16)}</span></div>
   `;
   const outreachRows = canAccessModule("communication") ? `
@@ -24504,6 +24534,7 @@ async function renderMore(){
   wire("rowPharmacy", ()=> goTo("pharmacy"));
   wire("rowLabCases", ()=> goTo("labcases"));
   wire("rowReports", ()=> goTo("reports"));
+  wire("rowDataImport", openScopedPatientImportSheet);
   wire("rowKiosk", ()=> confirmEnterKiosk());
   hydrateIcons(document.getElementById("main"));
 }
@@ -28263,6 +28294,29 @@ async function importPatientDataWorkbook(workbook, onProgress){
   return counts;
 }
 
+// A deliberately narrow version of Backup & Restore, for staff who need to
+// bring in patient data but shouldn't have the rest of Admin Panel (backup
+// export, restore-from-backup, or the factory reset danger zone). Reachable
+// by anyone with the "dataImport" permission, not just the admin account.
+function openScopedPatientImportSheet(){
+  const restrictedNote = currentUserRestrictedClinicId
+    ? `<div class="warn-banner" style="margin-bottom:12px;">Every patient you import here is automatically assigned to your clinic — there's no way to import data for a different clinic from this login.</div>`
+    : "";
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>Import Patient Data</h2>
+    ${restrictedNote}
+    <div class="section-title">Patient Data (Excel)</div>
+    <p style="margin-bottom:8px;">Restore patient records together with their treatments, invoices, payments, prescriptions, and appointments from one Excel workbook.</p>
+    <button class="btn btn-outline btn-block" id="bkDownloadExcelTemplate2">Download Excel Template</button>
+    <button class="btn btn-primary btn-block" style="margin-top:8px;" id="bkRestorePatientExcel2">Restore Patient Data from Excel</button>
+    <button class="btn btn-outline btn-block" style="margin-top:14px;" id="bkImportExcel2">Import Patients from Excel / CSV</button>
+  `);
+  document.getElementById("bkDownloadExcelTemplate2").onclick = downloadPatientExcelTemplate;
+  document.getElementById("bkRestorePatientExcel2").onclick = openPatientExcelRestoreSheet;
+  document.getElementById("bkImportExcel2").onclick = openExcelImportSheet;
+}
+
 function openBackupSheet(){
   openSheet(`
     <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
@@ -28367,6 +28421,8 @@ function openExcelImportSheet(){
     if(!parsedRows || !parsedRows.length) return;
     if(!confirm(`Import ${parsedRows.length} patient(s) now?`)) return;
     let imported = 0, skippedDupes = 0;
+    const clinicsForImport = await dbGetAll("clinics");
+    const importClinicId = selectedClinicId!=="ALL" ? selectedClinicId : getDefaultClinicId(clinicsForImport);
     for(const r of parsedRows){
       const name = findCsvField(r,"Name","Full Name","Patient Name");
       const mobile = findCsvField(r,"Mobile","Phone","Mobile Number","Contact").replace(/[^0-9]/g,"");
@@ -28381,6 +28437,7 @@ function openExcelImportSheet(){
         dob: findCsvField(r,"DOB","Date of Birth","DateOfBirth"),
         address: findCsvField(r,"Address"),
         city: findCsvField(r,"City"),
+        preferredClinicId: importClinicId,
         status: "Active", createdAt: nowIso()
       };
       await dbAdd("patients", patient);
@@ -28526,6 +28583,7 @@ function setupLogin(startApp){
       overlay.style.display = "none";
       appEl.style.display = "";
       if(!started){ started = true; startApp(); }
+      else{ refreshAccessForCurrentUser(); } // a different login on the same open tab (e.g. shared clinic computer) - re-check access rather than keep the previous user's
     } else {
       fbCurrentUserEmail = "";
       overlay.style.display = "flex";
@@ -28553,6 +28611,17 @@ function setupLogin(startApp){
   document.getElementById("loginPassword").addEventListener("keydown", (e)=>{
     if(e.key==="Enter") btn.click();
   });
+}
+
+// Re-checks who's logged in and refreshes what they're allowed to see -
+// run on every login, not just the app's first boot, so a different
+// person signing in on an already-open tab (a shared clinic computer)
+// never keeps running with the previous user's access level.
+async function refreshAccessForCurrentUser(){
+  await loadCurrentUserAccess();
+  applyNavPermissions();
+  await refreshClinicSelector();
+  goTo("home");
 }
 
 setupLogin(async function boot(){
