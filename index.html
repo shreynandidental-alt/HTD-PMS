@@ -1356,6 +1356,20 @@ async function dbGetAll(storeName){
     });
   }
 
+  if(storeName==="onlineBookings"){
+    // Website booking requests identify their clinic by free-text name
+    // (whatever the public widget sent), not an internal id, so this
+    // can't use the same id-equality check as everything else.
+    const clinics = await window.__fb.getAll("clinics");
+    const mine = clinics.find(c=>c.id===currentUserRestrictedClinicId);
+    const myName = (mine? mine.name : "").toLowerCase().replace("healing touch dental – ","").trim();
+    return rows.filter(r => {
+      const loc = (r.clinicLocation||"").toLowerCase().trim();
+      if(!loc) return true;
+      return myName && (loc.includes(myName) || myName.includes(loc));
+    });
+  }
+
   return rows;
 }
 function dbDelete(storeName, id){
@@ -2136,7 +2150,7 @@ async function renderHome(){
     {label:"Print Consent Form", ico:"file", action:()=>openPatientPickerThen("Select Patient for Consent Form", p=>openConsentFormsListSheet(p))},
     {label:"New Pharmacy Bill", ico:"pill", action:()=>openPharmacySaleForm()},
     {label:"Send Message", ico:"sms", action:()=>goTo("communication")},
-    {label:"View Reports", ico:"reports", action:()=>goTo("reports")},
+    {label:"New Invoice", ico:"receipt", action:()=>openPatientPickerThen("Select Patient for Invoice", p=>openNewInvoiceTreatmentPicker(p))},
   ];
   shortcutGrid.innerHTML = SHORTCUTS.map((s,i)=>`
     <div class="shortcut-item" data-shortcut="${i}">
@@ -6248,14 +6262,27 @@ async function renderProsthesisReadyTab(body, outerBody){
   });
 }
 
-// Finds whichever clinical record (Prosthodontics or Implant case) this lab
-// case's tooth belongs to for the same patient, and notes the delivery
-// there too — without overwriting any of that record's own clinical
-// fields, since exactly which sub-field means "delivered" varies by
-// prosthesis type (denture insertion, RPD delivery, crown cementation...).
+// Finds whichever clinical record (Crown/Veneer case, Prosthodontics
+// denture/fixed case, or Implant case) this lab case's tooth belongs to
+// for the same patient, and marks the delivery there too. Crown/Veneer
+// cases have their own structured status field, so that gets set to
+// "Delivered" directly; the others don't have an equivalent single status
+// field (their own sub-fields mean different specific things per
+// prosthesis type), so a note is appended there instead without
+// overwriting any of that record's own clinical fields.
 async function syncDeliveryToClinicalCase(lc){
   if(!lc.patientId || !lc.tooth) return;
   const deliveryNote = "Prosthesis delivered on "+new Date(lc.deliveryDate||nowIso()).toLocaleDateString()+" (synced from Lab Case tracking).";
+
+  const prostheticCases = await dbGetAll("prostheticCases");
+  const matchingProsthetic = prostheticCases.find(p=> p.patientId===lc.patientId && p.tooth===lc.tooth);
+  if(matchingProsthetic){
+    matchingProsthetic.status = "Delivered";
+    matchingProsthetic.notes = (matchingProsthetic.notes? matchingProsthetic.notes+"\n":"") + deliveryNote;
+    matchingProsthetic.updatedAt = nowIso();
+    await dbPut("prostheticCases", matchingProsthetic);
+    return;
+  }
   const prosthoCases = await dbGetAll("prosthoCases");
   const matchingProstho = prosthoCases.find(p=> p.patientId===lc.patientId && p.tooth===lc.tooth);
   if(matchingProstho){
@@ -6853,6 +6880,10 @@ async function openLabCaseForm(id, prefillPatient){
     });
     if(updated.status==="Ready"){
       updated.readyToDeliver = true;
+    }
+    if(updated.status==="Delivered to Patient"){
+      updated.readyToDeliver = false;
+      await syncDeliveryToClinicalCase(updated);
     }
     await upsertFollowupReminder(
       updated,
@@ -23054,6 +23085,7 @@ function renderInvoiceFormSheet(inv, clinics, isEdit, patient, cur){
     ${isEdit? emiSectionHtml(inv, cur) : ""}
     ${isEdit? `<button class="btn btn-outline btn-block" id="btnDeleteInvoice" style="margin-top:14px;">Delete Invoice</button>`:""}
     <button class="btn btn-primary btn-block" id="btnSaveInvoice" style="margin-top:8px;">${isEdit?"Save Changes":"Save Invoice"}</button>
+    <button class="btn btn-outline btn-block" id="btnSaveInvoiceAndPay" style="margin-top:8px;">${icon('wallet',15)} Save Invoice &amp; Record Payment</button>
     <button class="btn btn-outline btn-block" id="btnPrintInvoice" style="margin-top:8px;">Print Invoice</button>
     <button class="btn btn-outline btn-block" id="btnWaPdfInvoice" style="margin-top:8px;">${icon('message',15)} Send PDF on WhatsApp</button>
     <button class="btn btn-outline btn-block" id="btnMailPdfInvoice" style="margin-top:8px;">${icon('mail',15)} Mail Invoice</button>
@@ -23081,6 +23113,7 @@ function renderInvoiceFormSheet(inv, clinics, isEdit, patient, cur){
   };
   document.getElementById("invTax").addEventListener("input", updateTotals);
   document.getElementById("btnSaveInvoice").onclick = ()=> saveInvoice(inv, patient, cur, goBack);
+  document.getElementById("btnSaveInvoiceAndPay").onclick = ()=> saveInvoice(inv, patient, cur, (savedInv)=> openRecordPaymentSheet(savedInv, patient, cur));
   document.getElementById("btnPrintInvoice").onclick = ()=> printInvoice(inv, patient, clinics, cur);
   document.getElementById("btnWaPdfInvoice").onclick = ()=> sendPdfOnWhatsApp(patient, ()=>printInvoice(inv, patient, clinics, cur), "Invoice");
   document.getElementById("btnMailPdfInvoice").onclick = ()=> sendPdfByEmail(patient, ()=>printInvoice(inv, patient, clinics, cur), "Invoice");
@@ -23271,7 +23304,7 @@ async function saveInvoice(inv, patient, cur, goBack){
   await dbPut("invoices", updated);
   logActivity("Saved invoice "+updated.invoiceNumber+" for "+patient.name, {patientId:patient.id});
   showToast("Invoice saved");
-  if(goBack) goBack(); else closeSheetOrReturn();
+  if(goBack) goBack(updated); else closeSheetOrReturn();
 }
 
 function openRecordPaymentSheet(inv, patient, cur){
@@ -24506,6 +24539,7 @@ async function renderMore(){
         ${canAccessModule("pharmacy")? `<div class="list-row" id="rowPharmacy"><span class="row-ico">${icon('pill',18)}</span><span class="txt">Pharmacy</span><span class="meta">Products, stock &amp; billing</span><span class="chev">${icon('chevron',16)}</span></div>` : ""}
         ${canAccessModule("labcases")? `<div class="list-row" id="rowLabCases"><span class="row-ico">${icon('flask',18)}</span><span class="txt">Lab Cases</span><span class="meta">Track lab work by patient</span><span class="chev">${icon('chevron',16)}</span></div>` : ""}
         ${canAccessModule("reports")? `<div class="list-row" id="rowReports"><span class="row-ico">${icon('reports',18)}</span><span class="txt">Reports</span><span class="meta">Generate &amp; export PDF/Excel</span><span class="chev">${icon('chevron',16)}</span></div>` : ""}
+        ${(!currentUserIsAdmin && canAccessModule("appointments"))? `<div class="list-row" id="rowOnlineAppts"><span class="row-ico">${icon('calendar',18)}</span><span class="txt">Online Appointments</span><span class="meta">Requests from your website</span><span class="chev">${icon('chevron',16)}</span></div>` : ""}
         ${(!currentUserIsAdmin && canAccessModule("dataImport"))? `<div class="list-row" id="rowDataImport"><span class="row-ico">${icon('backup',18)}</span><span class="txt">Import Patient Data</span><span class="meta">From Excel / CSV</span><span class="chev">${icon('chevron',16)}</span></div>` : ""}
         <div class="list-row" id="rowKiosk"><span class="row-ico">${icon('kiosk',18)}</span><span class="txt">Kiosk Mode</span><span class="meta">Patient self check-in</span><span class="chev">${icon('chevron',16)}</span></div>
   `;
@@ -24534,6 +24568,7 @@ async function renderMore(){
   wire("rowPharmacy", ()=> goTo("pharmacy"));
   wire("rowLabCases", ()=> goTo("labcases"));
   wire("rowReports", ()=> goTo("reports"));
+  wire("rowOnlineAppts", openOnlineAppointmentsListSheet);
   wire("rowDataImport", openScopedPatientImportSheet);
   wire("rowKiosk", ()=> confirmEnterKiosk());
   hydrateIcons(document.getElementById("main"));
@@ -25635,6 +25670,10 @@ async function initStickyNote(){
 
 // ---- Clinics management ----
 async function openClinicsSheet(){
+  if(!currentUserIsAdmin){
+    showToast("Only the admin account can open Manage Clinics");
+    return;
+  }
   const clinics = await dbGetAll("clinics");
   openSheet(`
     <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
@@ -25819,6 +25858,10 @@ async function openClinicForm(id){
 
 // ---- Doctors (signature & stamp, applied automatically to prints) ----
 async function openDoctorsSheet(){
+  if(!currentUserIsAdmin){
+    showToast("Only the admin account can open Manage Doctors");
+    return;
+  }
   const doctors = await dbGetAll("users");
   openSheet(`
     <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
@@ -27286,6 +27329,10 @@ async function syncDoctorConsultantRecord(d){
 
 // ---- Consultants (referring doctors/specialists you split payments with) ----
 async function openConsultantsSheet(){
+  if(!currentUserIsAdmin){
+    showToast("Only the admin account can open Manage Consultants");
+    return;
+  }
   const consultants = await dbGetAll("consultants");
   openSheet(`
     <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
@@ -27642,6 +27689,10 @@ async function openPrintSettingsSheet(){
 }
 
 async function openSettingsSheet(){
+  if(!currentUserIsAdmin){
+    showToast("Only the admin account can open Settings");
+    return;
+  }
   const s = (await dbGetAll("settings"))[0] || {id:"main"};
   openSheet(`
     <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
@@ -27749,6 +27800,10 @@ async function openSettingsSheet(){
 
 // ---- Trash (placeholder view, real deletes come with later modules) ----
 async function openTrashSheet(){
+  if(!currentUserIsAdmin){
+    showToast("Only the admin account can open Trash");
+    return;
+  }
   const items = await dbGetAll("trash");
   openSheet(`
     <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
@@ -27765,6 +27820,10 @@ async function openTrashSheet(){
 // Backup / Restore
 // ---------------------------------------------------------
 async function doBackup(){
+  if(!currentUserIsAdmin){
+    showToast("Only the admin account can create a backup");
+    return;
+  }
   try{
     const data = {};
     for(const def of STORE_DEFS){
@@ -27800,6 +27859,10 @@ async function doBackup(){
 }
 
 function openRestoreSheet(){
+  if(!currentUserIsAdmin){
+    showToast("Only the admin account can restore from a backup");
+    return;
+  }
   openSheet(`
     <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
     <h2>Restore from Backup</h2>
@@ -27852,6 +27915,10 @@ function openRestoreSheet(){
 // Wipes every store in PATIENT_DATA_STORES only — settings, staff, clinics,
 // and all presets/templates are left exactly as they are.
 function openFactoryResetSheet(){
+  if(!currentUserIsAdmin){
+    showToast("Only the admin account can do this");
+    return;
+  }
   openSheet(`
     <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
     <h2 style="color:var(--red);">Delete All Patient Data</h2>
@@ -28318,6 +28385,10 @@ function openScopedPatientImportSheet(){
 }
 
 function openBackupSheet(){
+  if(!currentUserIsAdmin){
+    showToast("Only the admin account can open Backup & Restore");
+    return;
+  }
   openSheet(`
     <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
     <h2>Backup &amp; Restore</h2>
