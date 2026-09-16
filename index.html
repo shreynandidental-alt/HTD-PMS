@@ -516,6 +516,9 @@
   .qmenu-btn{background:none;border:none;padding:3px;margin:-3px -3px -3px 0;display:flex;color:var(--grey);cursor:pointer;transform:rotate(90deg);flex-shrink:0;}
   .queue-col.drag-over{background:var(--green-mist);}
   .queue-drag-ghost{position:fixed;z-index:9999;pointer-events:none;box-shadow:0 8px 20px rgba(0,0,0,0.25);opacity:0.95;}
+  .cal-appt-block.dragging{opacity:0.35;}
+  .cal-slot-row.drag-target-over{background:var(--green-mist);}
+  .cal-appt-drag-ghost{box-shadow:0 8px 20px rgba(0,0,0,0.3);border-radius:6px;}
   .queue-chip .qn{font-weight:600;}
   .queue-chip .qt{color:var(--grey);font-size:10.5px;}
 
@@ -1327,7 +1330,7 @@ const CLINIC_FILTERED_STORES = new Set(PATIENT_DATA_STORES);
 // through that patient. Ones tied to no patient at all (a low-stock
 // alert, a vendor bill) aren't clinic-specific and stay visible to
 // everyone regardless of restriction.
-const CLINIC_LOOKUP_VIA_PATIENT_STORES = new Set(["reminders", "notifications"]);
+const CLINIC_LOOKUP_VIA_PATIENT_STORES = new Set(["reminders"]);
 async function dbGetAll(storeName){
   const rows = await window.__fb.getAll(storeName);
   if(!currentUserRestrictedClinicId) return rows;
@@ -1352,8 +1355,26 @@ async function dbGetAll(storeName){
         const pc = clinicByPatientId[r.patientId];
         return !pc || pc === currentUserRestrictedClinicId;
       }
-      return true;
+      // No patient attached at all (e.g. a "Vendor Payment Due" reminder
+      // for a lab/material bill) - that's a financial reminder, not a
+      // patient follow-up, so it stays admin-only just like the
+      // equivalent payment_due bell notification does.
+      return false;
     });
+  }
+
+  if(storeName==="notifications"){
+    // Clinic-restricted staff only ever see new-appointment-request
+    // notifications here - payment due, low stock, and budget alerts are
+    // practice-wide/financial concerns that stay admin-only, regardless of
+    // whether they're tied to a specific clinic's patient.
+    const onlyOnlineBookingType = rows.filter(r => r.type==="online_booking");
+    // And within those, only for their own clinic's requests - reuse the
+    // same clinic-matching already applied to onlineBookings itself so the
+    // two stay consistent.
+    const myBookings = await dbGetAll("onlineBookings");
+    const myBookingIds = new Set(myBookings.map(b=>b.id));
+    return onlyOnlineBookingType.filter(r => !r.relatedId || myBookingIds.has(r.relatedId));
   }
 
   if(storeName==="onlineBookings"){
@@ -3960,6 +3981,7 @@ function calTimeColHtml(){
 function calSlotRowHtml(dateKey, s){
   return `<div class="cal-slot-row ${s.m===0?'hour-line':''}" data-date="${dateKey}" data-time="${calSlotTimeStr(s.h,s.m)}" style="height:${CAL_SLOT_PX}px;"></div>`;
 }
+let calApptJustDragged = false;
 function wireCalGridActions(root){
   root.querySelectorAll(".cal-slot-row").forEach(el=>{
     el.onclick = ()=> openSlotChoiceSheet(el.dataset.date, el.dataset.time);
@@ -3967,6 +3989,7 @@ function wireCalGridActions(root){
   root.querySelectorAll(".cal-appt-block").forEach(el=>{
     el.onclick = (ev)=>{
       ev.stopPropagation();
+      if(calApptJustDragged){ calApptJustDragged = false; return; }
       if(el.dataset.status==="Reserved") openReserveSlotForm(el.dataset.appt);
       else openAppointmentForm(el.dataset.appt);
     };
@@ -3993,6 +4016,88 @@ function wireCalGridActions(root){
     }
   });
 }
+function wireApptDragReschedule(root){
+  let dragging = false, ghost = null, apptId = null, startX = 0, startY = 0, origBlock = null;
+
+  function onMove(mv){
+    if(!dragging && (Math.abs(mv.clientX-startX)>6 || Math.abs(mv.clientY-startY)>6)){
+      dragging = true;
+      ghost = origBlock.cloneNode(true);
+      ghost.classList.add("cal-appt-drag-ghost");
+      const rect = origBlock.getBoundingClientRect();
+      ghost.style.width = rect.width+"px";
+      ghost.style.position = "fixed";
+      ghost.style.zIndex = "9999";
+      ghost.style.pointerEvents = "none";
+      ghost.style.opacity = "0.88";
+      ghost.style.left = rect.left+"px";
+      ghost.style.top = rect.top+"px";
+      document.body.appendChild(ghost);
+      origBlock.classList.add("dragging");
+    }
+    if(dragging && ghost){
+      ghost.style.left = (mv.clientX - 24)+"px";
+      ghost.style.top = (mv.clientY - 12)+"px";
+      root.querySelectorAll(".cal-slot-row").forEach(row=>{
+        const r = row.getBoundingClientRect();
+        const over = mv.clientX>=r.left && mv.clientX<=r.right && mv.clientY>=r.top && mv.clientY<=r.bottom;
+        row.classList.toggle("drag-target-over", over);
+      });
+    }
+  }
+
+  async function onUp(uv){
+    document.removeEventListener("pointermove", onMove);
+    document.removeEventListener("pointerup", onUp);
+    const wasDragging = dragging;
+    let targetRow = null;
+    if(dragging){
+      root.querySelectorAll(".cal-slot-row").forEach(row=>{
+        const r = row.getBoundingClientRect();
+        if(uv.clientX>=r.left && uv.clientX<=r.right && uv.clientY>=r.top && uv.clientY<=r.bottom) targetRow = row;
+      });
+      root.querySelectorAll(".cal-slot-row").forEach(row=>row.classList.remove("drag-target-over"));
+      if(ghost){ ghost.remove(); ghost = null; }
+      if(origBlock) origBlock.classList.remove("dragging");
+    }
+    const draggedApptId = apptId;
+    dragging = false; apptId = null; origBlock = null;
+
+    if(wasDragging){
+      calApptJustDragged = true; // suppress the click that follows this drag sequence
+      if(targetRow){
+        const newDate = targetRow.dataset.date;
+        const newTime = targetRow.dataset.time;
+        const appts = await dbGetAll("appointments");
+        const a = appts.find(x=>x.id===draggedApptId);
+        if(a && (a.date!==newDate || a.startTime!==newTime)){
+          const oldDate = a.date, oldTime = a.startTime;
+          a.date = newDate;
+          a.startTime = newTime;
+          a.updatedAt = nowIso();
+          await dbPut("appointments", a);
+          logActivity("Rescheduled appointment for "+(a.patientName||"patient")+" from "+formatTime(oldTime)+" ("+oldDate+") to "+formatTime(newTime)+" ("+newDate+")", {patientId: a.patientId});
+          showToast("Rescheduled to "+formatTime(newTime)+(newDate!==oldDate? " on "+fromDateKey(newDate).toLocaleDateString(undefined,{day:'numeric',month:'short'}):""));
+        }
+      }
+      renderApptBody();
+    }
+  }
+
+  root.querySelectorAll(".cal-appt-block[data-appt]").forEach(el=>{
+    if(el.dataset.status==="Cancelled" || el.dataset.status==="Completed") return;
+    el.addEventListener("pointerdown", (ev)=>{
+      if(ev.pointerType==="mouse" && ev.button!==0) return;
+      dragging = false;
+      apptId = el.dataset.appt;
+      origBlock = el;
+      startX = ev.clientX; startY = ev.clientY;
+      document.addEventListener("pointermove", onMove);
+      document.addEventListener("pointerup", onUp);
+    });
+  });
+}
+
 function openSlotChoiceSheet(date, time){
   openSheet(`
     <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
@@ -4096,6 +4201,7 @@ async function renderDayView(body){
   document.getElementById("dnNext").onclick = ()=>{ apptSelectedDate.setDate(apptSelectedDate.getDate()+1); renderApptBody(); };
   document.getElementById("dnToday").onclick = ()=>{ apptSelectedDate = new Date(); renderApptBody(); };
   wireCalGridActions(body);
+  wireApptDragReschedule(body);
   if(isToday) wireQueueDragDrop(body);
 }
 
@@ -5059,6 +5165,7 @@ async function renderWeekView(body){
   document.getElementById("wnPrev").onclick = ()=>{ apptSelectedDate.setDate(apptSelectedDate.getDate()-7); renderApptBody(); };
   document.getElementById("wnNext").onclick = ()=>{ apptSelectedDate.setDate(apptSelectedDate.getDate()+7); renderApptBody(); };
   wireCalGridActions(body);
+  wireApptDragReschedule(body);
   if(weekHasToday) wireQueueDragDrop(body);
 }
 
@@ -13496,7 +13603,12 @@ async function submitKioskRegistration(){
   }
 
   const clinics = await dbGetAll("clinics");
-  const defaultClinic = clinics.find(c=>!c.archived);
+  // Whoever is physically running the kiosk determines the clinic: a
+  // staff login restricted to one clinic can only ever be registering
+  // patients for that clinic; an unrestricted login (reception, admin)
+  // uses whatever clinic they have selected in the header, since that's
+  // how they indicate which physical location they're at.
+  const kioskClinicId = currentUserRestrictedClinicId || (selectedClinicId!=="ALL" ? selectedClinicId : getDefaultClinicId(clinics));
   const newPatient = {
     id: uid("pat"), code: await nextPatientCode(),
     name, mobile, whatsappNumber: mobile, altMobile:"",
@@ -13504,7 +13616,7 @@ async function submitKioskRegistration(){
     dob, gender: kioskGender, address,
     city:"", occupation:"", referredBy:"",
     hearAboutUs: kioskSource,
-    preferredClinicId: defaultClinic ? defaultClinic.id : "",
+    preferredClinicId: kioskClinicId,
     treatingDoctor:"",
     medicalAlerts: kioskMedicalCombinedText(),
     allergies: document.getElementById("kfAllergy").value.trim(),
@@ -28692,6 +28804,7 @@ async function refreshAccessForCurrentUser(){
   await loadCurrentUserAccess();
   applyNavPermissions();
   await refreshClinicSelector();
+  await refreshNotificationBell();
   goTo("home");
 }
 
