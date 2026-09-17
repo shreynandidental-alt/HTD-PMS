@@ -1300,7 +1300,7 @@ const PATIENT_DATA_STORES = [
   "xrays","reports","patientDocuments","photos","implantCases","implants",
   "implantPayments","implantAttachments","prostheticCases","alignerCases",
   "alignerStages","bracesCases","orthoVisits","pediatricCases","vaccinationsOptional",
-  "recalls","labCases","prePostOpPhotos"
+  "recalls","labCases","prePostOpPhotos","pharmacyProducts","commitments"
 ];
 
 let db = null; // kept only so any leftover references don't throw; unused with Firestore
@@ -1330,7 +1330,7 @@ const CLINIC_FILTERED_STORES = new Set(PATIENT_DATA_STORES);
 // through that patient. Ones tied to no patient at all (a low-stock
 // alert, a vendor bill) aren't clinic-specific and stay visible to
 // everyone regardless of restriction.
-const CLINIC_LOOKUP_VIA_PATIENT_STORES = new Set(["reminders"]);
+const CLINIC_LOOKUP_VIA_PATIENT_STORES = new Set(["reminders", "activityLog"]);
 async function dbGetAll(storeName){
   const rows = await window.__fb.getAll(storeName);
   if(!currentUserRestrictedClinicId) return rows;
@@ -2436,13 +2436,21 @@ async function showApptHoverCard(apptId, anchorEl){
   const card = ensureApptHoverCard();
   card.dataset.forId = apptId;
   card.innerHTML = `
-    <div class="ahc-name">${escapeHtml(a.patientName||"Unknown")}</div>
+    <div class="ahc-name" id="ahcNameLink" style="${a.patientId?'cursor:pointer;':''}">${escapeHtml(a.patientName||"Unknown")}</div>
     <div class="ahc-item"><div class="ahc-k">Mobile</div><div class="ahc-v">${escapeHtml(p?.mobile||"—")}</div></div>
     <div class="ahc-item"><div class="ahc-k">Clinic</div><div class="ahc-v">${escapeHtml(c? c.name.replace('Healing Touch Dental – ',''):"—")}</div></div>
     <div class="ahc-item"><div class="ahc-k">Doctor</div><div class="ahc-v">${a.doctor? "Dr. "+escapeHtml(a.doctor):"—"}</div></div>
     <div class="ahc-item"><div class="ahc-k">Date &amp; Time</div><div class="ahc-v">${a.date? fromDateKey(a.date).toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'}):""} · ${formatTime(a.startTime)}</div></div>
     <div class="ahc-item"><div class="ahc-k">Treatment</div><div class="ahc-v">${escapeHtml(a.treatmentType||"General")}</div></div>
   `;
+  if(a.patientId){
+    const nameLink = document.getElementById("ahcNameLink");
+    if(nameLink) nameLink.onclick = (ev)=>{
+      ev.stopPropagation();
+      hideApptHoverCard();
+      openPatientProfile(a.patientId);
+    };
+  }
   positionApptHoverCard(card, anchorEl);
   card.classList.add("show");
 }
@@ -3961,7 +3969,50 @@ function doctorColorFor(doctorName, doctors){
   const match = doctors.find(d=> String(d.name||"").trim().toLowerCase().replace(/^dr\.?\s*/,"")===target);
   return match ? match.color : null;
 }
-function calApptBlockHtml(a, doctors){
+// Assigns each appointment a column index and the total column count for
+// its overlap cluster, so overlapping appointments (e.g. two different
+// doctors double-booked into the same half hour) can be laid out side by
+// side instead of stacking on top of each other. Returns a Map from
+// appointment id to {col, totalCols}.
+function layoutOverlapColumns(appts){
+  const withRange = appts.map(a=>{
+    const startMin = calMinutesFromStart(a.startTime);
+    const endMin = startMin + (a.durationMinutes||30);
+    return {id: a.id, startMin, endMin};
+  }).sort((x,y)=> x.startMin-y.startMin || (y.endMin-y.startMin)-(x.endMin-x.startMin));
+
+  const layout = new Map();
+  let cluster = [];
+  let clusterEnd = -Infinity;
+
+  function flushCluster(){
+    if(!cluster.length) return;
+    const columns = []; // each entry holds the end time of the appt currently occupying that column
+    const colOf = new Map();
+    cluster.forEach(a=>{
+      let placedIn = -1;
+      for(let i=0;i<columns.length;i++){
+        if(columns[i] <= a.startMin){ columns[i] = a.endMin; placedIn = i; break; }
+      }
+      if(placedIn===-1){ columns.push(a.endMin); placedIn = columns.length-1; }
+      colOf.set(a.id, placedIn);
+    });
+    const totalCols = columns.length;
+    cluster.forEach(a=> layout.set(a.id, {col: colOf.get(a.id), totalCols}));
+    cluster = [];
+    clusterEnd = -Infinity;
+  }
+
+  withRange.forEach(a=>{
+    if(cluster.length && a.startMin >= clusterEnd) flushCluster();
+    cluster.push(a);
+    clusterEnd = Math.max(clusterEnd, a.endMin);
+  });
+  flushCluster();
+
+  return layout;
+}
+function calApptBlockHtml(a, doctors, layout){
   const totalMinutes = (CAL_END_HOUR-CAL_START_HOUR)*60;
   const startMin = Math.min(Math.max(calMinutesFromStart(a.startTime),0), totalMinutes);
   const top = (startMin/CAL_SLOT_MIN)*CAL_SLOT_PX;
@@ -3970,7 +4021,16 @@ function calApptBlockHtml(a, doctors){
   const isCancelled = a.status==="Cancelled";
   const doctorColor = doctorColorFor(a.doctor, doctors);
   const color = doctorColor || apptBlockColor(a.status);
-  return `<div class="cal-appt-block ${isReserved?'reserved':''} ${isCancelled?'cancelled':''}" data-appt="${a.id}" data-status="${a.status}" style="top:${top}px;height:${height}px;border-left-color:${color};">
+  const pos = (layout && layout.get(a.id)) || {col:0, totalCols:1};
+  const widthPct = 100/pos.totalCols;
+  const leftPct = pos.col*widthPct;
+  // Side-by-side blocks use percentage-based left/width instead of the
+  // default left:2px/right:2px full-span, with a small gutter between
+  // columns so split appointments stay visually distinct.
+  const horizStyle = pos.totalCols>1
+    ? `left:calc(${leftPct}% + 2px);width:calc(${widthPct}% - 4px);right:auto;`
+    : `left:2px;right:2px;`;
+  return `<div class="cal-appt-block ${isReserved?'reserved':''} ${isCancelled?'cancelled':''}" data-appt="${a.id}" data-status="${a.status}" style="top:${top}px;height:${height}px;${horizStyle}border-left-color:${color};">
     <b>${doctorColor? `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${doctorColor};margin-right:4px;flex-shrink:0;"></span>`:""}${isReserved? formatTime(a.startTime)+" Reserved" : formatTime(a.startTime)+" "+escapeHtml(a.patientName||"Unknown")}</b>
     <span>${isReserved? escapeHtml((a.patientName&&a.patientName!=="Reserved")? a.patientName : (a.notes||"Held")) : escapeHtml(a.treatmentType||"General")}${isCancelled?' · Cancelled':''}${a.doctor? ' · Dr. '+escapeHtml(a.doctor):''}</span>
   </div>`;
@@ -4190,7 +4250,7 @@ async function renderDayView(body){
           <div class="cal-time-col">${calTimeColHtml()}</div>
           <div class="cal-day-col wide ${isToday?'today-col':''}" data-date="${dateKey}" style="height:${calSlots().length*CAL_SLOT_PX}px;">
             ${calSlots().map(s=>calSlotRowHtml(dateKey, s)).join("")}
-            ${appts.map(a=>calApptBlockHtml(a, doctors)).join("")}
+            ${(()=>{ const layout = layoutOverlapColumns(appts); return appts.map(a=>calApptBlockHtml(a, doctors, layout)).join(""); })()}
           </div>
         </div>
       </div>
@@ -5155,7 +5215,7 @@ async function renderWeekView(body){
             const dayAppts = allAppts.filter(a=>a.date===key);
             return `<div class="cal-day-col ${key===todayKey?'today-col':''}" data-date="${key}" style="height:${gridHeight}px;">
               ${slots.map(s=>calSlotRowHtml(key, s)).join("")}
-              ${dayAppts.map(a=>calApptBlockHtml(a, doctors)).join("")}
+              ${(()=>{ const layout = layoutOverlapColumns(dayAppts); return dayAppts.map(a=>calApptBlockHtml(a, doctors, layout)).join(""); })()}
             </div>`;
           }).join("")}
         </div>
@@ -5983,6 +6043,7 @@ function openFollowUpForm(patient){
       priority: "Normal",
       notes: `Follow-up on ${followUpDate.toLocaleDateString()}: ${reason}`,
       followUpDate: followUpDate.toISOString(),
+      clinicId: patient.preferredClinicId||"",
       status: "Pending", source: "Manual", createdAt: nowIso()
     };
     await dbPut("commitments", commitment);
@@ -5994,6 +6055,7 @@ function openFollowUpForm(patient){
 
 async function openCommitmentForm(id, prefill){
   let c;
+  const commitClinics = (await dbGetAll("clinics")).filter(cl=>!cl.archived);
   if(id){
     c = (await dbGetAll("commitments")).find(x=>x.id===id);
     if(!c){ showToast("Commitment not found"); return; }
@@ -6002,7 +6064,9 @@ async function openCommitmentForm(id, prefill){
     c = Object.assign({
       id: uid("commit"), patientId:null, patientName:"", mobile:"",
       category:"Other", dueDate: toDateKey(now), dueTime: `${String(now.getHours()).padStart(2,"0")}:00`,
-      priority:"Normal", notes:"", status:"Pending", source:"Manual", createdAt: nowIso()
+      priority:"Normal", notes:"", status:"Pending", source:"Manual",
+      clinicId: currentUserRestrictedClinicId || (selectedClinicId!=="ALL" ? selectedClinicId : getDefaultClinicId(commitClinics)),
+      createdAt: nowIso()
     }, prefill||{});
   }
   const isEdit = !!id;
@@ -6011,6 +6075,11 @@ async function openCommitmentForm(id, prefill){
     <h2>${isEdit?"Edit Commitment":"Add Commitment"}</h2>
     <div class="field"><label>Patient Name *</label><input id="cfName" value="${escapeAttr(c.patientName)}"></div>
     <div class="field"><label>Mobile Number</label><input id="cfMobile" value="${escapeAttr(c.mobile)}" inputmode="tel"></div>
+    <div class="field"><label>Clinic</label>
+      <select id="cfClinic">
+        ${commitClinics.map(cl=>`<option value="${cl.id}" ${c.clinicId===cl.id?'selected':''}>${escapeHtml(cl.name.replace('Healing Touch Dental – ',''))}</option>`).join("")}
+      </select>
+    </div>
     <div class="field"><label>Commitment Type</label>
       <select id="cfCategory">
         ${COMMITMENT_CATEGORIES.map(cat=>`<option value="${cat}" ${c.category===cat?'selected':''}>${cat}</option>`).join("")}
@@ -6035,6 +6104,7 @@ async function openCommitmentForm(id, prefill){
     const updated = Object.assign({}, c, {
       patientName,
       mobile: document.getElementById("cfMobile").value.trim(),
+      clinicId: document.getElementById("cfClinic").value,
       category: document.getElementById("cfCategory").value,
       dueDate: document.getElementById("cfDate").value,
       dueTime: document.getElementById("cfTime").value,
@@ -6965,9 +7035,11 @@ async function openLabCaseForm(id, prefillPatient){
     const patientName = pInput.value.trim();
     if(!patientName){ showToast("Patient is required"); return; }
     if(!selectedPatientId){ showToast("Please select a patient from the list"); return; }
+    const labCasePatient = (await dbGetAll("patients")).find(p=>p.id===selectedPatientId);
     const updated = Object.assign({}, lc, {
       patientId: selectedPatientId,
       patientName,
+      clinicId: labCasePatient ? labCasePatient.preferredClinicId : (lc.clinicId||""),
       tooth: document.getElementById("lfTooth").value.trim(),
       shade: document.getElementById("lfShade").value,
       caseType: document.getElementById("lfCaseType").value,
@@ -7520,34 +7592,38 @@ async function dedupeOnlineBookings(){
   return removedAny;
 }
 
+// Tracks which online-booking notifications THIS browser session has
+// already popped up, so the same one doesn't reappear on every 60-second
+// poll. This is intentionally local/in-memory (not shared state on the
+// booking record) - each logged-in session needs to independently decide
+// whether a given notification is new to it, since different clinics'
+// staff are each waiting to see different bookings.
+let sessionPoppedBookingNotifIds = new Set();
+
 async function checkForNewOnlineBookings(){
   const s = (await dbGetAll("settings"))[0] || {};
   if(!s.onlineBookingEnabled && !s.requestApptEnabled) return;
   await dedupeOnlineBookings().catch(()=>{});
-  let all = [];
+
+  // Step 1: make sure every booking has exactly one notification record,
+  // regardless of who's session happens to run this first. Uses the raw,
+  // unfiltered read since this bookkeeping has to see every clinic's
+  // bookings to create their notification records, even from a
+  // clinic-restricted session.
+  let allBookings = [];
   try{
-    all = await dbGetAll("onlineBookings");
-  }catch(e){ console.error("checkForNewOnlineBookings: couldn't read onlineBookings —", e); return; } // e.g. offline, or a Firestore rules issue
-  const bookings = all.filter(b=>!b.processed);
-  if(!bookings.length) return;
-  // The `processed` flag alone isn't a safe guard against duplicates —
-  // multiple open tabs, a slow/failed write, or this check overlapping
-  // itself can all leave it not stuck by the time this runs again. What
-  // actually can't duplicate is a one-time create, so check what already
-  // has a notification logged before popping up another one, regardless of
-  // what the flag says.
-  let existingNotifs = [];
+    allBookings = await window.__fb.getAll("onlineBookings");
+  }catch(e){ console.error("checkForNewOnlineBookings: couldn't read onlineBookings —", e); return; }
+
+  let allNotifs = [];
   try{
-    existingNotifs = await dbGetAll("notifications");
+    allNotifs = await window.__fb.getAll("notifications");
   }catch(e){ console.error("checkForNewOnlineBookings: couldn't read notifications —", e); return; }
-  const alreadyNotifiedIds = new Set(existingNotifs.filter(n=>n.type==="online_booking" && n.relatedId).map(n=>n.relatedId));
-  const newBookings = [];
-  for(const b of bookings){
+
+  const alreadyNotifiedIds = new Set(allNotifs.filter(n=>n.type==="online_booking" && n.relatedId).map(n=>n.relatedId));
+  for(const b of allBookings){
     if(alreadyNotifiedIds.has(b.id)){
-      // Already notified about this one — just get the flag caught up so
-      // it stops being picked up next time, without popping up again.
-      b.processed = true;
-      await dbPut("onlineBookings", b).catch(()=>{});
+      if(!b.processed){ b.processed = true; await dbPut("onlineBookings", b).catch(()=>{}); }
       continue;
     }
     const isQuickRequest = !b.time;
@@ -7560,11 +7636,22 @@ async function checkForNewOnlineBookings(){
     alreadyNotifiedIds.add(b.id);
     b.processed = true;
     await dbPut("onlineBookings", b).catch(()=>{});
-    newBookings.push(b);
   }
-  if(newBookings.length){
+
+  // Step 2: decide what THIS session should pop up, using its own
+  // clinic-filtered view (dbGetAll, not the raw read above) - a
+  // clinic-restricted login only ever sees its own clinic's booking
+  // notifications here, while an admin/unrestricted login sees all of
+  // them, exactly like the bell itself already does.
+  const myUnreadBookingNotifs = (await dbGetAll("notifications")).filter(n=> n.type==="online_booking" && !n.read);
+  const toPopup = myUnreadBookingNotifs.filter(n=> !sessionPoppedBookingNotifIds.has(n.id));
+  if(toPopup.length){
+    toPopup.forEach(n=> sessionPoppedBookingNotifIds.add(n.id));
+    const bookingsById = {};
+    allBookings.forEach(b=>{ bookingsById[b.id] = b; });
+    const newBookings = toPopup.map(n=> bookingsById[n.relatedId]).filter(Boolean);
     refreshNotificationBell();
-    showNewBookingPopup(newBookings);
+    if(newBookings.length) showNewBookingPopup(newBookings);
   }
 }
 
@@ -25030,11 +25117,17 @@ async function renderPharmacyStock(body){
 
 async function openPharmacyProductForm(id){
   const products = await dbGetAll("pharmacyProducts");
-  const p = id ? products.find(x=>x.id===id) : {id:uid("phprod"), name:"", category:"", unit:"", mrp:0, discount:0, ourPrice:0, stock:0, lowStockThreshold:5, createdAt: nowIso()};
+  const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived);
+  const p = id ? products.find(x=>x.id===id) : {id:uid("phprod"), name:"", category:"", unit:"", mrp:0, discount:0, ourPrice:0, stock:0, lowStockThreshold:5, clinicId: currentUserRestrictedClinicId || (selectedClinicId!=="ALL" ? selectedClinicId : getDefaultClinicId(clinics)), createdAt: nowIso()};
   openSheet(`
     <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
     <h2>${id?"Edit Product":"Add Product"}</h2>
     <div class="field"><label>Product Name</label><input id="ppName" value="${escapeAttr(p.name)}" placeholder="e.g. Sensodyne Toothpaste 100g"></div>
+    <div class="field"><label>Clinic</label>
+      <select id="ppClinic">
+        ${clinics.map(c=>`<option value="${c.id}" ${p.clinicId===c.id?'selected':''}>${escapeHtml(c.name.replace('Healing Touch Dental – ',''))}</option>`).join("")}
+      </select>
+    </div>
     <div class="field-row">
       <div class="field"><label>Category</label><input id="ppCategory" value="${escapeAttr(p.category)}" placeholder="e.g. Toothpaste, Mouthwash"></div>
       <div class="field"><label>Unit</label><input id="ppUnit" value="${escapeAttr(p.unit)}" placeholder="e.g. tube, bottle"></div>
@@ -25065,6 +25158,7 @@ async function openPharmacyProductForm(id){
     const name = document.getElementById("ppName").value.trim();
     if(!name){ showToast("Product name is required"); return; }
     p.name = name;
+    p.clinicId = document.getElementById("ppClinic").value;
     p.category = document.getElementById("ppCategory").value.trim();
     p.unit = document.getElementById("ppUnit").value.trim();
     p.mrp = parseFloat(document.getElementById("ppMrp").value)||0;
@@ -28805,6 +28899,8 @@ async function refreshAccessForCurrentUser(){
   applyNavPermissions();
   await refreshClinicSelector();
   await refreshNotificationBell();
+  sessionPoppedBookingNotifIds = new Set();
+  await checkForNewOnlineBookings().catch(()=>{});
   goTo("home");
 }
 
