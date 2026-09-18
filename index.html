@@ -1325,6 +1325,18 @@ function dbPut(storeName, obj){
   return window.__fb.put(storeName, obj);
 }
 const CLINIC_FILTERED_STORES = new Set(PATIENT_DATA_STORES);
+// These specific collections had a confirmed, reported leak (an
+// unassigned/missing clinicId making a record visible to every
+// restricted clinic instead of none) and were deliberately tightened to
+// hide rather than show when the clinic can't be determined. This has
+// to stay a short, explicit list rather than "everything" - the broad
+// operational collections (appointments, invoices, examinations,
+// prescriptions, payments, etc.) are created in dozens of different
+// places throughout the app, not all of which reliably set clinicId, so
+// hiding them by default risks hiding a record from the very staff
+// member who just created it. Only add a store here after confirming
+// the leak the same way labCases/pharmacyProducts/commitments were.
+const STRICT_CLINIC_FILTERED_STORES = new Set(["labCases", "pharmacyProducts", "commitments"]);
 // reminders and notifications don't carry their own clinicId - most are
 // tied to a patientId instead, so their effective clinic is looked up
 // through that patient. Ones tied to no patient at all (a low-stock
@@ -1336,25 +1348,27 @@ async function dbGetAll(storeName){
   if(!currentUserRestrictedClinicId) return rows;
 
   if(CLINIC_FILTERED_STORES.has(storeName)){
-    if(storeName==="patients"){
-      // Patients are the one deliberate exception: a patient with no
-      // clinic assigned yet stays visible to every restricted login, so
-      // any clinic's staff can find and claim them.
+    if(STRICT_CLINIC_FILTERED_STORES.has(storeName)){
+      // A missing clinicId here is far more likely a data-quality gap
+      // than a deliberately "unclaimed" record, so it's hidden rather
+      // than shown to every restricted login - this is the narrow fix
+      // for the specific leak that was reported and confirmed.
       return rows.filter(r => {
         const rc = r.clinicId || r.preferredClinicId;
-        return !rc || rc === currentUserRestrictedClinicId;
+        return !!rc && rc === currentUserRestrictedClinicId;
       });
     }
-    // Everything else here (appointments, invoices, lab cases, pharmacy
-    // products, commitments, etc.) is operational data that's always
-    // created in the context of a specific clinic - a missing clinicId on
-    // one of these is far more likely a data-quality gap (e.g. it was
-    // derived from a patient record whose own clinic was never set) than
-    // a deliberately "unclaimed" record, so it's hidden rather than shown
-    // to every restricted login.
+    // Everything else (patients, appointments, invoices, examinations,
+    // prescriptions, payments, treatment plans, etc.): a record with no
+    // clinic specified at all is shown rather than hidden. For patients
+    // this is deliberate - an unclaimed one stays visible to every
+    // clinic so someone can claim them. For the rest, it's a safety net
+    // - these are created from many different save points throughout
+    // the app, and hiding one the moment its clinicId is blank would
+    // hide it from the very staff member who just created it.
     return rows.filter(r => {
       const rc = r.clinicId || r.preferredClinicId;
-      return !!rc && rc === currentUserRestrictedClinicId;
+      return !rc || rc === currentUserRestrictedClinicId;
     });
   }
 
@@ -4891,7 +4905,7 @@ async function openSplitPatientRecordsSheet(patient){
           id: uid("pat"), code: await nextPatientCode(), name,
           mobile: newMobileDraft.trim(), altMobile:"", email:"", dob:"",
           gender:"", address:"", city:"", occupation:"", referredBy:"",
-          preferredClinicId: patient.preferredClinicId || getDefaultClinicId(clinics),
+          preferredClinicId: clinicIdForNewRecord(patient, clinics),
           treatingDoctor:"", medicalAlerts:"", allergies:"", currentMedications:"",
           generalNotes: "Split off from "+patient.name+"'s profile on "+new Date().toLocaleDateString()+" — records that had been merged together were separated out.",
           status:"Active", createdAt: nowIso()
@@ -5108,7 +5122,8 @@ async function openRefundDetailsForm(patient, payment){
       id: uid("refund"), patientId: patient.id, paymentId: payment.id, invoiceId: payment.invoiceId||null,
       amount, reason: document.getElementById("rfReason").value.trim(),
       date: document.getElementById("rfDate").value || toDateKey(new Date()),
-      acknowledgedVia:"", signatureDataUrl:"", createdAt: nowIso()
+      acknowledgedVia:"", signatureDataUrl:"", createdAt: nowIso(),
+      clinicId: payment.clinicId || currentUserRestrictedClinicId || patient.preferredClinicId || ""
     };
     await dbAdd("refunds", refund);
     const payments = await dbGetAll("payments");
@@ -14240,7 +14255,8 @@ async function syncChartEntryToExamination(patient, entry, dateKey, doctor){
     await dbAdd("examinations", {
       id: uid("exam"), patientId: patient.id, date: new Date(dateKey).toISOString(),
       doctor: doctor||"", chiefComplaint: "—", observations: line,
-      diagnosis:"", investigations:"", treatmentAdvised:"", notes:""
+      diagnosis:"", investigations:"", treatmentAdvised:"", notes:"",
+      clinicId: currentUserRestrictedClinicId || patient.preferredClinicId || ""
     });
   }
 }
@@ -14722,7 +14738,7 @@ async function openTreatmentPlanForm(planId, patient){
   }else{
     plan = {
       id: uid("plan"), patientId: patient.id,
-      clinicId: patient.preferredClinicId || getDefaultClinicId(clinics),
+      clinicId: clinicIdForNewRecord(patient, clinics),
       doctor: patient.treatingDoctor || "",
       createdDate: nowIso(), items: []
     };
@@ -20331,7 +20347,7 @@ async function saveTreatmentDoneRecord(patient, treatmentLabel, amount, tooth, d
   };
   const plan = {
     id: uid("plan"), patientId: patient.id,
-    clinicId: patient.preferredClinicId || getDefaultClinicId(clinics),
+    clinicId: clinicIdForNewRecord(patient, clinics),
     doctor: patient.treatingDoctor || "",
     createdDate: item.treatmentDate,
     items: [item]
@@ -20454,7 +20470,7 @@ async function openNewTreatmentSheet(patient, tabBody, patientId, prefill, templ
     };
     const plan = {
       id: uid("plan"), patientId: patient.id,
-      clinicId: patient.preferredClinicId || getDefaultClinicId(clinics),
+      clinicId: clinicIdForNewRecord(patient, clinics),
       doctor: patient.treatingDoctor || "",
       createdDate: item.treatmentDate,
       items: [item]
@@ -20573,7 +20589,7 @@ async function createInvoiceForTreatmentItem(item, patient){
   }];
   const totals = computeInvoiceTotals(items, 0, cur);
   const inv = {
-    id: uid("inv"), patientId: patient.id, clinicId: patient.preferredClinicId||getDefaultClinicId(clinics),
+    id: uid("inv"), patientId: patient.id, clinicId: clinicIdForNewRecord(patient, clinics),
     invoiceNumber: await nextInvoiceNumber(),
     date: nowIso(), items, taxPercent: 0,
     totalGross: totals.gross, totalDiscount: totals.discount, totalTax: totals.tax, totalNet: totals.net,
@@ -20590,7 +20606,7 @@ async function generateInvoiceForTreatmentItem(item, patient, patientId){
   const { remaining } = await computeRemainingInvoiceableAmount(item, patient.id);
   if(remaining<=0){ showToast("This treatment has already been fully invoiced"); return; }
   const inv = {
-    id: uid("inv"), patientId: patient.id, clinicId: patient.preferredClinicId||getDefaultClinicId(clinics),
+    id: uid("inv"), patientId: patient.id, clinicId: clinicIdForNewRecord(patient, clinics),
     invoiceNumber: await nextInvoiceNumber(),
     date: nowIso(), items: [], taxPercent: 0, amountPaid: 0
   };
@@ -20886,7 +20902,8 @@ async function openRecordReimbursementSheet(claimId, patient, tabBody, patientId
     const reimbursementPayment = {
       id: uid("pmt"), patientId: patient.id, invoiceId: invoice? invoice.id : null, receiptNumber, type: "Insurance", claimId: claim.id,
       amount, mode, notes: notes || ("Insurance reimbursement — "+(claim.treatment||"")),
-      date: claim.reimbursedDate
+      date: claim.reimbursedDate,
+      clinicId: (invoice&&invoice.clinicId) || currentUserRestrictedClinicId || patient.preferredClinicId || ""
     };
     await dbAdd("payments", reimbursementPayment);
     await syncPaymentToIncomeTransaction(reimbursementPayment, patient);
@@ -20957,7 +20974,8 @@ async function openRecordCopaymentSheet(claimId, patient, tabBody, patientId, re
       id: uid("pmt"), patientId: patient.id, invoiceId: invoice? invoice.id : null, receiptNumber,
       type: "Co-payment", claimId: claim.id,
       amount, mode, notes: notes || ("Co-payment — "+(claim.treatment||"")),
-      date
+      date,
+      clinicId: (invoice&&invoice.clinicId) || currentUserRestrictedClinicId || patient.preferredClinicId || ""
     };
     await dbAdd("payments", copayment);
     await syncPaymentToIncomeTransaction(copayment, patient);
@@ -21081,7 +21099,7 @@ async function openPrescriptionForm(rxId, patient){
     rx = (await dbGetAll("prescriptions")).find(x=>x.id===rxId);
     if(!rx){ showToast("Prescription not found"); return; }
   }else{
-    rx = { id: uid("rx"), patientId: patient.id, clinicId: patient.preferredClinicId||getDefaultClinicId(clinics), doctor: patient.treatingDoctor||"", date: nowIso(), diagnosis:"", advice:"", followUpDate:"", items:[] };
+    rx = { id: uid("rx"), patientId: patient.id, clinicId: clinicIdForNewRecord(patient, clinics), doctor: patient.treatingDoctor||"", date: nowIso(), diagnosis:"", advice:"", followUpDate:"", items:[] };
   }
   rxItemsDraft = (rx.items||[]).map(it=>Object.assign({}, it));
   const doctors = await dbGetAll("users");
@@ -21314,7 +21332,8 @@ async function renderFilesTab(body, patientId, patient){
       const dataUrl = await compressImageFile(file, 900);
       await dbAdd("xrays", {
         id: uid("xray"), patientId, category: document.getElementById("xrayCategorySelect").value,
-        tooth: document.getElementById("xrayToothInput").value.trim(), date: nowIso(), imageData: dataUrl, notes:""
+        tooth: document.getElementById("xrayToothInput").value.trim(), date: nowIso(), imageData: dataUrl, notes:"",
+        clinicId: currentUserRestrictedClinicId || patient.preferredClinicId || ""
       });
       logActivity("X-ray saved for "+patient.name, {patientId});
       showToast("X-ray saved");
@@ -21854,7 +21873,8 @@ function openXrayAnnotationTool(xrayId, patient, tabBody){
     const annotatedDataUrl = canvas.toDataURL("image/jpeg", 0.9);
     await dbAdd("xrays", {
       id: uid("xray"), patientId: patient.id, category: original.category, tooth: original.tooth,
-      date: nowIso(), imageData: annotatedDataUrl, notes: "Annotated copy of "+(original.category||"X-ray")+" from "+new Date(original.date).toLocaleDateString()
+      date: nowIso(), imageData: annotatedDataUrl, notes: "Annotated copy of "+(original.category||"X-ray")+" from "+new Date(original.date).toLocaleDateString(),
+      clinicId: original.clinicId || currentUserRestrictedClinicId || patient.preferredClinicId || ""
     });
     logActivity("Saved an annotated X-ray for "+patient.name, {patientId: patient.id});
     showToast("Annotated copy saved");
@@ -22581,7 +22601,7 @@ async function openQuickOpdForm(patient){
       <div class="field-row">
         <div class="field"><label>Doctor</label>${doctorSelectHtml("qopdDoctor", patient.treatingDoctor||"", doctors)}</div>
         <div class="field"><label>Clinic</label>
-          <select id="qopdClinic">${clinics.map(c=>`<option value="${c.id}" ${patient.preferredClinicId===c.id?'selected':''}>${escapeHtml(c.name.replace('Healing Touch Dental – ',''))}</option>`).join("")}</select>
+          <select id="qopdClinic">${clinics.map(c=>{ const defaultClinicId = currentUserRestrictedClinicId || patient.preferredClinicId || (selectedClinicId!=="ALL" ? selectedClinicId : getDefaultClinicId(clinics)); return `<option value="${c.id}" ${defaultClinicId===c.id?'selected':''}>${escapeHtml(c.name.replace('Healing Touch Dental – ',''))}</option>`; }).join("")}</select>
         </div>
       </div>
       <div class="field" style="margin-bottom:0;"><label>Load a Clinical Template (optional)</label>
@@ -22831,7 +22851,8 @@ async function openQuickOpdForm(patient){
       await dbAdd("examinations", {
         id: uid("exam"), patientId: patient.id, date: nowTs, doctor,
         chiefComplaint: chiefComplaint || "—",
-        observations, diagnosis, investigations, treatmentAdvised, notes:""
+        observations, diagnosis, investigations, treatmentAdvised, notes:"",
+        clinicId: currentUserRestrictedClinicId || patient.preferredClinicId || ""
       });
       createdParts.push("Examination");
     }
@@ -22869,7 +22890,7 @@ async function openQuickOpdForm(patient){
       if(amountPaid>0){
         const receiptNumber = await nextReceiptNumber(invoice.id);
         payment = { id: uid("pmt"), patientId: patient.id, invoiceId: invoice.id, receiptNumber,
-          amount: Math.min(amountPaid, net), mode, notes:"Quick OPD", date: nowTs, quickOpd:true };
+          amount: Math.min(amountPaid, net), mode, notes:"Quick OPD", date: nowTs, quickOpd:true, clinicId: invoice.clinicId };
         await dbAdd("payments", payment);
         invoice.amountPaid = payment.amount;
         invoice.balance = Math.max(0, net - payment.amount);
@@ -23083,7 +23104,7 @@ async function openQuickBillForm(patient){
     <div class="field-row">
       <div class="field"><label>Doctor</label>${doctorSelectHtml("qbDoctor", patient.treatingDoctor||"", doctors)}</div>
       <div class="field"><label>Clinic</label>
-        <select id="qbClinic">${clinics.map(c=>`<option value="${c.id}" ${patient.preferredClinicId===c.id?'selected':''}>${escapeHtml(c.name.replace('Healing Touch Dental – ',''))}</option>`).join("")}</select>
+        <select id="qbClinic">${clinics.map(c=>{ const defaultClinicId = currentUserRestrictedClinicId || patient.preferredClinicId || (selectedClinicId!=="ALL" ? selectedClinicId : getDefaultClinicId(clinics)); return `<option value="${c.id}" ${defaultClinicId===c.id?'selected':''}>${escapeHtml(c.name.replace('Healing Touch Dental – ',''))}</option>`; }).join("")}</select>
       </div>
     </div>
     <div class="field-row">
@@ -23145,7 +23166,7 @@ async function openQuickBillForm(patient){
     if(amountPaid>0){
       const receiptNumber = await nextReceiptNumber(invoice.id);
       payment = { id: uid("pmt"), patientId: patient.id, invoiceId: invoice.id, receiptNumber,
-        amount: Math.min(amountPaid, net), mode, notes:"Quick Bill", date: nowTs, quickBill:true };
+        amount: Math.min(amountPaid, net), mode, notes:"Quick Bill", date: nowTs, quickBill:true, clinicId: invoice.clinicId };
       await dbAdd("payments", payment);
       invoice.amountPaid = payment.amount;
       invoice.balance = Math.max(0, net - payment.amount);
@@ -23240,7 +23261,7 @@ async function openInvoiceForm(invoiceId, patient, prefillItems){
   }else{
     const allInvoices = await dbGetAll("invoices");
     inv = {
-      id: uid("inv"), patientId: patient.id, clinicId: patient.preferredClinicId||getDefaultClinicId(clinics),
+      id: uid("inv"), patientId: patient.id, clinicId: clinicIdForNewRecord(patient, clinics),
       invoiceNumber: await nextInvoiceNumber(),
       date: nowIso(), items: [], taxPercent: 0, amountPaid: 0
     };
@@ -23488,7 +23509,7 @@ function openEmiSetupSheet(inv, patient, cur, onSaved){
     inv.emiPlan = { downPayment: down, frequency: freq, installments };
     if(down>0){
       const receiptNumber = await nextReceiptNumber(inv.id);
-      const downPayment = { id: uid("pmt"), patientId: patient.id, invoiceId: inv.id, receiptNumber, amount: down, mode:"Cash", notes:"EMI down payment", date: nowIso() };
+      const downPayment = { id: uid("pmt"), patientId: patient.id, invoiceId: inv.id, receiptNumber, amount: down, mode:"Cash", notes:"EMI down payment", date: nowIso(), clinicId: inv.clinicId || currentUserRestrictedClinicId || patient.preferredClinicId || "" };
       await dbAdd("payments", downPayment);
       await syncPaymentToIncomeTransaction(downPayment, patient);
       inv.amountPaid = (Number(inv.amountPaid)||0) + down;
@@ -23524,7 +23545,7 @@ function openPayInstallmentSheet(inv, installmentId, patient, cur, onSaved){
     ins.status = "Paid";
     ins.paidDate = dateVal? new Date(dateVal).toISOString() : nowIso();
     ins.paidAmount = amount;
-    const installmentPayment = { id: uid("pmt"), patientId: patient.id, invoiceId: inv.id, receiptNumber: await nextReceiptNumber(inv.id), amount, mode, notes:"EMI installment payment", date: ins.paidDate };
+    const installmentPayment = { id: uid("pmt"), patientId: patient.id, invoiceId: inv.id, receiptNumber: await nextReceiptNumber(inv.id), amount, mode, notes:"EMI installment payment", date: ins.paidDate, clinicId: inv.clinicId || currentUserRestrictedClinicId || patient.preferredClinicId || "" };
     await dbAdd("payments", installmentPayment);
     await syncPaymentToIncomeTransaction(installmentPayment, patient);
     inv.amountPaid = (Number(inv.amountPaid)||0) + amount;
@@ -23582,7 +23603,7 @@ function openRecordPaymentSheet(inv, patient, cur){
     const dateVal = document.getElementById("pmtDate").value;
     const receiptNumber = await nextReceiptNumber(inv.id);
     const pmtDateIso = dateVal? new Date(dateVal).toISOString() : nowIso();
-    const payment = { id: uid("pmt"), patientId: patient.id, invoiceId: inv.id, receiptNumber, amount, mode: document.getElementById("pmtMode").value, notes: document.getElementById("pmtNotes").value.trim(), notesPrint: document.getElementById("pmtNotesPrint").checked, date: pmtDateIso };
+    const payment = { id: uid("pmt"), patientId: patient.id, invoiceId: inv.id, receiptNumber, amount, mode: document.getElementById("pmtMode").value, notes: document.getElementById("pmtNotes").value.trim(), notesPrint: document.getElementById("pmtNotesPrint").checked, date: pmtDateIso, clinicId: inv.clinicId || currentUserRestrictedClinicId || patient.preferredClinicId || "" };
     await dbAdd("payments", payment);
     await syncPaymentToIncomeTransaction(payment, patient);
     inv.amountPaid = (Number(inv.amountPaid)||0) + amount;
@@ -23680,7 +23701,7 @@ async function openAddNewPaymentSheet(patient, cur){
       if(amount<=0) continue;
       const inv = invoices.find(i=>i.id===invId);
       const receiptNumber = await nextReceiptNumber(invId);
-      const payment = { id: uid("pmt"), patientId: patient.id, invoiceId: invId, receiptNumber, amount, mode, notes, notesPrint, date: pmtDate };
+      const payment = { id: uid("pmt"), patientId: patient.id, invoiceId: invId, receiptNumber, amount, mode, notes, notesPrint, date: pmtDate, clinicId: (inv&&inv.clinicId) || currentUserRestrictedClinicId || patient.preferredClinicId || "" };
       await dbAdd("payments", payment);
       await syncPaymentToIncomeTransaction(payment, patient);
       inv.amountPaid = (Number(inv.amountPaid)||0) + amount;
@@ -23690,7 +23711,7 @@ async function openAddNewPaymentSheet(patient, cur){
     }
     if(extraAmount>0){
       const receiptNumber = await nextReceiptNumber(null);
-      const payment = { id: uid("pmt"), patientId: patient.id, invoiceId: null, receiptNumber, type: extraType, amount: extraAmount, mode, notes, notesPrint, date: pmtDate };
+      const payment = { id: uid("pmt"), patientId: patient.id, invoiceId: null, receiptNumber, type: extraType, amount: extraAmount, mode, notes, notesPrint, date: pmtDate, clinicId: currentUserRestrictedClinicId || patient.preferredClinicId || "" };
       await dbAdd("payments", payment);
       await syncPaymentToIncomeTransaction(payment, patient);
       const p = (await dbGetAll("patients")).find(x=>x.id===patient.id);
@@ -28539,7 +28560,8 @@ async function importPatientDataWorkbook(workbook, onProgress){
       amount: parseFloat(row["Amount"])||0,
       mode: excelCellStr(row["Mode (Cash/Card/UPI/etc)"]) || "Cash",
       notes: excelCellStr(row["Notes"]),
-      date: excelDateKey(row["Date (YYYY-MM-DD)"]) || toDateKey(new Date())
+      date: excelDateKey(row["Date (YYYY-MM-DD)"]) || toDateKey(new Date()),
+      clinicId: (linkedInv&&linkedInv.clinicId) || patient.preferredClinicId || defaultClinicId
     };
     await dbAdd("payments", payment);
     counts.payments++; report("payments");
@@ -28592,7 +28614,8 @@ async function importPatientDataWorkbook(workbook, onProgress){
       chiefComplaint: excelCellStr(row["ChiefComplaint"]) || "—",
       observations: excelCellStr(row["Notes"]),
       diagnosis: excelCellStr(row["Diagnosis"]),
-      investigations: "", treatmentAdvised: "", notes: ""
+      investigations: "", treatmentAdvised: "", notes: "",
+      clinicId: currentUserRestrictedClinicId || patient.preferredClinicId || ""
     });
     counts.clinicalNotes++; report("clinical notes");
   }
@@ -28791,6 +28814,18 @@ function getDefaultClinicId(clinics){
   if(flagged) return flagged.id;
   const firstActive = clinics.find(c=>!c.archived);
   return (firstActive || clinics[0])?.id || "";
+}
+
+// The clinic a NEW record for this patient should be saved under. A
+// clinic-restricted staff member's own clinic always wins first - their
+// work has to land in their own clinic regardless of what the patient's
+// own (often empty, for older patients) clinic field says, otherwise the
+// record they just created can end up tagged with the wrong clinic and
+// then be invisible to them under the clinic-filtering rules. Falls back
+// to the patient's own clinic, then the practice default, for
+// unrestricted staff (admin/reception).
+function clinicIdForNewRecord(patient, clinics){
+  return currentUserRestrictedClinicId || (patient && patient.preferredClinicId) || getDefaultClinicId(clinics);
 }
 
 async function refreshClinicSelector(){
