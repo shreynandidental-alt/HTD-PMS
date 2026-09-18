@@ -940,7 +940,7 @@
   .cal-slot-row.hour-line{border-top:1px solid var(--grey-light);}
   .cal-slot-row:hover{background:var(--off-white);}
   .cal-grid{border-top:1px solid var(--grey-light);}
-  .cal-appt-block{position:absolute;left:2px;right:2px;background:var(--green-mist);border-left:3px solid var(--green);border-radius:5px;padding:2px 5px;font-size:10px;line-height:1.25;overflow:hidden;cursor:pointer;z-index:2;}
+  .cal-appt-block{position:absolute;left:2px;right:2px;background:var(--green-mist);border-left:3px solid var(--green);border-radius:5px;padding:2px 5px;font-size:10px;line-height:1.25;overflow:hidden;cursor:pointer;z-index:2;box-shadow:0 0 0 1px rgba(255,255,255,0.9), 0 1px 3px rgba(0,0,0,0.12);}
   .cal-appt-block b{display:block;font-size:10.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .cal-appt-block span{color:var(--charcoal-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;}
   .cal-appt-block.reserved{background:repeating-linear-gradient(45deg,var(--off-white),var(--off-white) 5px,var(--grey-light) 5px,var(--grey-light) 10px);border-left-color:var(--grey);}
@@ -1336,12 +1336,25 @@ async function dbGetAll(storeName){
   if(!currentUserRestrictedClinicId) return rows;
 
   if(CLINIC_FILTERED_STORES.has(storeName)){
-    // A record with no clinic specified at all is shown rather than
-    // hidden - these are typically legacy/unassigned records that still
-    // need someone to be able to see and handle them.
+    if(storeName==="patients"){
+      // Patients are the one deliberate exception: a patient with no
+      // clinic assigned yet stays visible to every restricted login, so
+      // any clinic's staff can find and claim them.
+      return rows.filter(r => {
+        const rc = r.clinicId || r.preferredClinicId;
+        return !rc || rc === currentUserRestrictedClinicId;
+      });
+    }
+    // Everything else here (appointments, invoices, lab cases, pharmacy
+    // products, commitments, etc.) is operational data that's always
+    // created in the context of a specific clinic - a missing clinicId on
+    // one of these is far more likely a data-quality gap (e.g. it was
+    // derived from a patient record whose own clinic was never set) than
+    // a deliberately "unclaimed" record, so it's hidden rather than shown
+    // to every restricted login.
     return rows.filter(r => {
       const rc = r.clinicId || r.preferredClinicId;
-      return !rc || rc === currentUserRestrictedClinicId;
+      return !!rc && rc === currentUserRestrictedClinicId;
     });
   }
 
@@ -1352,8 +1365,18 @@ async function dbGetAll(storeName){
     return rows.filter(r => {
       if(r.clinicId) return r.clinicId === currentUserRestrictedClinicId;
       if(r.patientId){
+        // Unlike the patient list itself (where a patient with no clinic
+        // set deliberately stays visible everywhere, so any clinic's staff
+        // can find and claim them), activity/reminders are just an
+        // informational feed - if the linked patient's own clinic can't be
+        // determined, hide it rather than exposing it to every clinic.
+        // This matters in practice: many patients created before
+        // multi-clinic support was added have no preferredClinicId set at
+        // all, and without this, their activity would leak to every
+        // restricted login regardless of which clinic they actually
+        // belong to.
         const pc = clinicByPatientId[r.patientId];
-        return !pc || pc === currentUserRestrictedClinicId;
+        return !!pc && pc === currentUserRestrictedClinicId;
       }
       // No patient attached at all (e.g. a "Vendor Payment Due" reminder
       // for a lab/material bill) - that's a financial reminder, not a
@@ -1380,14 +1403,29 @@ async function dbGetAll(storeName){
   if(storeName==="onlineBookings"){
     // Website booking requests identify their clinic by free-text name
     // (whatever the public widget sent), not an internal id, so this
-    // can't use the same id-equality check as everything else.
+    // can't use the same id-equality check as everything else. The
+    // widget's clinic labels are a separate system from this app's own
+    // clinic names, so matching has to tolerate real-world differences
+    // in punctuation, spacing, and exact wording between the two -
+    // stripping every non-alphanumeric character down to a bare
+    // "core" string is far more forgiving than removing one hardcoded
+    // prefix phrase.
+    const normalizeClinicText = (s)=> (s||"").toLowerCase().replace(/healing\s*touch\s*dental/g,"").replace(/[^a-z0-9]+/g," ").trim();
     const clinics = await window.__fb.getAll("clinics");
     const mine = clinics.find(c=>c.id===currentUserRestrictedClinicId);
-    const myName = (mine? mine.name : "").toLowerCase().replace("healing touch dental – ","").trim();
+    const myCore = mine ? normalizeClinicText(mine.name) : "";
+    if(!mine || !myCore){
+      // Can't determine this login's own clinic identity at all (e.g. a
+      // stale/mismatched restrictedClinicId) - showing every booking is
+      // a far safer failure mode here than silently showing none, since
+      // this is low-stakes website-lead data, not patient records.
+      console.warn("onlineBookings clinic filter: couldn't resolve the current user's own clinic - showing all bookings rather than hiding everything.");
+      return rows;
+    }
     return rows.filter(r => {
-      const loc = (r.clinicLocation||"").toLowerCase().trim();
+      const loc = normalizeClinicText(r.clinicLocation);
       if(!loc) return true;
-      return myName && (loc.includes(myName) || myName.includes(loc));
+      return loc.includes(myCore) || myCore.includes(loc);
     });
   }
 
@@ -2183,7 +2221,8 @@ async function renderHome(){
     el.onclick = ()=> SHORTCUTS[parseInt(el.dataset.shortcut)].action();
   });
 
-  const allPatientsForHome = await dbGetAll("patients");
+  let allPatientsForHome = await dbGetAll("patients");
+  if(selectedClinicId!=="ALL"){ allPatientsForHome = allPatientsForHome.filter(p=> !p.preferredClinicId || p.preferredClinicId===selectedClinicId); }
   const recentPatients = allPatientsForHome.filter(p=>p.status!=="Archived")
     .sort((a,b)=> new Date(b.createdAt||b.updatedAt||0)-new Date(a.createdAt||a.updatedAt||0)).slice(0,5);
   const recentPatientsList = document.getElementById("recentPatientsList");
@@ -2197,7 +2236,8 @@ async function renderHome(){
   document.getElementById("linkRecentPatients").onclick = ()=> goTo("patients");
   document.getElementById("btnReminderToday").onclick = ()=> openReminderTodaySheet(counts.todayAppts);
 
-  const allInvoicesForHome = await dbGetAll("invoices");
+  let allInvoicesForHome = await dbGetAll("invoices");
+  if(selectedClinicId!=="ALL"){ allInvoicesForHome = allInvoicesForHome.filter(inv=> !inv.clinicId || inv.clinicId===selectedClinicId); }
   const recentInvoices = allInvoicesForHome.sort((a,b)=> new Date(b.date||0)-new Date(a.date||0)).slice(0,5);
   const recentInvoicesList = document.getElementById("recentInvoicesList");
   const curForHome = await finCurrency();
@@ -2262,7 +2302,18 @@ async function renderHome(){
     </div>
   `;
 
-  const activity = (await dbGetAll("activityLog")).sort((a,b)=> new Date(b.date)-new Date(a.date)).slice(0,8);
+  let activity = await dbGetAll("activityLog");
+  if(selectedClinicId!=="ALL"){
+    const activityPatients = await dbGetAll("patients");
+    const clinicByActivityPatientId = {};
+    activityPatients.forEach(p=>{ clinicByActivityPatientId[p.id] = p.preferredClinicId; });
+    activity = activity.filter(a=>{
+      if(!a.patientId) return false; // system-level entries aren't tied to any clinic
+      const pc = clinicByActivityPatientId[a.patientId];
+      return !!pc && pc===selectedClinicId;
+    });
+  }
+  activity = activity.sort((a,b)=> new Date(b.date)-new Date(a.date)).slice(0,8);
   const activityList = document.getElementById("activityList");
   activityList.innerHTML = activity.length ? activity.map(a=>`
     <div class="list-row">
@@ -6347,6 +6398,7 @@ async function renderAssistLab(body){
 
 async function renderAllLabCasesList(body, outerBody){
   let cases = (await dbGetAll("labCases")).sort((a,b)=> new Date(b.createdAt||0)-new Date(a.createdAt||0));
+  if(selectedClinicId!=="ALL"){ cases = cases.filter(lc=> !lc.clinicId || lc.clinicId===selectedClinicId); }
   const nq = normalizeStr(labCaseSearchQuery);
   if(nq){
     cases = cases.filter(lc=>
@@ -6400,7 +6452,8 @@ async function renderAllLabCasesList(body, outerBody){
 // belongs to); "Archive" just clears it from this list without touching
 // any of that, for anything that ended up handled a different way.
 async function renderProsthesisReadyTab(body, outerBody){
-  const cases = (await dbGetAll("labCases")).filter(lc=> lc.readyToDeliver && lc.status!=="Delivered to Patient").sort((a,b)=> new Date(b.createdAt||0)-new Date(a.createdAt||0));
+  let cases = (await dbGetAll("labCases")).filter(lc=> lc.readyToDeliver && lc.status!=="Delivered to Patient").sort((a,b)=> new Date(b.createdAt||0)-new Date(a.createdAt||0));
+  if(selectedClinicId!=="ALL"){ cases = cases.filter(lc=> !lc.clinicId || lc.clinicId===selectedClinicId); }
   body.innerHTML = `
     <p style="margin:0 0 12px;color:var(--grey);font-size:12.5px;">Cases marked Done from a Lab Case follow-up reminder land here, ready to hand back to the patient.</p>
     ${cases.length? `<div class="list-card">${cases.map(lc=>`
