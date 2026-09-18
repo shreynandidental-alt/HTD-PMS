@@ -25025,6 +25025,7 @@ async function renderAdminPanel(){
       { label:"Recycle Bin", icon:"trash", action: openTrashSheet },
       { label:"Dynamic Consent Form", icon:"file", action: openConsentTemplatesSheet },
       { label:"Users Activity Log", icon:"reports", action: openActivityLogSheet },
+      { label:"Repair Clinic Tags", icon:"clinic", action: openRepairClinicTagsSheet },
     ]},
   ];
 
@@ -25052,6 +25053,93 @@ async function renderAdminPanel(){
     el.onclick = ()=>{ if(t.action) t.action(); else adminComingSoon(t.label); };
   });
   hydrateIcons(main);
+}
+
+// Scans records that predate the clinic-tagging fixes (an older save path
+// left clinicId blank or wrong) and backfills the correct value so
+// clinic-restricted staff can see their own past work. Only ever fills in
+// a blank/missing clinicId - never overwrites one that's already set,
+// since that could be a deliberate, correct value from a transferred
+// patient or similar. Derives the correct clinic from the most reliable
+// source available: a linked invoice's own clinicId first (for payments
+// and refunds, since the invoice is the authoritative record of where the
+// billing happened), then the linked patient's own clinic.
+const CLINIC_REPAIRABLE_STORES = ["examinations","treatmentPlans","invoices","prescriptions","payments","xrays","refunds","insuranceClaims","appointments"];
+
+async function scanClinicTagGaps(){
+  const [patients, invoices] = await Promise.all([window.__fb.getAll("patients"), window.__fb.getAll("invoices")]);
+  const clinicByPatientId = {}; patients.forEach(p=>{ clinicByPatientId[p.id] = p.preferredClinicId||""; });
+  const clinicByInvoiceId = {}; invoices.forEach(inv=>{ clinicByInvoiceId[inv.id] = inv.clinicId||""; });
+
+  const report = [];
+  for(const store of CLINIC_REPAIRABLE_STORES){
+    const rows = await window.__fb.getAll(store);
+    const fixable = [];
+    for(const r of rows){
+      if(r.clinicId) continue; // already tagged - never touched
+      const viaInvoice = r.invoiceId ? (clinicByInvoiceId[r.invoiceId]||"") : "";
+      const viaPatient = r.patientId ? (clinicByPatientId[r.patientId]||"") : "";
+      const resolved = viaInvoice || viaPatient;
+      if(resolved) fixable.push({row:r, clinicId:resolved});
+    }
+    const totalBlank = rows.filter(r=>!r.clinicId).length;
+    if(totalBlank>0) report.push({store, totalBlank, fixableCount: fixable.length, fixable});
+  }
+  return report;
+}
+
+async function openRepairClinicTagsSheet(){
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>Repair Clinic Tags</h2>
+    <p style="margin-bottom:14px;color:var(--grey);">Finds records saved before clinic tagging was fixed (examinations, invoices, receipts, treatment plans, prescriptions, appointments, x-rays, refunds, insurance claims) that are missing their clinic, and fills it in from the patient or invoice they belong to. This is why a clinic-restricted staff login might not see some of their own older work, like "Today's Collection" not including a receipt they collected. Only ever fills in a blank clinic - never changes one that's already set.</p>
+    <div id="repairScanStatus" style="text-align:center;padding:20px 0;color:var(--grey);">Scanning…</div>
+    <div id="repairScanResults"></div>
+  `);
+  const status = document.getElementById("repairScanStatus");
+  const results = document.getElementById("repairScanResults");
+  let report;
+  try{
+    report = await scanClinicTagGaps();
+  }catch(e){
+    status.textContent = "Couldn't scan — please try again.";
+    return;
+  }
+  const totalFixable = report.reduce((s,r)=> s+r.fixableCount, 0);
+  const totalUnresolvable = report.reduce((s,r)=> s+(r.totalBlank-r.fixableCount), 0);
+  status.remove();
+  if(!report.length){
+    results.innerHTML = `<div class="empty-card"><b>Nothing to repair</b>Every record already has its clinic tagged correctly.</div>`;
+    return;
+  }
+  results.innerHTML = `
+    <div class="list-card" style="margin-bottom:14px;">
+      ${report.map(r=>`
+        <div class="list-row">
+          <span class="txt">${escapeHtml(r.store.replace(/([A-Z])/g,' $1').replace(/^./,c=>c.toUpperCase()))}</span>
+          <span class="meta">${r.fixableCount} of ${r.totalBlank} fixable</span>
+        </div>
+      `).join("")}
+    </div>
+    ${totalUnresolvable>0? `<p style="color:var(--grey);font-size:13px;margin-bottom:14px;">${totalUnresolvable} record(s) can't be resolved automatically — their own patient also has no clinic set. These are left alone rather than guessed.</p>`:""}
+    ${totalFixable>0? `<button class="btn btn-primary btn-block" id="btnApplyRepair">Fix ${totalFixable} Record${totalFixable===1?"":"s"}</button>` : `<div class="empty-card"><b>Nothing that can be auto-fixed right now</b></div>`}
+  `;
+  const applyBtn = document.getElementById("btnApplyRepair");
+  if(applyBtn) applyBtn.onclick = async ()=>{
+    if(!confirm(`Fix ${totalFixable} record(s) by filling in their clinic? This can't be bulk-undone.`)) return;
+    applyBtn.disabled = true;
+    applyBtn.textContent = "Fixing…";
+    let fixed = 0;
+    for(const r of report){
+      for(const {row, clinicId} of r.fixable){
+        row.clinicId = clinicId;
+        try{ await window.__fb.put(r.store, row); fixed++; }catch(e){ /* skip, keep going */ }
+      }
+    }
+    logActivity(`Repaired clinic tags on ${fixed} record(s)`);
+    showToast(`Fixed ${fixed} record(s)`);
+    closeSheet();
+  };
 }
 
 async function openActivityLogSheet(){
