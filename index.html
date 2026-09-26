@@ -1336,7 +1336,7 @@ const CLINIC_FILTERED_STORES = new Set(PATIENT_DATA_STORES);
 // hiding them by default risks hiding a record from the very staff
 // member who just created it. Only add a store here after confirming
 // the leak the same way labCases/pharmacyProducts/commitments were.
-const STRICT_CLINIC_FILTERED_STORES = new Set(["labCases", "pharmacyProducts", "commitments"]);
+const STRICT_CLINIC_FILTERED_STORES = new Set(["labCases", "pharmacyProducts", "commitments", "payments", "invoices"]);
 // reminders and notifications don't carry their own clinicId - most are
 // tied to a patientId instead, so their effective clinic is looked up
 // through that patient. Ones tied to no patient at all (a low-stock
@@ -7562,7 +7562,65 @@ class PlaceholderCommProvider extends CommunicationProvider {
 // ready to switch to once each one is built out.
 class TwilioProvider extends PlaceholderCommProvider { constructor(){ super("twilio","Twilio"); } }
 class Dialog360Provider extends PlaceholderCommProvider { constructor(){ super("dialog360","360dialog"); } }
-class InteraktProvider extends PlaceholderCommProvider { constructor(){ super("interakt","Interakt"); } }
+// Calls the app's own backend (api/send-whatsapp, api/test-whatsapp) rather
+// than Interakt directly. The Interakt Secret Key lives only as a Vercel
+// environment variable read by those backend functions — it is never
+// stored in Settings/Firestore and never touches the browser, so there is
+// nothing here for _getConfig() to read except the one non-secret setting
+// (default country code) that's safe to keep client-side.
+class InteraktProvider extends CommunicationProvider {
+  constructor(){ super("interakt", "Interakt"); }
+  async _getConfig(){
+    const s = (await dbGetAll("settings"))[0] || {};
+    return { defaultCountryCode: (s.interaktDefaultCountryCode||"+91").trim() };
+  }
+  async _post(body){
+    try{
+      const res = await fetch("/api/send-whatsapp", {
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify(body)
+      });
+      const data = await res.json().catch(()=>({}));
+      if(!res.ok || data.error) return {success:false, error: (data && data.error) || ("Request failed (HTTP "+res.status+")")};
+      return {success:true, error:null, data};
+    }catch(err){
+      return {success:false, error:(err&&err.message)||"Network error reaching the app's own WhatsApp backend (api/send-whatsapp)."};
+    }
+  }
+  async sendTemplate(opts){
+    if(!opts.toNumber) return {success:false, error:"No WhatsApp/mobile number on file"};
+    if(!opts.templateName) return {success:false, error:"No approved Interakt template name given for this message"};
+    const cfg = await this._getConfig();
+    return this._post({
+      countryCode: cfg.defaultCountryCode, phoneNumber: sanitizePhone(opts.toNumber),
+      templateName: opts.templateName, languageCode: opts.templateLanguage||"en",
+      bodyValues: opts.templateParams||[], headerValues: opts.templateHeaderValues||undefined
+    });
+  }
+  async sendText(opts){
+    if(!opts.toNumber) return {success:false, error:"No WhatsApp/mobile number on file"};
+    // Interakt's own documentation for this API only lists "Template" as a
+    // supported message type — see the note in api/send-whatsapp.js. If a
+    // template name was supplied (most calls throughout this app already
+    // pass one for automated messages), use it; otherwise this falls back
+    // to a best-effort plain-text send that Interakt may reject.
+    if(opts.templateName) return this.sendTemplate(opts);
+    const cfg = await this._getConfig();
+    return this._post({ countryCode: cfg.defaultCountryCode, phoneNumber: sanitizePhone(opts.toNumber), message: opts.message||"" });
+  }
+  async testConnection(){
+    try{
+      const res = await fetch("/api/test-whatsapp", { method:"POST" });
+      const data = await res.json().catch(()=>({}));
+      if(!data.configured) return {success:false, error: data.error || "INTERAKT_API_KEY isn't set on the server yet."};
+      if(!data.success) return {success:false, error: data.error || "Connection failed"};
+      return {success:true, error:null};
+    }catch(err){
+      return {success:false, error:(err&&err.message)||"Couldn't reach the app's own backend (api/test-whatsapp) — is it deployed?"};
+    }
+  }
+}
 class AiSensyProvider extends PlaceholderCommProvider { constructor(){ super("aisensy","AiSensy"); } }
 class CustomCommProvider extends PlaceholderCommProvider { constructor(){ super("custom","Custom Provider"); } }
 
@@ -8547,8 +8605,9 @@ async function openCommunicationSettingsSheet(){
       </select>
     </div>
     <button class="btn btn-primary btn-block" id="btnSaveCommProvider" style="margin-bottom:8px;">Save</button>
+    <button class="btn btn-outline btn-block" id="btnConfigureInterakt" style="margin-bottom:8px;">${icon('settings',15)} Configure Interakt</button>
     <button class="btn btn-outline btn-block" id="btnConfigureMeta">${icon('settings',15)} Configure Meta Cloud API ${metaConfigured? '(Configured)' : '(Not Configured)'}</button>
-    <p style="margin-top:8px;">This is where you register your WhatsApp Business Cloud API credentials whenever you're ready — you can add or change these any time after the app is live, right from here, with nothing else needing to change.</p>
+    <p style="margin-top:8px;">This is where you register your WhatsApp Business API credentials whenever you're ready — you can add or change these any time after the app is live, right from here, with nothing else needing to change.</p>
   `);
   document.getElementById("btnSaveCommProvider").onclick = async ()=>{
     s.commProvider = document.getElementById("commProviderSelect").value;
@@ -8556,7 +8615,76 @@ async function openCommunicationSettingsSheet(){
     showToast("Saved");
     closeSheet();
   };
+  document.getElementById("btnConfigureInterakt").onclick = ()=> openInteraktConfigSheet();
   document.getElementById("btnConfigureMeta").onclick = ()=> openMetaCloudConfigSheet();
+}
+
+// The Interakt Secret Key is never entered or stored here — it lives only
+// as a Vercel environment variable (INTERAKT_API_KEY) read by
+// api/send-whatsapp.js and api/test-whatsapp.js on the server. Storing it
+// in Settings/Firestore instead would put it within reach of anyone who
+// can read this app's data or open browser dev tools, which is exactly
+// what a Secret Key must never be exposed to.
+async function openInteraktConfigSheet(){
+  const s = (await dbGetAll("settings"))[0] || {id:"main"};
+  openSheet(`
+    <button class="sheet-close" onclick="openCommunicationSettingsSheet()">${icon('close',18)}</button>
+    <h2>Configure Interakt</h2>
+    <p style="margin-bottom:12px;">Your Interakt Secret Key is kept on the server, not here — add it once in your Vercel project's Environment Variables as <b>INTERAKT_API_KEY</b> (find the key itself in Interakt: Settings → Developer Settings → Secret Key), then redeploy. Nothing below ever touches or stores that key.</p>
+    <div id="interaktStatusLine" style="margin-bottom:12px;color:var(--grey);">Checking status…</div>
+    <div class="field"><label>Default Country Code</label><input id="interaktCountryCode" value="${escapeAttr(s.interaktDefaultCountryCode||'+91')}" placeholder="e.g. +91"></div>
+    <p style="margin-top:-8px;">Used whenever a patient's number is stored without one.</p>
+    <button class="btn btn-primary btn-block" id="btnSaveInteraktConfig" style="margin-bottom:8px;">Save</button>
+    <button class="btn btn-outline btn-block" id="btnTestInteraktConnection" style="margin-bottom:8px;">Test Connection</button>
+    <div id="interaktTestResult" style="margin-bottom:10px;"></div>
+    <button class="btn btn-outline btn-block" id="btnSendTestInterakt">Send Test WhatsApp</button>
+    <div id="interaktSendTestResult" style="margin-top:10px;"></div>
+  `);
+  const provider = CommunicationService.getProviders().interakt;
+  const statusLine = document.getElementById("interaktStatusLine");
+  (async ()=>{
+    const result = await provider.testConnection();
+    statusLine.innerHTML = result.success
+      ? `<span style="color:var(--green);">✓ Interakt WhatsApp connection successful.</span>`
+      : `<span style="color:var(--red);">${escapeHtml(result.error||"Not connected yet")}</span>`;
+  })();
+  document.getElementById("btnSaveInteraktConfig").onclick = async ()=>{
+    s.interaktDefaultCountryCode = document.getElementById("interaktCountryCode").value.trim() || "+91";
+    await dbPut("settings", s);
+    showToast("Saved");
+  };
+  document.getElementById("btnTestInteraktConnection").onclick = async ()=>{
+    const resultEl = document.getElementById("interaktTestResult");
+    resultEl.innerHTML = `<p style="color:var(--grey);">Testing…</p>`;
+    const result = await provider.testConnection();
+    resultEl.innerHTML = result.success
+      ? `<div class="warn-banner" style="border-color:var(--green);color:var(--green);">Interakt WhatsApp connection successful.</div>`
+      : `<div class="warn-banner" style="border-color:var(--red);color:var(--red);">${escapeHtml(result.error||"Connection failed")}</div>`;
+  };
+  document.getElementById("btnSendTestInterakt").onclick = ()=>{
+    openSheet(`
+      <button class="sheet-close" onclick="openInteraktConfigSheet()">${icon('close',18)}</button>
+      <h2>Send Test WhatsApp</h2>
+      <p style="margin-bottom:12px;">Sends one message through Interakt using an approved template, so you can confirm real delivery. Plain text isn't reliably supported by Interakt's API — pick one of your existing templates from Admin Panel → WhatsApp Templates.</p>
+      <div class="field"><label>Phone Number</label><input id="interaktTestPhone" placeholder="e.g. 9876543210" inputmode="tel"></div>
+      <div class="field"><label>Template Name (Interakt code name)</label><input id="interaktTestTemplate" placeholder="e.g. appointment_reminder"></div>
+      <div class="field"><label>Body Values (comma-separated, matching the template's variables)</label><input id="interaktTestBodyValues" placeholder="e.g. Priya, 10:30 AM"></div>
+      <button class="btn btn-primary btn-block" id="btnSendInteraktTestNow">Send</button>
+      <div id="interaktSendNowResult" style="margin-top:10px;"></div>
+    `);
+    document.getElementById("btnSendInteraktTestNow").onclick = async ()=>{
+      const phone = document.getElementById("interaktTestPhone").value.trim();
+      const templateName = document.getElementById("interaktTestTemplate").value.trim();
+      const bodyValues = document.getElementById("interaktTestBodyValues").value.split(",").map(v=>v.trim()).filter(Boolean);
+      const resultEl = document.getElementById("interaktSendNowResult");
+      if(!phone || !templateName){ resultEl.innerHTML = `<div class="warn-banner" style="border-color:var(--red);color:var(--red);">Phone number and template name are both required.</div>`; return; }
+      resultEl.innerHTML = `<p style="color:var(--grey);">Sending…</p>`;
+      const result = await provider.sendTemplate({ toNumber: phone, templateName, templateParams: bodyValues });
+      resultEl.innerHTML = result.success
+        ? `<div class="warn-banner" style="border-color:var(--green);color:var(--green);">Sent — check WhatsApp on that number.</div>`
+        : `<div class="warn-banner" style="border-color:var(--red);color:var(--red);">${escapeHtml(result.error||"Send failed")}</div>`;
+    };
+  };
 }
 
 async function openMetaCloudConfigSheet(){
