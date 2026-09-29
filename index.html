@@ -8889,6 +8889,10 @@ async function openInteraktConfigSheet(){
     <div id="interaktStatusLine" style="margin-bottom:12px;color:var(--grey);">Checking status…</div>
     <div class="field"><label>Default Country Code</label><input id="interaktCountryCode" value="${escapeAttr(s.interaktDefaultCountryCode||'+91')}" placeholder="e.g. +91"></div>
     <p style="margin-top:-8px;">Used whenever a patient's number is stored without one.</p>
+    <div class="field"><label>Receipt Template Name (Interakt code name)</label><input id="interaktReceiptTemplate" value="${escapeAttr(s.interaktReceiptTemplate||'payment_receipt')}" placeholder="e.g. payment_receipt"></div>
+    <p style="margin-top:-8px;">Approved template with 4 body values: 1 Patient name, 2 Amount (number only, the template already has the ₹), 3 Date, 4 Receipt link.</p>
+    <div class="field"><label>Receipt Page Address (optional)</label><input id="receiptPageUrl" value="${escapeAttr(s.receiptPageUrl||'')}" placeholder="Leave blank to use this site's /receipt.html"></div>
+    <p style="margin-top:-8px;">Firestore rule needed once: <code>match /publicReceipts/{token} { allow get: if true; allow list: if false; allow create, update, delete: if request.auth != null; }</code></p>
     <button class="btn btn-primary btn-block" id="btnSaveInteraktConfig" style="margin-bottom:8px;">Save</button>
     <button class="btn btn-outline btn-block" id="btnTestInteraktConnection" style="margin-bottom:8px;">Test Connection</button>
     <div id="interaktTestResult" style="margin-bottom:10px;"></div>
@@ -8905,6 +8909,8 @@ async function openInteraktConfigSheet(){
   })();
   document.getElementById("btnSaveInteraktConfig").onclick = async ()=>{
     s.interaktDefaultCountryCode = document.getElementById("interaktCountryCode").value.trim() || "+91";
+    s.interaktReceiptTemplate = document.getElementById("interaktReceiptTemplate").value.trim() || "payment_receipt";
+    s.receiptPageUrl = document.getElementById("receiptPageUrl").value.trim();
     await dbPut("settings", s);
     showToast("Saved");
   };
@@ -22750,7 +22756,7 @@ async function openReceiptActionMenu(paymentId, patient, tabBody, patientId, cur
     } },
     { key:"whatsapp", icon:"message", text:"Receipt On WhatsApp", onClick: ()=>{
       closeSheet();
-      openWhatsAppComposer({ toName: patient.name, toNumber: patient.whatsappNumber||patient.mobile, patientId: patient.id, title:"Receipt On WhatsApp", message: summary });
+      openReceiptLinkComposer([pmt], patient, cur);
     } }
   ]);
 }
@@ -23996,13 +24002,7 @@ function openRecordPaymentSheet(inv, patient, cur){
     logActivity("Recorded payment of "+finMoney(amount,cur)+" for "+patient.name, {patientId:patient.id});
     showToast("Payment recorded");
     if(hasWa && document.getElementById("pmtSendWa").checked){
-      const clinics = await dbGetAll("clinics");
-      const clinic = clinics.find(c=>c.id===patient.preferredClinicId);
-      const message = await buildWaMessageFromTemplate("payment_received", {
-        patientName: patient.name, amount: finMoney(amount,cur), clinicName: clinic?clinic.name:"our clinic",
-        date: new Date(pmtDateIso).toLocaleDateString(), receiptNumber
-      });
-      openWhatsAppComposer({ toName: patient.name, toNumber: patient.whatsappNumber||patient.mobile, patientId: patient.id, title:"Payment Confirmation", message, templateName:"payment_received", onSent: goBack });
+      await openReceiptLinkComposer([payment], patient, cur, { onSent: goBack, onFail: goBack });
     }else{
       goBack();
     }
@@ -24078,6 +24078,7 @@ async function openAddNewPaymentSheet(patient, cur){
     const checkedInvoices = Array.from(document.querySelectorAll(".anp-inv-check:checked"));
     if(checkedInvoices.length===0 && extraAmount<=0){ showToast("Select at least one invoice or enter an advance/wallet amount"); return; }
     let recordedCount = 0, totalRecorded = 0, lastReceiptNumber = "";
+    const recordedPayments = [];
     for(const cb of checkedInvoices){
       const invId = cb.dataset.inv;
       const amtEl = document.querySelector(`.anp-inv-amount[data-inv="${invId}"]`);
@@ -24087,6 +24088,7 @@ async function openAddNewPaymentSheet(patient, cur){
       const receiptNumber = await nextReceiptNumber(invId);
       const payment = { id: uid("pmt"), patientId: patient.id, invoiceId: invId, receiptNumber, amount, mode, notes, notesPrint, date: pmtDate, clinicId: (inv&&inv.clinicId) || currentUserRestrictedClinicId || patient.preferredClinicId || "" };
       await dbAdd("payments", payment);
+      recordedPayments.push(payment);
       await syncPaymentToIncomeTransaction(payment, patient);
       inv.amountPaid = (Number(inv.amountPaid)||0) + amount;
       inv.balance = (Number(inv.totalNet)||0) - inv.amountPaid;
@@ -24097,6 +24099,7 @@ async function openAddNewPaymentSheet(patient, cur){
       const receiptNumber = await nextReceiptNumber(null);
       const payment = { id: uid("pmt"), patientId: patient.id, invoiceId: null, receiptNumber, type: extraType, amount: extraAmount, mode, notes, notesPrint, date: pmtDate, clinicId: currentUserRestrictedClinicId || patient.preferredClinicId || "" };
       await dbAdd("payments", payment);
+      recordedPayments.push(payment);
       await syncPaymentToIncomeTransaction(payment, patient);
       const p = (await dbGetAll("patients")).find(x=>x.id===patient.id);
       if(p){
@@ -24109,13 +24112,7 @@ async function openAddNewPaymentSheet(patient, cur){
     logActivity("Recorded "+recordedCount+" payment(s) for "+patient.name, {patientId:patient.id});
     showToast("Payment recorded");
     if(hasWa && document.getElementById("anpSendWa").checked && totalRecorded>0){
-      const clinics = await dbGetAll("clinics");
-      const clinic = clinics.find(c=>c.id===patient.preferredClinicId);
-      const message = await buildWaMessageFromTemplate("payment_received", {
-        patientName: patient.name, amount: finMoney(totalRecorded,cur), clinicName: clinic?clinic.name:"our clinic",
-        date: new Date(pmtDate).toLocaleDateString(), receiptNumber: lastReceiptNumber
-      });
-      openWhatsAppComposer({ toName: patient.name, toNumber: patient.whatsappNumber||patient.mobile, patientId: patient.id, title:"Payment Confirmation", message, templateName:"payment_received", onSent: goBack });
+      await openReceiptLinkComposer(recordedPayments, patient, cur, { onSent: goBack, onFail: goBack });
     }else{
       goBack();
     }
@@ -24251,6 +24248,91 @@ async function printInsuranceClaim(claim, patient){
   `;
   printDocument({ title:"Insurance Claim", patient, clinic, docDate: new Date().toLocaleDateString(), bodyHtml, signHtml: await buildSignBlock(patient.treatingDoctor) });
   logActivity("Printed insurance claim details for "+patient.name, {patientId: patient.id});
+}
+
+// ---- Receipt link: a public, view-only copy of a receipt, opened from a WhatsApp link ----
+// The full patient record never leaves the app. Only the few fields a receipt
+// shows are copied into a separate Firestore collection ("publicReceipts"),
+// under a long random token that can't be guessed. receipt.html reads exactly
+// one document by that token. See the Firestore rule note in Communication Settings.
+function newReceiptToken(){
+  const a = new Uint8Array(18); crypto.getRandomValues(a);
+  return Array.from(a, b=>b.toString(16).padStart(2,"0")).join("");
+}
+async function receiptPageBaseUrl(){
+  const st = (await dbGetAll("settings"))[0] || {};
+  const custom = (st.receiptPageUrl||"").trim();
+  if(custom) return custom;
+  if(/^https?:/i.test(location.origin)) return location.origin + "/receipt.html";
+  return "";
+}
+async function publishReceiptLink(payments, patient, cur){
+  try{
+    const base = await receiptPageBaseUrl();
+    if(!base){ showToast("Open the app from its hosted address (or set the Receipt page address in Configure Interakt) to create receipt links"); return null; }
+    const invoices = await dbGetAll("invoices");
+    const clinics = await dbGetAll("clinics");
+    const first = payments[0];
+    const firstInv = first.invoiceId ? invoices.find(i=>i.id===first.invoiceId) : null;
+    const clinic = clinics.find(c=>c.id===(firstInv&&firstInv.clinicId)) || clinics.find(c=>c.id===patient.preferredClinicId) || {};
+    const title = patient.gender==="Female" ? "Ms." : patient.gender==="Male" ? "Mr." : "";
+    const lines = payments.map(pm=>{
+      const inv = pm.invoiceId ? invoices.find(i=>i.id===pm.invoiceId) : null;
+      const treat = inv && inv.items && inv.items.length
+        ? inv.items.map(it=>it.description||"Treatment").join(", ")
+        : (pm.type ? pm.type+" credit" : (pm.notes||"Payment"));
+      return { billNo: inv? (inv.invoiceNumber||"") : "", treatment: treat, amount: Number(pm.amount)||0 };
+    });
+    const single = payments.length===1;
+    const token = (single && first.receiptToken) || newReceiptToken();
+    const total = lines.reduce((t,l)=>t+l.amount,0);
+    const notes = payments.map(pm=> (pm.notes && pm.notesPrint!==false) ? pm.notes : "").filter(Boolean)[0] || "";
+    const snapshot = {
+      id: token,
+      clinicName: (clinic.name||"Healing Touch Dental").replace("Healing Touch Dental – ","Healing Touch Dental — "),
+      clinicAddress: clinic.address||"", clinicPhone: clinic.phone||"", clinicWebsite: clinic.website||"",
+      clinicLogo: (clinic.logo && clinic.logo.length<150000) ? clinic.logo : "",
+      patientName: (title+" "+patient.name).trim(), patientCode: patient.code||"",
+      receiptNumber: payments.map(pm=>pm.receiptNumber||"").filter(Boolean).join(", "),
+      receiptDate: first.date, mode: first.mode||"", currency: cur||"₹",
+      lines, total, notes,
+      createdAt: nowIso(), updatedAt: nowIso()
+    };
+    await window.__fb.put("publicReceipts", snapshot);
+    if(single && !first.receiptToken){
+      first.receiptToken = token;
+      try{ await dbPut("payments", first); }catch(e){ /* link still works; a new one is just made next time */ }
+    }
+    return base + (base.includes("?")?"&":"?") + "t=" + token;
+  }catch(err){
+    console.error("publishReceiptLink failed:", err);
+    showToast("Couldn't create the receipt link: "+((err&&err.message)||"unknown error")+" (check the Firestore rule for publicReceipts)");
+    return null;
+  }
+}
+async function openReceiptLinkComposer(payments, patient, cur, extra){
+  extra = extra||{};
+  const number = patient.whatsappNumber||patient.mobile;
+  if(!number){
+    openWhatsAppComposer({ toName: patient.name, toNumber: number, patientId: patient.id, title:"Receipt On WhatsApp" });
+    return false;
+  }
+  const link = await publishReceiptLink(payments, patient, cur);
+  if(!link){ if(extra.onFail) extra.onFail(); return false; }
+  const st = (await dbGetAll("settings"))[0] || {};
+  const templateName = (st.interaktReceiptTemplate||"payment_receipt").trim();
+  const total = payments.reduce((t,pm)=>t+(Number(pm.amount)||0),0);
+  const amountStr = finMoney(total, cur);
+  // The approved template already has the rupee sign written before {{2}},
+  // so the template value must be the bare number or it shows as "₹₹500".
+  const amountBare = Number(total).toLocaleString("en-IN",{maximumFractionDigits:2});
+  const dateStr = new Date(payments[0].date).toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"});
+  const message = `Hi ${patient.name}, thank you for your payment of ${amountStr} on ${dateStr} at Healing Touch Dental. View your receipt here: ${link}\n\nThank you for choosing us.`;
+  openWhatsAppComposer({
+    toName: patient.name, toNumber: number, patientId: patient.id, title:"Receipt On WhatsApp",
+    message, templateName, templateParams:[patient.name, amountBare, dateStr, link], onSent: extra.onSent
+  });
+  return true;
 }
 
 async function printReceipt(payment, invoice, patient, cur, claim){
