@@ -5774,7 +5774,7 @@ function sendAppointmentWhatsApp(appt, patient){
   const number = patient && (patient.whatsappNumber||patient.mobile);
   const titleMap = {Cancelled:"Cancellation Notice", Rescheduled:"Reschedule Notice", NoShow:"Missed Appointment"};
   // Only "Rescheduled" has an approved Interakt template so far
-  // (appointment_rescheduled, body: {{1}}=Name, {{2}}=Date, {{3}}=Time) -
+  // (appointment_confirmation_hw, body: {{1}}=Name, {{2}}=Date, {{3}}=Time) -
   // the other statuses keep sending as free text for now, exactly as
   // before, until their own templates are approved and given to me.
   const isRescheduled = appt.status==="Rescheduled";
@@ -5785,7 +5785,7 @@ function sendAppointmentWhatsApp(appt, patient){
     title: titleMap[appt.status] || "Appointment Confirmation",
     message,
     ...(isRescheduled ? {
-      templateName: "appointment_rescheduled",
+      templateName: "appointment_confirmation_hw",
       templateParams: [appt.patientName||"", dateStr, timeStr]
     } : {})
   });
