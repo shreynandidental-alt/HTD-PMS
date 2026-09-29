@@ -5777,14 +5777,17 @@ function sendAppointmentWhatsApp(appt, patient){
   // (appointment_confirmation_hw, body: {{1}}=Name, {{2}}=Date, {{3}}=Time) -
   // the other statuses keep sending as free text for now, exactly as
   // before, until their own templates are approved and given to me.
-  const isRescheduled = appt.status==="Rescheduled";
+  // Scheduled / Confirmed (new appointment) and Rescheduled all use the same
+  // approved template, since its wording fits both. Without a template name,
+  // Interakt rejects the send ("data is a required field").
+  const usesConfirmationTemplate = appt.status==="Rescheduled" || appt.status==="Scheduled" || appt.status==="Confirmed";
   const dateStr = appt.date ? fromDateKey(appt.date).toLocaleDateString(undefined,{weekday:'long', day:'numeric', month:'long'}) : "";
   const timeStr = formatTime(appt.startTime);
   openWhatsAppComposer({
     toName: appt.patientName, toNumber: number, patientId: appt.patientId,
     title: titleMap[appt.status] || "Appointment Confirmation",
     message,
-    ...(isRescheduled ? {
+    ...(usesConfirmationTemplate ? {
       templateName: "appointment_confirmation_hw",
       templateParams: [appt.patientName||"", dateStr, timeStr]
     } : {})
