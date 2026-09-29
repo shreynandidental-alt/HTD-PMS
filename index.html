@@ -967,6 +967,207 @@
     .fab{width:64px !important;height:64px !important;font-size:30px !important;}
     .fab-chat{width:58px !important;height:58px !important;}
   }
+
+  /* =====================================================================
+     VISUAL POLISH LAYER v2 — purely additive.
+     Nothing above this point is modified: every color HUE, size, spacing,
+     radius and layout value stays exactly as it was — every gradient and
+     shadow below is built only from colors already defined above
+     (--green, --green-light, --green-mist, --charcoal, --shadow), so
+     nothing "new" enters the palette. This version deliberately avoids
+     gating effects behind @media(hover:hover) the way an earlier pass
+     did, since on a touch phone that media query never matches at all —
+     so this time depth, gradients and icon treatments are always
+     visible, not just on desktop mouse-hover.
+     ===================================================================== */
+
+  @media (prefers-reduced-motion: reduce){
+    *, *::before, *::after{ animation-duration:0.01ms !important; animation-iteration-count:1 !important; transition-duration:0.01ms !important; scroll-behavior:auto !important; }
+  }
+
+  /* ---------- Sheets & overlays: a noticeably springier entrance. */
+  @keyframes htdOverlayFadeIn{ from{opacity:0;} to{opacity:1;} }
+  @keyframes htdSheetSlideUp{ from{transform:translateY(40px) scale(0.98);opacity:0;} to{transform:translateY(0) scale(1);opacity:1;} }
+  @keyframes htdSheetPopIn{ from{transform:scale(0.94);opacity:0;} to{transform:scale(1);opacity:1;} }
+  .overlay:not(.hidden){ animation:htdOverlayFadeIn 0.2s ease-out; }
+  .overlay:not(.hidden) .sheet{ animation:htdSheetSlideUp 0.38s cubic-bezier(0.16,1,0.3,1); box-shadow:0 -8px 40px rgba(20,23,26,0.18); }
+  @media (min-width:640px){
+    .overlay:not(.hidden) .sheet{ animation:htdSheetPopIn 0.25s cubic-bezier(0.16,1,0.3,1); }
+  }
+
+  /* ---------- Buttons: a real, visible gradient (built only from the
+     existing --green / --green-light) instead of a flat fill, plus
+     strong, unmistakable press feedback that works with a finger, not
+     just a mouse. */
+  .btn{ transition:transform 0.15s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.15s ease, filter 0.15s ease; }
+  .btn-primary{
+    background:linear-gradient(135deg, var(--green-light) 0%, var(--green) 65%);
+    box-shadow:0 3px 10px rgba(14,111,92,0.32), 0 1px 2px rgba(14,111,92,0.2);
+  }
+  .btn-primary:active{ transform:scale(0.96); filter:brightness(0.94); box-shadow:0 1px 4px rgba(14,111,92,0.28); }
+  .btn-outline{ box-shadow:0 1px 3px rgba(20,23,26,0.05); }
+  .btn-outline:active{ transform:scale(0.96); background:var(--off-white); }
+  .btn-danger:active{ transform:scale(0.96); background:#FBEEEC; }
+  @media (hover:hover){
+    .btn-primary:hover{ filter:brightness(1.06); box-shadow:0 6px 16px rgba(14,111,92,0.38); transform:translateY(-1px); }
+    .btn-outline:hover{ background:var(--off-white); transform:translateY(-1px); }
+  }
+
+  /* ---------- Icon buttons: visible tap feedback (a real color flash +
+     scale), not just a mouse hover. */
+  .icon-btn{ transition:transform 0.15s cubic-bezier(0.34,1.56,0.64,1), background 0.15s ease, color 0.15s ease; border-radius:9px; }
+  .icon-btn:active{ transform:scale(0.85); background:rgba(20,23,26,0.09); }
+  @media (hover:hover){ .icon-btn:hover{ background:rgba(20,23,26,0.06); color:var(--green); } }
+  body.dark-mode .icon-btn:active{ background:rgba(255,255,255,0.12); }
+
+  /* ---------- Stat cards: a persistent, richer elevation (visible at
+     rest, on every device — not only on hover), a gradient accent bar
+     instead of a flat 3px line, and a soft tonal wash so cards read as
+     "designed" surfaces rather than plain white rectangles. All built
+     from --green/--green-light/--charcoal already in the palette. */
+  @keyframes htdCardIn{ from{opacity:0;transform:translateY(16px) scale(0.97);} to{opacity:1;transform:translateY(0) scale(1);} }
+  .stat-card{
+    box-shadow:0 1px 3px rgba(20,23,26,0.07), 0 8px 20px rgba(20,23,26,0.08) !important;
+    transition:transform 0.2s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.2s ease;
+    animation:htdCardIn 0.45s cubic-bezier(0.16,1,0.3,1) both;
+  }
+  .stat-card.accent{ border-left:none; background:linear-gradient(90deg, var(--green-mist) 0%, var(--white) 14%); box-shadow:inset 3px 0 0 var(--green), 0 1px 3px rgba(20,23,26,0.07), 0 8px 20px rgba(20,23,26,0.08) !important; }
+  .stat-card.warn{ border-left:none; box-shadow:inset 3px 0 0 var(--amber), 0 1px 3px rgba(20,23,26,0.07), 0 8px 20px rgba(20,23,26,0.08) !important; }
+  .stat-card.risk{ border-left:none; box-shadow:inset 3px 0 0 var(--red), 0 1px 3px rgba(20,23,26,0.07), 0 8px 20px rgba(20,23,26,0.08) !important; }
+  .stat-card:active{ transform:scale(0.97); }
+  @media (hover:hover){ .stat-card:hover{ transform:translateY(-3px); box-shadow:0 2px 6px rgba(20,23,26,0.1), 0 14px 28px rgba(20,23,26,0.12) !important; } }
+  .stat-card:nth-of-type(1){animation-delay:0ms;} .stat-card:nth-of-type(2){animation-delay:40ms;}
+  .stat-card:nth-of-type(3){animation-delay:80ms;} .stat-card:nth-of-type(4){animation-delay:120ms;}
+  .stat-card:nth-of-type(5){animation-delay:160ms;} .stat-card:nth-of-type(6){animation-delay:200ms;}
+  .stat-card:nth-of-type(7){animation-delay:240ms;} .stat-card:nth-of-type(8){animation-delay:280ms;}
+
+  .list-card, .empty-card, .shortcut-item{
+    box-shadow:0 1px 3px rgba(20,23,26,0.06), 0 6px 16px rgba(20,23,26,0.07) !important;
+    animation:htdCardIn 0.4s cubic-bezier(0.16,1,0.3,1) both;
+  }
+  .shortcut-item{ transition:transform 0.15s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.2s ease; }
+  .shortcut-item:active{ transform:scale(0.94); box-shadow:0 1px 2px rgba(20,23,26,0.08) !important; }
+  @media (hover:hover){ .shortcut-item:hover{ transform:translateY(-2px); box-shadow:0 4px 14px rgba(20,23,26,0.12) !important; } }
+  /* The icon chip inside each shortcut/stat now carries a gradient wash
+     too, echoing the button treatment above. */
+  .shortcut-item .ico{ background:linear-gradient(135deg, var(--green-mist) 0%, rgba(63,168,138,0.22) 100%); transition:transform 0.2s cubic-bezier(0.34,1.56,0.64,1); }
+  .shortcut-item:active .ico{ transform:scale(0.88) rotate(-4deg); }
+
+  /* ---------- Row icons throughout More/Settings/list screens: give
+     every bare icon a soft tinted "chip" background instead of sitting
+     directly on white, which is one of the most visible, broadly-used
+     changes in this pass since .row-ico appears throughout the app. */
+  .row-ico{
+    width:30px;height:30px;border-radius:9px;flex-shrink:0;
+    background:linear-gradient(135deg, var(--green-mist) 0%, rgba(63,168,138,0.16) 100%);
+    display:inline-flex;align-items:center;justify-content:center;
+    transition:transform 0.15s cubic-bezier(0.34,1.56,0.64,1);
+  }
+  .more-list .list-row:active .row-ico{ transform:scale(0.88); }
+
+  /* ---------- List rows: a real, visible tap flash (background +
+     scale), plus a hover sweep for desktop. */
+  .more-list .list-row, .list-row[onclick], .list-row[data-recent-patient], .clinic-row{
+    transition:background 0.15s ease, transform 0.12s ease;
+  }
+  .more-list .list-row:active, .clinic-row:active{ background:var(--off-white); transform:scale(0.98); }
+  @media (hover:hover){ .more-list .list-row:hover, .clinic-row:hover{ background:var(--off-white); } }
+  .more-list .list-row .chev{ transition:transform 0.15s ease; color:var(--green); }
+  .more-list .list-row:active .chev{ transform:translateX(3px); }
+
+  /* ---------- Bottom nav: a pronounced spring bounce and a soft glow
+     pill behind the active icon so the current tab is unmistakable. */
+  nav.bottomnav .nav-item{ transition:color 0.2s ease; position:relative; }
+  nav.bottomnav .nav-item .ico{ transition:transform 0.25s cubic-bezier(0.34,1.56,0.64,1); position:relative; z-index:1; }
+  nav.bottomnav .nav-item.active .ico{ transform:scale(1.22) translateY(-1px); }
+  nav.bottomnav .nav-item.active .ico::before{
+    content:""; position:absolute; inset:-7px; border-radius:10px;
+    background:var(--green-mist); z-index:-1;
+  }
+  nav.bottomnav .nav-item:active .ico{ transform:scale(0.82); }
+
+  /* ---------- FAB: a real gradient + a breathing glow that's clearly
+     visible (not a 1-2% opacity shift), plus a strong press. */
+  @keyframes htdFabPulse{ 0%,100%{box-shadow:0 6px 18px rgba(14,111,92,0.42), 0 2px 6px rgba(14,111,92,0.3);} 50%{box-shadow:0 8px 26px rgba(14,111,92,0.6), 0 3px 10px rgba(14,111,92,0.4);} }
+  .fab{
+    background:linear-gradient(135deg, var(--green-light) 0%, var(--green) 70%);
+    transition:transform 0.2s cubic-bezier(0.34,1.56,0.64,1);
+    animation:htdFabPulse 2.6s ease-in-out infinite;
+  }
+  .fab:active{ transform:scale(0.85) rotate(90deg); animation:none; }
+  @media (hover:hover){ .fab:hover{ transform:scale(1.08); } }
+
+  /* ---------- Toast: a bolder rise + slight scale. */
+  .toast{ transition:opacity 0.3s ease, transform 0.3s cubic-bezier(0.16,1,0.3,1); transform:translate(-50%,14px) scale(0.95); box-shadow:0 6px 20px rgba(0,0,0,0.3); }
+  .toast.show{ transform:translate(-50%,0) scale(1); }
+
+  /* ---------- Notification bell: a clear pop + brief ring pulse. */
+  @keyframes htdBadgePop{ 0%{transform:scale(0.3);opacity:0;} 55%{transform:scale(1.3);opacity:1;} 75%{transform:scale(0.9);} 100%{transform:scale(1);opacity:1;} }
+  .notif-bell-badge{ animation:htdBadgePop 0.5s cubic-bezier(0.34,1.56,0.64,1); }
+
+  /* ---------- Empty states: a bolder, springier settle. */
+  @keyframes htdEmptyIconIn{ from{opacity:0;transform:scale(0.7) rotate(-8deg);} to{opacity:1;transform:scale(1) rotate(0);} }
+  .empty-card{ animation:htdCardIn 0.4s ease-out both; }
+  .empty-card svg, .empty-card [data-icon]{ animation:htdEmptyIconIn 0.5s cubic-bezier(0.34,1.56,0.64,1); display:inline-block; }
+
+  /* ---------- Tab/page transitions: bigger, clearly-visible fade+rise. */
+  @keyframes htdPageFadeIn{ from{opacity:0;transform:translateY(14px);} to{opacity:1;transform:translateY(0);} }
+  #main.htd-page-fade{ animation:htdPageFadeIn 0.3s cubic-bezier(0.16,1,0.3,1); }
+
+  /* ---------- Section titles: an actual visible accent tick (a small
+     gradient bar) to the left of every section heading throughout the
+     app, echoing the existing green without introducing a new color. */
+  .section-title{ position:relative; padding-left:12px; }
+  .section-title::before{
+    content:""; position:absolute; left:0; top:2px; bottom:2px; width:4px;
+    border-radius:3px; background:linear-gradient(180deg, var(--green-light), var(--green));
+  }
+
+  .tab, [data-ptab], [data-qopdtoggle], [data-billingsubtab]{ transition:background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease, transform 0.15s ease; }
+  [data-ptab]:active, [data-qopdtoggle]:active{ transform:scale(0.97); }
+
+  @keyframes htdPillIn{ from{transform:scale(0.85);opacity:0.5;} to{transform:scale(1);opacity:1;} }
+  .status-pill, .badge{ animation:htdPillIn 0.25s cubic-bezier(0.34,1.56,0.64,1); box-shadow:0 1px 3px rgba(20,23,26,0.12); }
+
+  .collection-ring{ animation:htdCardIn 0.5s cubic-bezier(0.16,1,0.3,1); filter:drop-shadow(0 3px 8px rgba(14,111,92,0.2)); }
+
+  @media (min-width:640px){
+    ::-webkit-scrollbar{ width:9px; height:9px; }
+    ::-webkit-scrollbar-track{ background:transparent; }
+    ::-webkit-scrollbar-thumb{ background:var(--grey-light); border-radius:8px; }
+    ::-webkit-scrollbar-thumb:hover{ background:var(--grey); }
+  }
+
+  @keyframes htdShimmer{ 0%{background-position:-200% 0;} 100%{background-position:200% 0;} }
+  .htd-skeleton{
+    background:linear-gradient(90deg, var(--off-white) 25%, var(--grey-light) 37%, var(--off-white) 63%);
+    background-size:400% 100%; animation:htdShimmer 1.4s ease infinite;
+    border-radius:6px; color:transparent !important;
+  }
+
+  /* ---------- Avatars: a richer double-ring + soft shadow so every
+     initials-avatar throughout the app (patient lists, profile header,
+     header logo) reads as a deliberately designed element. */
+  .avatar, .profile-avatar{
+    box-shadow:0 0 0 3px var(--white), 0 0 0 5px rgba(14,111,92,0.22), 0 3px 8px rgba(20,23,26,0.15);
+    transition:transform 0.2s cubic-bezier(0.34,1.56,0.64,1);
+  }
+  body.dark-mode .avatar, body.dark-mode .profile-avatar{ box-shadow:0 0 0 3px var(--white), 0 0 0 5px rgba(63,168,138,0.3), 0 3px 8px rgba(0,0,0,0.3); }
+
+  input:focus, select:focus, textarea:focus{
+    outline:none; box-shadow:0 0 0 4px rgba(14,111,92,0.16); border-color:var(--green) !important;
+    transition:box-shadow 0.15s ease;
+  }
+
+  /* ---------- App header: a very soft gradient wash (built only from
+     existing charcoal tones already used for the header background)
+     for a touch more depth than a completely flat bar. */
+  header{ background-image:linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(0,0,0,0.05) 100%); }
+
+  /* ---------- Header logo: a slow, subtle sheen sweep for a premium
+     touch, entirely within the existing white/green palette. */
+  @keyframes htdLogoSheen{ 0%{filter:drop-shadow(0 0 0 rgba(63,168,138,0));} 50%{filter:drop-shadow(0 0 6px rgba(63,168,138,0.5));} 100%{filter:drop-shadow(0 0 0 rgba(63,168,138,0));} }
+  .app-logo, header img{ animation:htdLogoSheen 4s ease-in-out infinite; }
 </style>
 <script type="module">
   import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
@@ -1911,6 +2112,16 @@ function goTo(page){
   PAGE_RENDERERS[page]();
   document.getElementById("main").scrollTop = 0;
   refreshSidebarSummary();
+  // Purely cosmetic: a soft fade/rise as the tab's content appears,
+  // instead of an instant swap. Restarting the CSS animation by
+  // removing then re-adding the class (with a forced reflow in
+  // between) is the standard way to replay it on every tab switch -
+  // this changes nothing about what PAGE_RENDERERS[page]() rendered
+  // or when.
+  const mainEl = document.getElementById("main");
+  mainEl.classList.remove("htd-page-fade");
+  void mainEl.offsetWidth;
+  mainEl.classList.add("htd-page-fade");
 }
 
 async function getTodaySummaryForSidebar(){
@@ -2042,6 +2253,35 @@ function wireBiannualFollowUpActions(candidates){
   });
 }
 
+// Purely cosmetic: animates each ".num" inside a container counting up
+// from 0 to whatever value is already in its text (e.g. "42" or
+// "₹8,515"), instead of the number just appearing instantly. Does not
+// change what value is shown at rest - only how it arrives. If a
+// number's text can't be parsed for any reason, it's left completely
+// untouched, so this can never show something incorrect.
+function animateStatNumbers(container){
+  if(!container) return;
+  container.querySelectorAll(".num").forEach(el=>{
+    const finalText = el.textContent;
+    const match = finalText.match(/^([^\d]*)([\d,]+)$/);
+    if(!match) return; // not a plain (optionally prefixed) integer - leave as-is
+    const prefix = match[1];
+    const target = parseInt(match[2].replace(/,/g,""), 10);
+    if(!Number.isFinite(target) || target<=0){ return; } // nothing to animate for 0/invalid
+    const duration = 600;
+    const start = performance.now();
+    function frame(now){
+      const t = Math.min(1, (now-start)/duration);
+      const eased = 1 - Math.pow(1-t, 3); // ease-out cubic
+      const current = Math.round(target*eased);
+      el.textContent = prefix + current.toLocaleString();
+      if(t<1) requestAnimationFrame(frame);
+      else el.textContent = finalText; // land exactly on the original, formatted text
+    }
+    requestAnimationFrame(frame);
+  });
+}
+
 async function renderHome(){
   const main = document.getElementById("main");
   const settings = (await dbGetAll("settings"))[0] || {};
@@ -2122,6 +2362,7 @@ async function renderHome(){
   statGrid.querySelectorAll("[data-stat]").forEach(el=>{
     el.onclick = ()=> openStatDetailSheet(el.dataset.stat);
   });
+  animateStatNumbers(statGrid);
 
   const todayList = document.getElementById("todayList");
   if(counts.todayAppts.length===0){
@@ -5532,10 +5773,21 @@ function sendAppointmentWhatsApp(appt, patient){
   if(!message) return;
   const number = patient && (patient.whatsappNumber||patient.mobile);
   const titleMap = {Cancelled:"Cancellation Notice", Rescheduled:"Reschedule Notice", NoShow:"Missed Appointment"};
+  // Only "Rescheduled" has an approved Interakt template so far
+  // (appointment_rescheduled, body: {{1}}=Name, {{2}}=Date, {{3}}=Time) -
+  // the other statuses keep sending as free text for now, exactly as
+  // before, until their own templates are approved and given to me.
+  const isRescheduled = appt.status==="Rescheduled";
+  const dateStr = appt.date ? fromDateKey(appt.date).toLocaleDateString(undefined,{weekday:'long', day:'numeric', month:'long'}) : "";
+  const timeStr = formatTime(appt.startTime);
   openWhatsAppComposer({
     toName: appt.patientName, toNumber: number, patientId: appt.patientId,
     title: titleMap[appt.status] || "Appointment Confirmation",
-    message
+    message,
+    ...(isRescheduled ? {
+      templateName: "appointment_rescheduled",
+      templateParams: [appt.patientName||"", dateStr, timeStr]
+    } : {})
   });
 }
 
@@ -8761,7 +9013,8 @@ function openWhatsAppComposer(opts){
     btn.disabled = true;
     const result = await CommunicationService.send("sendText", {
       toName: opts.toName, toNumber: opts.toNumber, message: msg,
-      patientId: opts.patientId||null, recipientType: opts.recipientType, templateName: opts.templateName||null
+      patientId: opts.patientId||null, recipientType: opts.recipientType,
+      templateName: opts.templateName||null, templateParams: opts.templateParams||null
     });
     if(!result.success){
       btn.disabled = false;
