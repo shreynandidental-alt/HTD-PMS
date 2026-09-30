@@ -4348,60 +4348,118 @@ function calSlotRowHtml(dateKey, s){
   return `<div class="cal-slot-row ${s.m===0?'hour-line':''}" data-date="${dateKey}" data-time="${calSlotTimeStr(s.h,s.m)}" style="height:${CAL_SLOT_PX}px;"></div>`;
 }
 let calApptJustDragged = false;
+// Small helper shared by the slot-row and appointment-block handlers below:
+// a "tap" on touch is only genuine if the finger didn't travel far and
+// didn't take unusually long - this is what a scroll-vs-tap check needs to
+// look at, rather than trusting the browser's native post-scroll click
+// synthesis, which is what was causing a scroll to be mistaken for a tap
+// on whatever slot happened to be under the finger when it lifted.
+const CAL_TAP_MOVE_TOLERANCE = 9; // px
+const CAL_TAP_MAX_MS = 600;
+const CAL_LONGPRESS_MS = 420; // touch/pen hold-to-drag threshold
+
 function wireCalGridActions(root){
+  const isTouchCapable = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
+
+  // ---------- Empty slot rows: tap to book/reserve ----------
   root.querySelectorAll(".cal-slot-row").forEach(el=>{
-    el.onclick = ()=> openSlotChoiceSheet(el.dataset.date, el.dataset.time);
+    if(!isTouchCapable){
+      // Mouse: a plain click is unambiguous, no scroll-gesture risk.
+      el.onclick = ()=> openSlotChoiceSheet(el.dataset.date, el.dataset.time);
+      return;
+    }
+    let downX=0, downY=0, downT=0, moved=false;
+    el.addEventListener("pointerdown", (ev)=>{
+      if(ev.pointerType==="mouse") return; // mouse already handled above
+      downX=ev.clientX; downY=ev.clientY; downT=Date.now(); moved=false;
+    }, {passive:true});
+    el.addEventListener("pointermove", (ev)=>{
+      if(ev.pointerType==="mouse") return;
+      if(Math.abs(ev.clientX-downX)>CAL_TAP_MOVE_TOLERANCE || Math.abs(ev.clientY-downY)>CAL_TAP_MOVE_TOLERANCE) moved=true;
+    }, {passive:true});
+    el.addEventListener("pointerup", (ev)=>{
+      if(ev.pointerType==="mouse") return;
+      const elapsed = Date.now()-downT;
+      if(!moved && elapsed<CAL_TAP_MAX_MS){
+        openSlotChoiceSheet(el.dataset.date, el.dataset.time);
+      }
+      // If it moved beyond the tolerance, this was a scroll - do nothing,
+      // and critically we never called preventDefault anywhere in this
+      // sequence, so the page scrolled normally the whole time.
+    }, {passive:true});
   });
-  root.querySelectorAll(".cal-appt-block").forEach(el=>{
-    el.onclick = (ev)=>{
-      ev.stopPropagation();
-      if(calApptJustDragged){ calApptJustDragged = false; return; }
-      if(el.dataset.status==="Reserved") openReserveSlotForm(el.dataset.appt);
-      else openAppointmentForm(el.dataset.appt);
-    };
-  });
+
   root.querySelectorAll("[data-jump]").forEach(el=>{
     el.onclick = ()=>{ apptSelectedDate = fromDateKey(el.dataset.jump); apptView="Day"; renderAppointments(); };
   });
-  const isTouchDevice = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
+
+  // ---------- Appointment blocks: hover-preview (mouse) or
+  // tap-to-edit / long-press-to-drag (touch/pen) ----------
   root.querySelectorAll(".cal-appt-block[data-appt]").forEach(el=>{
     const id = el.dataset.appt;
-    if(!isTouchDevice){
+    if(!isTouchCapable){
+      // Unchanged desktop behavior: hover previews, click edits.
       el.addEventListener("mouseenter", ()=> showApptHoverCard(id, el));
       el.addEventListener("mouseleave", hideApptHoverCard);
-    }else{
-      el.addEventListener("touchstart", (ev)=>{
-        const card = ensureApptHoverCard();
-        const alreadyShowingThis = card.classList.contains("show") && card.dataset.forId===id;
-        if(!alreadyShowingThis){
-          ev.preventDefault();
-          ev.stopPropagation();
-          showApptHoverCard(id, el);
-        }
-      }, {passive:false});
+      el.addEventListener("click", (ev)=>{
+        ev.stopPropagation();
+        if(calApptJustDragged){ calApptJustDragged = false; return; }
+        if(el.dataset.status==="Reserved") openReserveSlotForm(id);
+        else openAppointmentForm(id);
+      });
     }
+    // Touch/pen tap-to-edit and long-press-to-drag are wired together
+    // with the reschedule drag logic in wireApptDragReschedule(), since
+    // both need to watch the same pointer sequence to tell a tap, a
+    // scroll, and a deliberate hold-and-drag apart.
   });
 }
 function wireApptDragReschedule(root){
   let dragging = false, ghost = null, apptId = null, startX = 0, startY = 0, origBlock = null;
+  let longPressTimer = null, longPressArmed = false, cancelledAsScroll = false, pointerIsTouch = false;
+
+  let lockedScrollEl = null;
+  function startGhost(){
+    dragging = true;
+    ghost = origBlock.cloneNode(true);
+    ghost.classList.add("cal-appt-drag-ghost");
+    const rect = origBlock.getBoundingClientRect();
+    ghost.style.width = rect.width+"px";
+    ghost.style.position = "fixed";
+    ghost.style.zIndex = "9999";
+    ghost.style.pointerEvents = "none";
+    ghost.style.opacity = "0.88";
+    ghost.style.left = rect.left+"px";
+    ghost.style.top = rect.top+"px";
+    document.body.appendChild(ghost);
+    origBlock.classList.add("dragging");
+    if(navigator.vibrate) navigator.vibrate(12); // small confirming buzz that the drag has "picked up"
+    // Only now - once a deliberate hold-and-drag is confirmed - stop the
+    // grid from also trying to scroll under the finger. Never set before
+    // this point, so ordinary scrolling is completely untouched.
+    lockedScrollEl = root.querySelector(".cal-grid-scroll") || root;
+    if(lockedScrollEl) lockedScrollEl.style.touchAction = "none";
+  }
 
   function onMove(mv){
-    if(!dragging && (Math.abs(mv.clientX-startX)>6 || Math.abs(mv.clientY-startY)>6)){
-      dragging = true;
-      ghost = origBlock.cloneNode(true);
-      ghost.classList.add("cal-appt-drag-ghost");
-      const rect = origBlock.getBoundingClientRect();
-      ghost.style.width = rect.width+"px";
-      ghost.style.position = "fixed";
-      ghost.style.zIndex = "9999";
-      ghost.style.pointerEvents = "none";
-      ghost.style.opacity = "0.88";
-      ghost.style.left = rect.left+"px";
-      ghost.style.top = rect.top+"px";
-      document.body.appendChild(ghost);
-      origBlock.classList.add("dragging");
+    if(pointerIsTouch && !dragging){
+      // Before a long-press is confirmed, any real movement means the
+      // finger is scrolling, not trying to pick the appointment up -
+      // bail out completely and let the browser's native scroll carry
+      // on exactly as if this listener didn't exist (preventDefault is
+      // never called anywhere in this branch).
+      if(Math.abs(mv.clientX-startX)>CAL_TAP_MOVE_TOLERANCE || Math.abs(mv.clientY-startY)>CAL_TAP_MOVE_TOLERANCE){
+        cancelledAsScroll = true;
+        if(longPressTimer){ clearTimeout(longPressTimer); longPressTimer=null; }
+      }
+      return;
+    }
+    if(!pointerIsTouch && !dragging && (Math.abs(mv.clientX-startX)>6 || Math.abs(mv.clientY-startY)>6)){
+      // Mouse: unchanged - a small deliberate drag starts immediately.
+      startGhost();
     }
     if(dragging && ghost){
+      mv.preventDefault && mv.preventDefault();
       ghost.style.left = (mv.clientX - 24)+"px";
       ghost.style.top = (mv.clientY - 12)+"px";
       root.querySelectorAll(".cal-slot-row").forEach(row=>{
@@ -4415,7 +4473,10 @@ function wireApptDragReschedule(root){
   async function onUp(uv){
     document.removeEventListener("pointermove", onMove);
     document.removeEventListener("pointerup", onUp);
+    document.removeEventListener("pointercancel", onUp);
+    if(longPressTimer){ clearTimeout(longPressTimer); longPressTimer=null; }
     const wasDragging = dragging;
+    const wasTouchTap = pointerIsTouch && !dragging && !cancelledAsScroll;
     let targetRow = null;
     if(dragging){
       root.querySelectorAll(".cal-slot-row").forEach(row=>{
@@ -4426,11 +4487,12 @@ function wireApptDragReschedule(root){
       if(ghost){ ghost.remove(); ghost = null; }
       if(origBlock) origBlock.classList.remove("dragging");
     }
-    const draggedApptId = apptId;
-    dragging = false; apptId = null; origBlock = null;
+    if(lockedScrollEl){ lockedScrollEl.style.touchAction = ""; lockedScrollEl = null; }
+    const draggedApptId = apptId, tappedEl = origBlock;
+    dragging = false; apptId = null; origBlock = null; longPressArmed = false;
 
     if(wasDragging){
-      calApptJustDragged = true; // suppress the click that follows this drag sequence
+      calApptJustDragged = true; // suppress the click that follows this drag sequence (mouse path)
       if(targetRow){
         const newDate = targetRow.dataset.date;
         const newTime = targetRow.dataset.time;
@@ -4447,6 +4509,12 @@ function wireApptDragReschedule(root){
         }
       }
       renderApptBody();
+    }else if(wasTouchTap && tappedEl){
+      // A clean touch tap that never moved and never triggered the
+      // long-press - go straight to editing, same destination as a
+      // desktop click, with no intermediate card in the way.
+      if(tappedEl.dataset.status==="Reserved") openReserveSlotForm(draggedApptId);
+      else openAppointmentForm(draggedApptId);
     }
   }
 
@@ -4455,11 +4523,23 @@ function wireApptDragReschedule(root){
     el.addEventListener("pointerdown", (ev)=>{
       if(ev.pointerType==="mouse" && ev.button!==0) return;
       dragging = false;
+      cancelledAsScroll = false;
+      pointerIsTouch = (ev.pointerType==="touch" || ev.pointerType==="pen");
       apptId = el.dataset.appt;
       origBlock = el;
       startX = ev.clientX; startY = ev.clientY;
       document.addEventListener("pointermove", onMove);
       document.addEventListener("pointerup", onUp);
+      document.addEventListener("pointercancel", onUp);
+      if(pointerIsTouch){
+        longPressArmed = true;
+        longPressTimer = setTimeout(()=>{
+          longPressTimer = null;
+          if(longPressArmed && !cancelledAsScroll && origBlock===el){
+            startGhost();
+          }
+        }, CAL_LONGPRESS_MS);
+      }
     });
   });
 }
