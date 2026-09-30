@@ -146,6 +146,23 @@
   .appt-hover-card .ahc-item:last-child{margin-bottom:0;}
   .appt-hover-card .ahc-k{font-size:10px;font-weight:700;color:var(--grey);text-transform:uppercase;letter-spacing:0.3px;}
   .appt-hover-card .ahc-v{font-size:13px;color:var(--charcoal-2);}
+  /* Touch preview (single tap on an appointment): a fixed panel above
+     the bottom nav instead of positioned beside the tapped cell - this
+     guarantees it never sits on top of the appointment that was
+     tapped, which a narrow calendar column can't reliably avoid with
+     anchored left/right positioning. */
+  .appt-hover-card.mobile-sheet{
+    left:10px !important; right:10px !important; width:auto;
+    max-height:60vh; overflow-y:auto;
+    border-radius:14px; box-shadow:0 -4px 24px rgba(20,23,26,0.22), 0 8px 28px rgba(20,23,26,0.18);
+  }
+  .appt-hover-card.mobile-sheet.anchor-bottom{
+    bottom:calc(70px + env(safe-area-inset-bottom, 0px)) !important; top:auto !important;
+  }
+  .appt-hover-card.mobile-sheet.anchor-top{
+    top:calc(64px + env(safe-area-inset-top, 0px)) !important; bottom:auto !important;
+  }
+  .appt-hover-card.mobile-sheet.show{ animation:htdSheetSlideUp 0.22s cubic-bezier(0.16,1,0.3,1); }
   #btnStickyToggle.sticky-has-note{color:#FF6B5D;}
   #btnStickyToggle.sticky-empty{color:#3FA88A;}
   #btnStickyToggle.sticky-open{transform:rotate(180deg);}
@@ -916,7 +933,7 @@
   .cal-hscroll{overflow-x:auto;-webkit-overflow-scrolling:touch;}
   .cal-header-row{display:flex;position:sticky;top:0;background:var(--white);z-index:4;}
   .cal-header-spacer{width:48px;flex-shrink:0;}
-  .cal-day-header{width:92px;flex-shrink:0;text-align:center;font-size:11px;font-weight:700;color:var(--charcoal-2);padding:6px 2px;border-left:1px solid var(--off-white);}
+  .cal-day-header{width:152px;flex-shrink:0;text-align:center;font-size:11px;font-weight:700;color:var(--charcoal-2);padding:6px 2px;border-left:1px solid var(--off-white);}
   .cal-day-header.today{color:var(--green);background:var(--green-mist);font-weight:800;border-radius:6px 6px 0 0;}
   .cal-day-col.today-col{background:rgba(63,168,138,0.06);}
   .cal-day-header.wide{width:100%;}
@@ -925,10 +942,10 @@
   .cal-grid{display:flex;position:relative;}
   .cal-time-col{width:48px;flex-shrink:0;}
   .cal-time-slot{font-size:10px;color:var(--grey);text-align:right;padding-right:6px;box-sizing:border-box;transform:translateY(-6px);border-bottom:1px solid var(--off-white);}
-  .cal-day-col{width:92px;flex-shrink:0;position:relative;border-left:1px solid var(--grey-light);}
+  .cal-day-col{width:152px;flex-shrink:0;position:relative;border-left:1px solid var(--grey-light);}
   .cal-day-col.wide{width:100%;flex:1 1 auto;}
   /* On desktop-width screens, the week view's 7 day columns otherwise stay
-     pinned to their mobile width (92px each, ~700px total) leaving a large
+     pinned to their mobile width (152px each, ~1100px total) leaving a large
      empty gap next to the sidebar — this lets them share the full available
      width instead. The time-label column stays fixed since it's just labels. */
   @media (min-width:900px){
@@ -2733,7 +2750,7 @@ function ensureApptHoverCard(){
   apptHoverCardEl = el;
   return el;
 }
-async function showApptHoverCard(apptId, anchorEl){
+async function showApptHoverCard(apptId, anchorEl, opts){
   const [appts, patients, clinics] = await Promise.all([dbGetAll("appointments"), dbGetAll("patients"), dbGetAll("clinics")]);
   const a = appts.find(x=>x.id===apptId);
   if(!a) return;
@@ -2757,10 +2774,30 @@ async function showApptHoverCard(apptId, anchorEl){
       openPatientProfile(a.patientId);
     };
   }
-  positionApptHoverCard(card, anchorEl);
+  positionApptHoverCard(card, anchorEl, opts);
   card.classList.add("show");
 }
-function positionApptHoverCard(card, anchorEl){
+function positionApptHoverCard(card, anchorEl, opts){
+  if(opts && opts.mobile){
+    // Touch preview: rather than trying to squeeze a card beside a
+    // ~150px-wide calendar column (where there's rarely room on either
+    // side without covering the tapped appointment, or a neighboring
+    // one), anchor it as a fixed panel at the top or bottom of the
+    // screen - whichever side the tapped block is NOT on, so the card
+    // can never land on top of it regardless of where in the grid it
+    // was tapped.
+    card.classList.add("mobile-sheet");
+    const rect = anchorEl.getBoundingClientRect();
+    const tappedInLowerHalf = (rect.top + rect.height/2) > (window.innerHeight/2);
+    card.classList.toggle("anchor-top", tappedInLowerHalf);
+    card.classList.toggle("anchor-bottom", !tappedInLowerHalf);
+    card.style.left = "";
+    card.style.top = "";
+    card.style.right = "";
+    card.style.bottom = "";
+    return;
+  }
+  card.classList.remove("mobile-sheet");
   const rect = anchorEl.getBoundingClientRect();
   const cardWidth = 230;
   const approxHeight = 200;
@@ -4357,6 +4394,7 @@ let calApptJustDragged = false;
 const CAL_TAP_MOVE_TOLERANCE = 9; // px
 const CAL_TAP_MAX_MS = 600;
 const CAL_LONGPRESS_MS = 420; // touch/pen hold-to-drag threshold
+const CAL_DOUBLE_TAP_MS = 320; // window to detect a second tap on the same appointment
 
 function wireCalGridActions(root){
   const isTouchCapable = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
@@ -4510,12 +4548,31 @@ function wireApptDragReschedule(root){
       }
       renderApptBody();
     }else if(wasTouchTap && tappedEl){
-      // A clean touch tap that never moved and never triggered the
-      // long-press - go straight to editing, same destination as a
-      // desktop click, with no intermediate card in the way.
-      if(tappedEl.dataset.status==="Reserved") openReserveSlotForm(draggedApptId);
-      else openAppointmentForm(draggedApptId);
+      handleApptTouchTap(draggedApptId, tappedEl);
     }
+  }
+
+  // A clean tap (no scroll, no long-press) waits briefly to see if a
+  // second tap lands on the same appointment: if it does within the
+  // window, that's a double-tap and opens editing directly; if the
+  // window elapses with no second tap, it was a single tap and shows
+  // the preview card instead. This mirrors standard double-tap
+  // patterns so a normal single tap never accidentally edits.
+  let lastTapApptId = null, lastTapTime = 0, pendingSingleTapTimer = null;
+  function handleApptTouchTap(id, el){
+    const now = Date.now();
+    if(pendingSingleTapTimer){ clearTimeout(pendingSingleTapTimer); pendingSingleTapTimer = null; }
+    if(lastTapApptId===id && (now-lastTapTime)<CAL_DOUBLE_TAP_MS){
+      lastTapApptId = null; lastTapTime = 0;
+      if(el.dataset.status==="Reserved") openReserveSlotForm(id);
+      else openAppointmentForm(id);
+      return;
+    }
+    lastTapApptId = id; lastTapTime = now;
+    pendingSingleTapTimer = setTimeout(()=>{
+      pendingSingleTapTimer = null;
+      showApptHoverCard(id, el, {mobile:true});
+    }, CAL_DOUBLE_TAP_MS);
   }
 
   root.querySelectorAll(".cal-appt-block[data-appt]").forEach(el=>{
