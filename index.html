@@ -516,10 +516,30 @@
   .appt-live-clock .alc-date{font-size:13px;font-weight:600;color:var(--grey-light);}
   .appt-live-clock .alc-time{font-size:18px;font-weight:700;color:var(--green-light);font-variant-numeric:tabular-nums;letter-spacing:0.5px;}
   .appt-toolbar-row{display:flex;gap:8px;align-items:center;overflow-x:auto;margin-bottom:14px;padding-bottom:4px;-webkit-overflow-scrolling:touch;}
+  /* On mobile, let the filters and Direct Check-in wrap onto their own
+     row instead of requiring a horizontal scroll to discover them - the
+     view-mode tabs (Day/Week/Month) stay full-width on their own first
+     line since they're the most important control, with everything else
+     flowing naturally below. */
+  @media (max-width:899px){
+    .appt-toolbar-row{flex-wrap:wrap;overflow-x:visible;}
+    .appt-toolbar-row #apptViewTabs{width:100%;}
+    .appt-toolbar-row .appt-toolbar-select{flex:1 1 auto;min-width:0;}
+    .appt-toolbar-row #btnDirectCheckIn{flex:1 1 100%;}
+  }
   .appt-toolbar-row::-webkit-scrollbar{height:4px;}
   .appt-toolbar-row .view-tabs{display:flex;gap:6px;}
   .appt-toolbar-select{flex-shrink:0;width:auto;max-width:120px;padding:8px 10px;border-radius:8px;border:1px solid var(--grey-light);font-size:12px;background:var(--white);color:var(--charcoal-2);}
   .date-nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;}
+  .cal-day-strip{display:flex;gap:4px;margin-bottom:14px;}
+  .cal-day-strip-item{flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 2px;border-radius:10px;background:var(--white);box-shadow:var(--shadow);border:1.5px solid transparent;cursor:pointer;}
+  .cal-day-strip-item.is-today{border-color:var(--green-mist);}
+  .cal-day-strip-item.selected{background:var(--charcoal);border-color:var(--charcoal);}
+  .cal-day-strip-item.selected .dsi-dow, .cal-day-strip-item.selected .dsi-num{color:var(--white);}
+  .dsi-dow{font-size:10px;font-weight:600;color:var(--grey);text-transform:uppercase;}
+  .dsi-num{font-size:15px;font-weight:700;color:var(--charcoal);}
+  .dsi-dot{width:5px;height:5px;border-radius:50%;}
+  @media (min-width:900px){ .cal-day-strip{display:none;} }
   .date-nav .cur-date{font-weight:700;font-size:14.5px;}
   .date-nav button{background:var(--white);border:1px solid var(--grey-light);width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;cursor:pointer;}
 
@@ -959,10 +979,33 @@
   .cal-grid{border-top:1px solid var(--grey-light);}
   .cal-appt-block{position:absolute;left:2px;right:2px;background:var(--green-mist);border-left:3px solid var(--green);border-radius:5px;padding:2px 5px;font-size:10px;line-height:1.25;overflow:hidden;cursor:pointer;z-index:2;box-shadow:0 0 0 1px rgba(255,255,255,0.9), 0 1px 3px rgba(0,0,0,0.12);}
   .cal-appt-block b{display:block;font-size:10.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-  .cal-appt-block span{color:var(--charcoal-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;}
+  .cal-appt-block span:not(.status-pill){color:var(--charcoal-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;}
   .cal-appt-block.reserved{background:repeating-linear-gradient(45deg,var(--off-white),var(--off-white) 5px,var(--grey-light) 5px,var(--grey-light) 10px);border-left-color:var(--grey);}
   .cal-appt-block.cancelled{opacity:0.55;background:var(--grey-light);}
   .cal-appt-block.cancelled b,.cal-appt-block.cancelled span{text-decoration:line-through;}
+  .cab-mobile-head{display:none;}
+
+  /* Mobile Day view only (.wide marks Day view specifically - Week
+     view's plain .cal-day-col keeps its existing compact grid untouched,
+     and this entire block is gated under 899px so desktop is completely
+     unaffected either way). The underlying position/top/height values
+     stay exactly as computed in JS for drag-to-reschedule's slot
+     hit-testing - only appearance changes here. */
+  @media (max-width:899px){
+    .cal-day-col.wide .cal-appt-block{
+      padding:8px 10px;border-radius:12px;font-size:12.5px;
+      background:var(--white);border-left-width:4px;
+      box-shadow:0 1px 3px rgba(20,23,26,0.08), 0 4px 10px rgba(20,23,26,0.07);
+    }
+    .cal-day-col.wide .cal-appt-block .cab-mobile-head{
+      display:flex;align-items:center;justify-content:space-between;margin-bottom:3px;
+    }
+    .cal-day-col.wide .cal-appt-block .cab-type-icon{color:var(--grey);flex-shrink:0;}
+    .cal-day-col.wide .cal-appt-block b{font-size:14px;}
+    .cal-day-col.wide .cal-appt-block span{font-size:12px;}
+    .cal-day-col.wide .cal-appt-block.reserved{background:var(--off-white);}
+    .cal-day-col.wide .cal-appt-block.cancelled{opacity:0.7;background:var(--off-white);}
+  }
 
   .patient-picker-result{padding:9px 10px;border-radius:8px;cursor:pointer;font-size:13px;border:1px solid var(--grey-light);margin-bottom:6px;}
   .patient-picker-result:hover{background:var(--off-white);}
@@ -4279,7 +4322,7 @@ const CAL_WEEKDAY_KEYS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 function weekdayKeyForDate(date){ return CAL_WEEKDAY_KEYS[date.getDay()]; }
 function parseTimeToHour(str){ const parts=(str||"09:00").split(":"); return (parseInt(parts[0])||0) + ((parseInt(parts[1])||0)/60); }
 let CAL_SLOT_PX = 40;
-function computeCalSlotPx(){
+function computeCalSlotPx(isDayView){
   const totalSlots = ((CAL_END_HOUR-CAL_START_HOUR)*60)/CAL_SLOT_MIN;
   if(window.innerWidth >= 900){
     // Desktop: size rows so the whole day fits on screen without an inner scrollbar.
@@ -4287,7 +4330,11 @@ function computeCalSlotPx(){
     const available = window.innerHeight - reserved;
     if(available > 320) return Math.max(Math.floor(available/totalSlots), 30);
   }
-  return 40;
+  // Mobile Day view's redesigned cards (status pill + icon header, larger
+  // type) need more room per slot than the old compact block did - Week
+  // view keeps the tighter 40px since 7 columns still need to fit side by
+  // side on the same narrow screen.
+  return isDayView ? 78 : 40;
 }
 function calSlots(){
   const slots = [];
@@ -4300,6 +4347,21 @@ function calMinutesFromStart(timeStr){
   const parts = timeStr.split(":");
   const h = parseInt(parts[0])||0, m = parseInt(parts[1])||0;
   return (h-CAL_START_HOUR)*60 + m;
+}
+// Small icon per appointment, shown in the mobile card redesign's header
+// row (hidden on desktop, where the compact grid block has no room for
+// one). Purely decorative/informational - matched by loose keyword
+// checks against the treatment type text, same pattern already used
+// elsewhere in this file for the tooth-chart auto-sync.
+function apptTypeIcon(a){
+  if(a.status==="Reserved") return "bell";
+  const t = (a.treatmentType||"").toLowerCase();
+  if(/child|pediatric|bubbles/.test(t)) return "child";
+  if(/crown/.test(t)) return "crown";
+  if(/brace|aligner/.test(t)) return "braces";
+  if(/implant/.test(t)) return "screw";
+  if(/consult/.test(t)) return "file";
+  return "tooth";
 }
 function apptBlockColor(status){
   const map = { Scheduled:"var(--grey)", Confirmed:"var(--green)", Arrived:"#B8863B", InChair:"var(--green)",
@@ -4374,7 +4436,12 @@ function calApptBlockHtml(a, doctors, layout){
   const horizStyle = pos.totalCols>1
     ? `left:calc(${leftPct}% + 2px);width:calc(${widthPct}% - 4px);right:auto;`
     : `left:2px;right:2px;`;
+  const statusLabel = {InChair:"In Chair", NoShow:"No-Show"}[a.status] || a.status;
   return `<div class="cal-appt-block ${isReserved?'reserved':''} ${isCancelled?'cancelled':''}" data-appt="${a.id}" data-status="${a.status}" style="top:${top}px;height:${height}px;${horizStyle}border-left-color:${color};">
+    <div class="cab-mobile-head">
+      <span class="status-pill st-${a.status}">${escapeHtml(statusLabel)}</span>
+      <span class="cab-type-icon">${icon(apptTypeIcon(a),15)}</span>
+    </div>
     <b>${doctorColor? `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${doctorColor};margin-right:4px;flex-shrink:0;"></span>`:""}${isReserved? formatTime(a.startTime)+" Reserved" : formatTime(a.startTime)+" "+escapeHtml(a.patientName||"Unknown")}</b>
     <span>${isReserved? escapeHtml((a.patientName&&a.patientName!=="Reserved")? a.patientName : (a.notes||"Held")) : escapeHtml(a.treatmentType||"General")}${isCancelled?' · Cancelled':''}${a.doctor? ' · Dr. '+escapeHtml(a.doctor):''}</span>
   </div>`;
@@ -4740,6 +4807,42 @@ function buildQueueBoardHtml(todaysAppts){
   `;
 }
 
+// Mobile-only 7-day mini picker shown above the Day view (hidden on
+// desktop via CSS - renderDayView always builds it, same as every other
+// device-conditional piece in this app, so there's one HTML structure
+// and CSS alone decides what's visible). Each day gets a small colored
+// dot summarizing that day's appointments at a glance: red if anything's
+// cancelled or missed, amber if a patient is currently arrived/in chair,
+// green if there's at least one appointment, nothing if the day is empty.
+async function dayStripHtml(selectedDate){
+  const weekStart = new Date(selectedDate);
+  weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+  const days = Array.from({length:7}, (_,i)=>{ const d = new Date(weekStart); d.setDate(d.getDate()+i); return d; });
+  const startKey = toDateKey(days[0]), endKey = toDateKey(days[6]);
+  let weekAppts = (await dbGetAll("appointments")).filter(a=> a.date>=startKey && a.date<=endKey);
+  if(selectedClinicId!=="ALL") weekAppts = weekAppts.filter(a=>a.clinicId===selectedClinicId);
+  if(apptDoctorFilter!=="ALL") weekAppts = weekAppts.filter(a=>a.doctor===apptDoctorFilter);
+  const byDate = {};
+  weekAppts.forEach(a=>{ (byDate[a.date] = byDate[a.date]||[]).push(a); });
+  const selectedKey = toDateKey(selectedDate);
+  const todayKey = toDateKey(new Date());
+  return `<div class="cal-day-strip">
+    ${days.map(d=>{
+      const key = toDateKey(d);
+      const dayAppts = byDate[key]||[];
+      let dot = "";
+      if(dayAppts.some(a=>a.status==="Cancelled"||a.status==="NoShow")) dot = "var(--red)";
+      else if(dayAppts.some(a=>a.status==="Arrived"||a.status==="InChair")) dot = "#B8863B";
+      else if(dayAppts.length) dot = "var(--green)";
+      return `<button class="cal-day-strip-item ${key===selectedKey?'selected':''} ${key===todayKey?'is-today':''}" data-stripdate="${key}">
+        <span class="dsi-dow">${d.toLocaleDateString(undefined,{weekday:'short'})}</span>
+        <span class="dsi-num">${d.getDate()}</span>
+        <span class="dsi-dot" style="background:${dot||'transparent'};"></span>
+      </button>`;
+    }).join("")}
+  </div>`;
+}
+
 async function renderDayView(body){
   const dateKey = toDateKey(apptSelectedDate);
   let appts = (await dbGetAll("appointments")).filter(a=>a.date===dateKey);
@@ -4767,10 +4870,11 @@ async function renderDayView(body){
       }
     }
   }
-  CAL_SLOT_PX = computeCalSlotPx();
+  CAL_SLOT_PX = computeCalSlotPx(true);
 
   const isToday = toDateKey(new Date())===dateKey;
   const queueHtml = isToday ? buildQueueBoardHtml(appts) : "";
+  const stripHtml = await dayStripHtml(apptSelectedDate);
 
   body.innerHTML = `
     <div class="date-nav">
@@ -4778,6 +4882,7 @@ async function renderDayView(body){
       <div class="cur-date" id="dnToday" style="cursor:pointer;">${apptSelectedDate.toLocaleDateString(undefined,{weekday:'short', day:'numeric', month:'short', year:'numeric'})}${isToday?' · Today':''}</div>
       <button id="dnNext" style="transform:rotate(180deg);">${icon('back',16)}</button>
     </div>
+    ${stripHtml}
     ${queueHtml}
     <div class="section-title">Appointments</div>
     ${dayClosed? `<div class="empty-card"><b>${escapeHtml(closedClinicName)} is closed on ${weekdayKeyForDate(apptSelectedDate)}s</b>No time slots to show — pick another day or a different clinic.</div>` : `
@@ -4801,6 +4906,9 @@ async function renderDayView(body){
   document.getElementById("dnPrev").onclick = ()=>{ apptSelectedDate.setDate(apptSelectedDate.getDate()-1); renderApptBody(); };
   document.getElementById("dnNext").onclick = ()=>{ apptSelectedDate.setDate(apptSelectedDate.getDate()+1); renderApptBody(); };
   document.getElementById("dnToday").onclick = ()=>{ apptSelectedDate = new Date(); renderApptBody(); };
+  body.querySelectorAll("[data-stripdate]").forEach(el=>{
+    el.onclick = ()=>{ apptSelectedDate = fromDateKey(el.dataset.stripdate); renderApptBody(); };
+  });
   wireCalGridActions(body);
   wireApptDragReschedule(body);
   if(isToday) wireQueueDragDrop(body);
