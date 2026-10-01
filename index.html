@@ -2258,7 +2258,8 @@ function wireBiannualFollowUpActions(candidates){
       }else if(action==="remind"){
         openWhatsAppComposer({
           toName: c.patient.name, toNumber: c.patient.mobile, patientId: c.patient.id, title:"Biannual Checkup Reminder",
-          message: `Hi ${c.patient.name||""}, it's been about 6 months since your last visit with us — time for your biannual dental checkup! Reply here or call us to book a convenient slot.`
+          message: `Hi ${c.patient.name||""}, it's been about 6 months since your last visit with us — time for your biannual dental checkup! Reply here or call us to book a convenient slot.`,
+          templateName: "lead_qualification_checkup_reminder", templateParams: [c.patient.name||""]
         });
         await dbAdd("biannualFollowUpActions", { id: uid("bfa"), patientId, visitDate: visitDateKey||c.visitDateKey, action:"Reminded", createdAt: nowIso() }).catch(()=>{});
         if(currentPage==="home") renderHome();
@@ -4406,17 +4407,24 @@ function wireCalGridActions(root){
       el.onclick = ()=> openSlotChoiceSheet(el.dataset.date, el.dataset.time);
       return;
     }
+    // Touch: plain native touch events (not Pointer Events). Pointer
+    // Events have documented inconsistent behavior on some real Android
+    // browsers - losing track of a pointer mid-gesture, or pointermove
+    // simply not firing as expected - even though they work fine in
+    // testing tools. Touch events are the older, far more uniformly
+    // reliable API specifically on Android, so the whole calendar's
+    // touch handling (here and in wireApptDragReschedule below) uses
+    // them instead.
     let downX=0, downY=0, downT=0, moved=false;
-    el.addEventListener("pointerdown", (ev)=>{
-      if(ev.pointerType==="mouse") return; // mouse already handled above
-      downX=ev.clientX; downY=ev.clientY; downT=Date.now(); moved=false;
+    el.addEventListener("touchstart", (ev)=>{
+      const t = ev.touches[0]; if(!t) return;
+      downX=t.clientX; downY=t.clientY; downT=Date.now(); moved=false;
     }, {passive:true});
-    el.addEventListener("pointermove", (ev)=>{
-      if(ev.pointerType==="mouse") return;
-      if(Math.abs(ev.clientX-downX)>CAL_TAP_MOVE_TOLERANCE || Math.abs(ev.clientY-downY)>CAL_TAP_MOVE_TOLERANCE) moved=true;
+    el.addEventListener("touchmove", (ev)=>{
+      const t = ev.touches[0]; if(!t) return;
+      if(Math.abs(t.clientX-downX)>CAL_TAP_MOVE_TOLERANCE || Math.abs(t.clientY-downY)>CAL_TAP_MOVE_TOLERANCE) moved=true;
     }, {passive:true});
-    el.addEventListener("pointerup", (ev)=>{
-      if(ev.pointerType==="mouse") return;
+    el.addEventListener("touchend", (ev)=>{
       const elapsed = Date.now()-downT;
       if(!moved && elapsed<CAL_TAP_MAX_MS){
         openSlotChoiceSheet(el.dataset.date, el.dataset.time);
@@ -4431,12 +4439,13 @@ function wireCalGridActions(root){
     el.onclick = ()=>{ apptSelectedDate = fromDateKey(el.dataset.jump); apptView="Day"; renderAppointments(); };
   });
 
-  // ---------- Appointment blocks: hover-preview (mouse) or
-  // tap-to-edit / long-press-to-drag (touch/pen) ----------
-  root.querySelectorAll(".cal-appt-block[data-appt]").forEach(el=>{
-    const id = el.dataset.appt;
-    if(!isTouchCapable){
-      // Unchanged desktop behavior: hover previews, click edits.
+  // ---------- Appointment blocks: desktop-only wiring lives entirely
+  // here and is untouched from the original implementation. Touch
+  // wiring lives entirely in wireApptDragReschedule() below, as its own
+  // independent, touch-events-based implementation. ----------
+  if(!isTouchCapable){
+    root.querySelectorAll(".cal-appt-block[data-appt]").forEach(el=>{
+      const id = el.dataset.appt;
       el.addEventListener("mouseenter", ()=> showApptHoverCard(id, el));
       el.addEventListener("mouseleave", hideApptHoverCard);
       el.addEventListener("click", (ev)=>{
@@ -4445,18 +4454,122 @@ function wireCalGridActions(root){
         if(el.dataset.status==="Reserved") openReserveSlotForm(id);
         else openAppointmentForm(id);
       });
+    });
+  }
+}
+
+// ---------- Desktop mouse drag-to-reschedule: kept byte-for-byte the
+// same behavior as the original implementation (Pointer Events, which
+// are perfectly reliable for mouse input - this was never reported as
+// broken and stays completely untouched). ----------
+// Called right after a drag-to-reschedule (mouse or touch) actually
+// moves an appointment to a new date/time - opens the same WhatsApp
+// "Reschedule Notice" composer the manual status-change flow already
+// uses, so dragging an appointment notifies the patient exactly like
+// editing its status to Rescheduled does. The appointment's own saved
+// status is left untouched (still "Scheduled" etc. - unlike manually
+// marking the status, dragging doesn't change what the appointment IS,
+// just when it's happening) - a shallow clone with status:"Rescheduled"
+// is used only for building the message/template, never persisted.
+async function notifyRescheduleWhatsApp(a){
+  const patients = await dbGetAll("patients");
+  const patient = patients.find(p=>p.id===a.patientId);
+  if(!patient) return;
+  sendAppointmentWhatsApp(Object.assign({}, a, {status:"Rescheduled"}), patient);
+}
+
+function wireApptMouseDragReschedule(root){
+  let dragging = false, ghost = null, apptId = null, startX = 0, startY = 0, origBlock = null;
+
+  function onMove(mv){
+    if(!dragging && (Math.abs(mv.clientX-startX)>6 || Math.abs(mv.clientY-startY)>6)){
+      dragging = true;
+      ghost = origBlock.cloneNode(true);
+      ghost.classList.add("cal-appt-drag-ghost");
+      const rect = origBlock.getBoundingClientRect();
+      ghost.style.width = rect.width+"px";
+      ghost.style.position = "fixed";
+      ghost.style.zIndex = "9999";
+      ghost.style.pointerEvents = "none";
+      ghost.style.opacity = "0.88";
+      ghost.style.left = rect.left+"px";
+      ghost.style.top = rect.top+"px";
+      document.body.appendChild(ghost);
+      origBlock.classList.add("dragging");
     }
-    // Touch/pen tap-to-edit and long-press-to-drag are wired together
-    // with the reschedule drag logic in wireApptDragReschedule(), since
-    // both need to watch the same pointer sequence to tell a tap, a
-    // scroll, and a deliberate hold-and-drag apart.
+    if(dragging && ghost){
+      ghost.style.left = (mv.clientX - 24)+"px";
+      ghost.style.top = (mv.clientY - 12)+"px";
+      root.querySelectorAll(".cal-slot-row").forEach(row=>{
+        const r = row.getBoundingClientRect();
+        const over = mv.clientX>=r.left && mv.clientX<=r.right && mv.clientY>=r.top && mv.clientY<=r.bottom;
+        row.classList.toggle("drag-target-over", over);
+      });
+    }
+  }
+
+  async function onUp(uv){
+    document.removeEventListener("pointermove", onMove);
+    document.removeEventListener("pointerup", onUp);
+    const wasDragging = dragging;
+    let targetRow = null;
+    if(dragging){
+      root.querySelectorAll(".cal-slot-row").forEach(row=>{
+        const r = row.getBoundingClientRect();
+        if(uv.clientX>=r.left && uv.clientX<=r.right && uv.clientY>=r.top && uv.clientY<=r.bottom) targetRow = row;
+      });
+      root.querySelectorAll(".cal-slot-row").forEach(row=>row.classList.remove("drag-target-over"));
+      if(ghost){ ghost.remove(); ghost = null; }
+      if(origBlock) origBlock.classList.remove("dragging");
+    }
+    const draggedApptId = apptId;
+    dragging = false; apptId = null; origBlock = null;
+
+    if(wasDragging){
+      calApptJustDragged = true;
+      if(targetRow){
+        const newDate = targetRow.dataset.date;
+        const newTime = targetRow.dataset.time;
+        const appts = await dbGetAll("appointments");
+        const a = appts.find(x=>x.id===draggedApptId);
+        if(a && (a.date!==newDate || a.startTime!==newTime)){
+          const oldDate = a.date, oldTime = a.startTime;
+          a.date = newDate;
+          a.startTime = newTime;
+          a.updatedAt = nowIso();
+          await dbPut("appointments", a);
+          logActivity("Rescheduled appointment for "+(a.patientName||"patient")+" from "+formatTime(oldTime)+" ("+oldDate+") to "+formatTime(newTime)+" ("+newDate+")", {patientId: a.patientId});
+          showToast("Rescheduled to "+formatTime(newTime)+(newDate!==oldDate? " on "+fromDateKey(newDate).toLocaleDateString(undefined,{day:'numeric',month:'short'}):""));
+          await notifyRescheduleWhatsApp(a);
+        }
+      }
+      renderApptBody();
+    }
+  }
+
+  root.querySelectorAll(".cal-appt-block[data-appt]").forEach(el=>{
+    if(el.dataset.status==="Cancelled" || el.dataset.status==="Completed") return;
+    el.addEventListener("pointerdown", (ev)=>{
+      if(ev.pointerType==="mouse" && ev.button!==0) return;
+      dragging = false;
+      apptId = el.dataset.appt;
+      origBlock = el;
+      startX = ev.clientX; startY = ev.clientY;
+      document.addEventListener("pointermove", onMove);
+      document.addEventListener("pointerup", onUp);
+    });
   });
 }
-function wireApptDragReschedule(root){
-  let dragging = false, ghost = null, apptId = null, startX = 0, startY = 0, origBlock = null;
-  let longPressTimer = null, longPressArmed = false, cancelledAsScroll = false, pointerIsTouch = false;
 
-  let lockedScrollEl = null;
+// ---------- Touch: long-press-to-drag, tap-to-preview, double-tap-to-
+// edit - built entirely on native touchstart/touchmove/touchend/
+// touchcancel rather than Pointer Events, for the Android reliability
+// reasons noted above. Completely independent of the mouse function
+// above; nothing here runs on non-touch devices. ----------
+function wireApptTouchReschedule(root){
+  let dragging = false, ghost = null, apptId = null, startX = 0, startY = 0, origBlock = null;
+  let longPressTimer = null, longPressArmed = false, cancelledAsScroll = false, lockedScrollEl = null;
+
   function startGhost(){
     dragging = true;
     ghost = origBlock.cloneNode(true);
@@ -4471,55 +4584,43 @@ function wireApptDragReschedule(root){
     ghost.style.top = rect.top+"px";
     document.body.appendChild(ghost);
     origBlock.classList.add("dragging");
-    if(navigator.vibrate) navigator.vibrate(12); // small confirming buzz that the drag has "picked up"
-    // Only now - once a deliberate hold-and-drag is confirmed - stop the
-    // grid from also trying to scroll under the finger. Never set before
-    // this point, so ordinary scrolling is completely untouched.
+    if(navigator.vibrate) navigator.vibrate(12);
     lockedScrollEl = root.querySelector(".cal-grid-scroll") || root;
     if(lockedScrollEl) lockedScrollEl.style.touchAction = "none";
   }
 
-  function onMove(mv){
-    if(pointerIsTouch && !dragging){
-      // Before a long-press is confirmed, any real movement means the
-      // finger is scrolling, not trying to pick the appointment up -
-      // bail out completely and let the browser's native scroll carry
-      // on exactly as if this listener didn't exist (preventDefault is
-      // never called anywhere in this branch).
-      if(Math.abs(mv.clientX-startX)>CAL_TAP_MOVE_TOLERANCE || Math.abs(mv.clientY-startY)>CAL_TAP_MOVE_TOLERANCE){
+  function onTouchMove(ev){
+    const t = ev.touches[0]; if(!t) return;
+    if(!dragging){
+      if(Math.abs(t.clientX-startX)>CAL_TAP_MOVE_TOLERANCE || Math.abs(t.clientY-startY)>CAL_TAP_MOVE_TOLERANCE){
         cancelledAsScroll = true;
         if(longPressTimer){ clearTimeout(longPressTimer); longPressTimer=null; }
       }
-      return;
+      return; // never preventDefault here - a scroll-in-progress stays a scroll
     }
-    if(!pointerIsTouch && !dragging && (Math.abs(mv.clientX-startX)>6 || Math.abs(mv.clientY-startY)>6)){
-      // Mouse: unchanged - a small deliberate drag starts immediately.
-      startGhost();
-    }
-    if(dragging && ghost){
-      mv.preventDefault && mv.preventDefault();
-      ghost.style.left = (mv.clientX - 24)+"px";
-      ghost.style.top = (mv.clientY - 12)+"px";
-      root.querySelectorAll(".cal-slot-row").forEach(row=>{
-        const r = row.getBoundingClientRect();
-        const over = mv.clientX>=r.left && mv.clientX<=r.right && mv.clientY>=r.top && mv.clientY<=r.bottom;
-        row.classList.toggle("drag-target-over", over);
-      });
-    }
+    ev.preventDefault();
+    ghost.style.left = (t.clientX - 24)+"px";
+    ghost.style.top = (t.clientY - 12)+"px";
+    root.querySelectorAll(".cal-slot-row").forEach(row=>{
+      const r = row.getBoundingClientRect();
+      const over = t.clientX>=r.left && t.clientX<=r.right && t.clientY>=r.top && t.clientY<=r.bottom;
+      row.classList.toggle("drag-target-over", over);
+    });
   }
 
-  async function onUp(uv){
-    document.removeEventListener("pointermove", onMove);
-    document.removeEventListener("pointerup", onUp);
-    document.removeEventListener("pointercancel", onUp);
+  async function onTouchEnd(ev){
+    document.removeEventListener("touchmove", onTouchMove, {passive:false});
+    document.removeEventListener("touchend", onTouchEnd);
+    document.removeEventListener("touchcancel", onTouchEnd);
     if(longPressTimer){ clearTimeout(longPressTimer); longPressTimer=null; }
+    const t = (ev.changedTouches && ev.changedTouches[0]) || {clientX:startX, clientY:startY};
     const wasDragging = dragging;
-    const wasTouchTap = pointerIsTouch && !dragging && !cancelledAsScroll;
+    const wasTap = !dragging && !cancelledAsScroll;
     let targetRow = null;
     if(dragging){
       root.querySelectorAll(".cal-slot-row").forEach(row=>{
         const r = row.getBoundingClientRect();
-        if(uv.clientX>=r.left && uv.clientX<=r.right && uv.clientY>=r.top && uv.clientY<=r.bottom) targetRow = row;
+        if(t.clientX>=r.left && t.clientX<=r.right && t.clientY>=r.top && t.clientY<=r.bottom) targetRow = row;
       });
       root.querySelectorAll(".cal-slot-row").forEach(row=>row.classList.remove("drag-target-over"));
       if(ghost){ ghost.remove(); ghost = null; }
@@ -4530,7 +4631,6 @@ function wireApptDragReschedule(root){
     dragging = false; apptId = null; origBlock = null; longPressArmed = false;
 
     if(wasDragging){
-      calApptJustDragged = true; // suppress the click that follows this drag sequence (mouse path)
       if(targetRow){
         const newDate = targetRow.dataset.date;
         const newTime = targetRow.dataset.time;
@@ -4544,20 +4644,15 @@ function wireApptDragReschedule(root){
           await dbPut("appointments", a);
           logActivity("Rescheduled appointment for "+(a.patientName||"patient")+" from "+formatTime(oldTime)+" ("+oldDate+") to "+formatTime(newTime)+" ("+newDate+")", {patientId: a.patientId});
           showToast("Rescheduled to "+formatTime(newTime)+(newDate!==oldDate? " on "+fromDateKey(newDate).toLocaleDateString(undefined,{day:'numeric',month:'short'}):""));
+          await notifyRescheduleWhatsApp(a);
         }
       }
       renderApptBody();
-    }else if(wasTouchTap && tappedEl){
+    }else if(wasTap && tappedEl){
       handleApptTouchTap(draggedApptId, tappedEl);
     }
   }
 
-  // A clean tap (no scroll, no long-press) waits briefly to see if a
-  // second tap lands on the same appointment: if it does within the
-  // window, that's a double-tap and opens editing directly; if the
-  // window elapses with no second tap, it was a single tap and shows
-  // the preview card instead. This mirrors standard double-tap
-  // patterns so a normal single tap never accidentally edits.
   let lastTapApptId = null, lastTapTime = 0, pendingSingleTapTimer = null;
   function handleApptTouchTap(id, el){
     const now = Date.now();
@@ -4577,28 +4672,31 @@ function wireApptDragReschedule(root){
 
   root.querySelectorAll(".cal-appt-block[data-appt]").forEach(el=>{
     if(el.dataset.status==="Cancelled" || el.dataset.status==="Completed") return;
-    el.addEventListener("pointerdown", (ev)=>{
-      if(ev.pointerType==="mouse" && ev.button!==0) return;
+    el.addEventListener("touchstart", (ev)=>{
+      const t = ev.touches[0]; if(!t) return;
       dragging = false;
       cancelledAsScroll = false;
-      pointerIsTouch = (ev.pointerType==="touch" || ev.pointerType==="pen");
       apptId = el.dataset.appt;
       origBlock = el;
-      startX = ev.clientX; startY = ev.clientY;
-      document.addEventListener("pointermove", onMove);
-      document.addEventListener("pointerup", onUp);
-      document.addEventListener("pointercancel", onUp);
-      if(pointerIsTouch){
-        longPressArmed = true;
-        longPressTimer = setTimeout(()=>{
-          longPressTimer = null;
-          if(longPressArmed && !cancelledAsScroll && origBlock===el){
-            startGhost();
-          }
-        }, CAL_LONGPRESS_MS);
-      }
-    });
+      startX = t.clientX; startY = t.clientY;
+      document.addEventListener("touchmove", onTouchMove, {passive:false});
+      document.addEventListener("touchend", onTouchEnd);
+      document.addEventListener("touchcancel", onTouchEnd);
+      longPressArmed = true;
+      longPressTimer = setTimeout(()=>{
+        longPressTimer = null;
+        if(longPressArmed && !cancelledAsScroll && origBlock===el){
+          startGhost();
+        }
+      }, CAL_LONGPRESS_MS);
+    }, {passive:true});
   });
+}
+
+function wireApptDragReschedule(root){
+  const isTouchCapable = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
+  if(isTouchCapable) wireApptTouchReschedule(root);
+  else wireApptMouseDragReschedule(root);
 }
 
 function openSlotChoiceSheet(date, time){
@@ -4880,7 +4978,8 @@ async function sendReviewLinkForAppt(appt, patient){
   const message = template.split("{patientName}").join(appt.patientName||"there").split("{clinicName}").join(clinic.name).split("{reviewLink}").join(clinic.googleReviewLink);
   openWhatsAppComposer({
     toName: appt.patientName, toNumber: patient?(patient.whatsappNumber||patient.mobile):null, patientId: appt.patientId,
-    title: "Review Request", message
+    title: "Review Request", message,
+    templateName: "review_link", templateParams: [appt.patientName||"there"]
   });
 }
 
@@ -4911,7 +5010,10 @@ async function sendReviewLinkForPatient(patient){
   if(!clinic || !clinic.googleReviewLink){ showToast("No Google review link set for this clinic yet — add one under Clinic Locations."); return; }
   const template = clinic.reviewMessageTemplate || "Hi {patientName}, thank you for visiting {clinicName}! We'd love it if you could share your experience: {reviewLink}";
   const message = template.split("{patientName}").join(patient.name||"there").split("{clinicName}").join(clinic.name).split("{reviewLink}").join(clinic.googleReviewLink);
-  openWhatsAppComposer({ toName: patient.name, toNumber: patient.whatsappNumber||patient.mobile, patientId: patient.id, title:"Review Request", message });
+  openWhatsAppComposer({
+    toName: patient.name, toNumber: patient.whatsappNumber||patient.mobile, patientId: patient.id, title:"Review Request", message,
+    templateName: "review_link", templateParams: [patient.name||"there"]
+  });
 }
 
 async function sendOutstandingPaymentMessage(patient){
@@ -5910,24 +6012,24 @@ function sendAppointmentWhatsApp(appt, patient){
   if(!message) return;
   const number = patient && (patient.whatsappNumber||patient.mobile);
   const titleMap = {Cancelled:"Cancellation Notice", Rescheduled:"Reschedule Notice", NoShow:"Missed Appointment"};
-  // Only "Rescheduled" has an approved Interakt template so far
-  // (appointment_confirmation_hw, body: {{1}}=Name, {{2}}=Date, {{3}}=Time) -
-  // the other statuses keep sending as free text for now, exactly as
-  // before, until their own templates are approved and given to me.
-  // Scheduled / Confirmed (new appointment) and Rescheduled all use the same
-  // approved template, since its wording fits both. Without a template name,
-  // Interakt rejects the send ("data is a required field").
-  const usesConfirmationTemplate = appt.status==="Rescheduled" || appt.status==="Scheduled" || appt.status==="Confirmed";
+  // Each status now uses its own correct, approved template:
+  //   appointment_confirmation_hw - Scheduled/Confirmed (Name/Date/Time)
+  //   appointment_rescheduled     - Rescheduled (Name/New date/New time)
+  //   appointment_cancelled       - Cancelled (Name/Date/Time)
+  //   appointment_missed          - NoShow (Name)
   const dateStr = appt.date ? fromDateKey(appt.date).toLocaleDateString(undefined,{weekday:'long', day:'numeric', month:'long'}) : "";
   const timeStr = formatTime(appt.startTime);
+  const templateFields =
+    (appt.status==="Scheduled" || appt.status==="Confirmed") ? { templateName: "appointment_confirmation_hw", templateParams: [appt.patientName||"", dateStr, timeStr] } :
+    appt.status==="Rescheduled" ? { templateName: "appointment_rescheduled", templateParams: [appt.patientName||"", dateStr, timeStr] } :
+    appt.status==="Cancelled" ? { templateName: "appointment_cancelled", templateParams: [appt.patientName||"", dateStr, timeStr] } :
+    appt.status==="NoShow" ? { templateName: "appointment_missed", templateParams: [appt.patientName||""] } :
+    {};
   openWhatsAppComposer({
     toName: appt.patientName, toNumber: number, patientId: appt.patientId,
     title: titleMap[appt.status] || "Appointment Confirmation",
     message,
-    ...(usesConfirmationTemplate ? {
-      templateName: "appointment_confirmation_hw",
-      templateParams: [appt.patientName||"", dateStr, timeStr]
-    } : {})
+    ...templateFields
   });
 }
 
@@ -6094,6 +6196,7 @@ function reminderRowHtml(r){
             <button class="mini-btn" data-ract="done" data-id="${r.id}">${icon('check',13)} Done</button>
             ${r.patientId? `<button class="mini-btn" data-ract="open" data-id="${r.patientId}">${icon('user',13)} Open Patient</button>` : ""}
             ${isLabCase? `<button class="mini-btn" data-ract="remindlab" data-id="${r.id}">${icon('message',13)} Remind Lab</button>` : ""}
+            ${isImplant? `<button class="mini-btn" data-ract="remindimplant" data-id="${r.id}">${icon('message',13)} Remind Patient</button>` : ""}
             ${isImplant? `<button class="mini-btn" data-ract="snoozeimplant" data-id="${r.id}">${icon('bell',13)} Snooze</button>` : ""}
           `}
         </div>
@@ -6152,8 +6255,33 @@ function wireReminderRowActions(root){
         await resolveOnlineApptReminder(btn.dataset.id, "delete");
       }else if(action==="snoozeimplant"){
         openImplantSnoozeSheet(btn.dataset.id);
+      }else if(action==="remindimplant"){
+        await remindPatientForImplantReminder(btn.dataset.id);
       }
     });
+  });
+}
+
+// Sends a WhatsApp follow-up to the patient directly from an "Implant
+// prosthesis due" reminder row - same approved template used for every
+// other pending-procedure follow-up in the PMS, with the tooth number
+// (already present in the reminder's own title) carried through as the
+// Procedure detail so the message reads specifically rather than generically.
+async function remindPatientForImplantReminder(reminderId){
+  const reminders = await dbGetAll("reminders");
+  const r = reminders.find(x=>x.id===reminderId);
+  if(!r){ showToast("Reminder not found"); return; }
+  if(!r.patientId){ showToast("This reminder isn't linked to a patient"); return; }
+  const patients = await dbGetAll("patients");
+  const patient = patients.find(p=>p.id===r.patientId);
+  if(!patient){ showToast("Patient not found"); return; }
+  const toothMatch = (r.title||"").match(/Tooth\s+([0-9,\s]+)/i);
+  const procedure = toothMatch ? "Implant Prosthesis — Tooth "+toothMatch[1].trim() : "Implant Prosthesis";
+  openWhatsAppComposer({
+    toName: patient.name, toNumber: patient.whatsappNumber||patient.mobile, patientId: patient.id,
+    title: "Implant Follow-up",
+    message: `Hi ${patient.name||""}, this is a reminder that your ${procedure.toLowerCase()} is due at Healing Touch Dental. Please get in touch to schedule your visit.`,
+    templateName: "follow_up", templateParams: [patient.name||"", procedure]
   });
 }
 
@@ -6248,7 +6376,11 @@ async function remindLabForReminder(reminderId){
   }
   const { message, lab } = await buildLabStatusCheckMessage([labCase], patient);
   if(!lab || (!lab.phone && !lab.email)){ showToast("No contact number/email on file for this lab — add one under Lab Cases"); return; }
-  openWhatsAppComposer({ toName: lab.name, toNumber: lab.phone, patientId: null, title:"Lab Status Check", message });
+  openWhatsAppComposer({
+    toName: lab.name, toNumber: lab.phone, patientId: null, title:"Lab Status Check", message,
+    templateName: "lab_remind",
+    templateParams: [lab.name||"", labCase.caseType||"the case", labCase.dateSent? new Date(labCase.dateSent).toLocaleDateString() : ""]
+  });
 }
 
 async function getAssistCounts(){
@@ -6414,7 +6546,11 @@ async function remindLabForCommitment(commitmentId){
   if(cases.length===1){
     const { message, lab } = await buildLabStatusCheckMessage(cases, patient);
     if(!lab || (!lab.phone && !lab.email)){ showToast("No contact number/email on file for this lab — add one under Lab Cases"); return; }
-    openWhatsAppComposer({ toName: lab.name, toNumber: lab.phone, patientId: null, title:"Lab Status Check", message });
+    openWhatsAppComposer({
+      toName: lab.name, toNumber: lab.phone, patientId: null, title:"Lab Status Check", message,
+      templateName: "lab_remind",
+      templateParams: [lab.name||"", cases[0].caseType||"the case", cases[0].dateSent? new Date(cases[0].dateSent).toLocaleDateString() : ""]
+    });
   }else{
     openRemindLabCasePickerSheet(cases, patient);
   }
@@ -7231,7 +7367,9 @@ async function openLabCaseActionMenu(caseId){
     openWhatsAppComposer({
       title: "Lab Case — "+(lc.labName||"Lab"),
       toName: lc.labName, toNumber: lc.labContact,
-      message: labCaseSummaryText(lc)
+      message: labCaseSummaryText(lc),
+      templateName: "lab_case",
+      templateParams: [lc.labName||"", lc.labPromisedDate? new Date(lc.labPromisedDate).toLocaleDateString() : ""]
     });
   };
   document.getElementById("lcmEmail").onclick = async ()=>{
@@ -7607,7 +7745,9 @@ function sendNewLabCaseWhatsApp(lc){
     title: "New Lab Case — "+(lc.labName||"Lab"),
     toName: lc.labName, toNumber: lc.labContact,
     message: lines.join("\n"),
-    patientId: lc.patientId, recipientType: "Lab"
+    patientId: lc.patientId, recipientType: "Lab",
+    templateName: "lab_case",
+    templateParams: [lc.labName||"", lc.labPromisedDate? new Date(lc.labPromisedDate).toLocaleDateString() : ""]
   });
   if(currentPage==="assist") renderAssistBody();
   else if(currentPage==="labcases") renderLabCases();
@@ -15439,6 +15579,12 @@ function renderPlanFormSheet(plan, clinics, isEdit, patient, doctors){
 
 async function saveTreatmentPlan(plan, patient, goBack){
   const dateVal = document.getElementById("tpDate").value;
+  // Tooth-chart auto-sync only cares about items that are newly Completed
+  // in this save, not ones that already were - otherwise re-saving an
+  // already-completed plan would keep adding duplicate chart entries.
+  const oldStatusById = {};
+  (plan.items||[]).forEach(it=>{ oldStatusById[it.id] = it.status; });
+  const newlyCompleted = planItemsDraft.filter(it=> it.status==="Completed" && oldStatusById[it.id]!=="Completed");
   const updated = Object.assign({}, plan, {
     title: document.getElementById("tpTitle").value.trim(),
     createdDate: dateVal ? new Date(dateVal).toISOString() : plan.createdDate,
@@ -15450,6 +15596,9 @@ async function saveTreatmentPlan(plan, patient, goBack){
     updatedAt: nowIso()
   });
   await dbPut("treatmentPlans", updated);
+  for(const it of newlyCompleted){
+    await syncToothChartForCompletedTreatment(patient, it.treatment, it.tooth, it.treatmentDate||updated.createdDate);
+  }
   logActivity("Saved treatment plan for "+patient.name+" ("+planItemsDraft.length+" items)", {patientId: patient.id});
   showToast("Treatment plan saved");
   goBack();
@@ -19345,6 +19494,15 @@ const ENDO_FINAL_RESTORATION_OPTIONS = ["— Select —","Composite","Amalgam","
 const ENDO_YES_NO = ["Yes","No"];
 const ENDO_VISIT_STATUS = ["Pending","Completed"];
 const ENDO_RADIOGRAPH_TYPES = ["Pre-op","Working Length","Master Cone","Obturation","Follow-up"];
+// Every canal name in common clinical use across anteriors, premolars and
+// molars (maxillary and mandibular) - the checklist in the visit form
+// picks from this single list regardless of tooth type, since which
+// canals actually apply is something the dentist selects per case.
+const ENDO_CANAL_NAMES = [
+  "Single Canal","Mesiobuccal (MB)","Mesiobuccal 2 (MB2)","Distobuccal (DB)","Palatal (P)",
+  "Mesiolingual (ML)","Distolingual (DL)","Buccal (B)","Lingual (L)","Mesial (M)","Distal (D)","Middle Mesial (MM)"
+];
+const ENDO_INSTRUMENT_FILE_OPTIONS = ["— Select —","06","08","10","15","20","25","30","35","40","45","50","55","60","70","80","90","100"];
 let endoCaseSubTab = "Diagnosis";
 
 async function renderEndoTab(body, patient){
@@ -19529,6 +19687,37 @@ function renderEndoDiagnosisSubTab(subBody, c, patient, body){
   document.getElementById("btnEditEndoDx").onclick = ()=> openEndoDiagnosisForm(c.id, patient, body);
 }
 
+// Every populated field for a visit, laid out the same row-by-row way
+// the Diagnosis sub-tab already does - used so each visit's full detail
+// is visible right in the Visits list, not just a one-line abbreviation.
+function endoVisitSummaryRowsHtml(v){
+  const rows = [
+    ["Access Opening", v.accessOpening], ["Rubber Dam", v.rubberDam],
+    ["Working Length", v.workingLength? v.workingLength+" mm":""], ["Apex Locator Reading", v.apexLocatorReading],
+    ["No. of Canals", v.numCanals], ["Canal Configuration", v.canalConfiguration],
+    ["Irrigants Used", (v.irrigants||[]).join(", ")], ["Intracanal Medicament", v.intracanalMedicament],
+    ["File System", v.fileSystem], ["Apical Size", v.apicalSize], ["Technique", v.technique], ["Hand Files", v.handFiles],
+    ["Temporary Restoration", v.temporaryRestoration], ["Temp Seal", v.tempSeal],
+    ["Sealer", v.sealer], ["Obturation Technique", v.obturationTechnique],
+    ["Post Space Prep", v.postSpacePrep], ["Core Build-up", v.coreBuildUp], ["Final Restoration", v.finalRestoration],
+    ["Complications", v.complications], ["Prognosis", v.prognosis], ["Notes", v.notes]
+  ].filter(([,val])=>val);
+  const canals = (v.canalInstrumentation||[]).filter(cn=> cn.workingLength || cn.taper || cn.fileNumber);
+  const cones = (v.masterCones||[]).filter(cn=> cn.canal || cn.taper || cn.gpNumber);
+  let html = rows.map(([label,val])=>`<div class="row"><b>${label}</b>${escapeHtml(String(val))}</div>`).join("");
+  if(canals.length){
+    html += `<div class="row" style="flex-direction:column;align-items:flex-start;"><b style="margin-bottom:4px;">Canals — Working Length &amp; Instrumentation</b>
+      ${canals.map(cn=>`<div style="font-size:12.5px;color:var(--charcoal-2);">• ${escapeHtml(cn.canal)}: ${[cn.workingLength?'WL '+escapeHtml(cn.workingLength)+'mm':'', cn.taper?'Taper '+escapeHtml(cn.taper):'', cn.fileNumber?'File #'+escapeHtml(cn.fileNumber):''].filter(Boolean).join(', ')||'—'}</div>`).join("")}
+    </div>`;
+  }
+  if(cones.length){
+    html += `<div class="row" style="flex-direction:column;align-items:flex-start;"><b style="margin-bottom:4px;">Master Cones</b>
+      ${cones.map(cn=>`<div style="font-size:12.5px;color:var(--charcoal-2);">• ${escapeHtml(cn.canal||'Canal')}: ${[cn.taper?'Taper '+escapeHtml(cn.taper):'', cn.gpNumber?'GP #'+escapeHtml(cn.gpNumber):''].filter(Boolean).join(', ')||'—'}</div>`).join("")}
+    </div>`;
+  }
+  return html || `<div style="color:var(--grey);font-size:13px;padding:6px 0;">No details recorded yet.</div>`;
+}
+
 function renderEndoVisitsSubTab(subBody, c, patient, body){
   const visits = (c.visits||[]).slice().sort((a,b)=> new Date(a.date||0)-new Date(b.date||0));
   subBody.innerHTML = `
@@ -19542,7 +19731,7 @@ function renderEndoVisitsSubTab(subBody, c, patient, body){
             <button class="qmenu-btn" data-endovisitmenu="${v.id}" style="transform:none;">${icon('settings',16)}</button>
           </div>
         </div>
-        <div class="note-meta">${[v.accessOpening,v.numCanals?v.numCanals+" canal(s)":"",v.fileSystem,v.obturationTechnique].filter(Boolean).join(" · ")||"No details yet"}</div>
+        <div class="list-card" style="padding:4px 10px;margin-top:8px;">${endoVisitSummaryRowsHtml(v)}</div>
       </div>
     `).join("") : `<div class="empty-card"><b>No visits recorded yet</b></div>`}
   `;
@@ -19621,6 +19810,72 @@ function endoSelectHtml(id, options, current){
   return `<select id="${id}">${options.map(o=>`<option value="${o==='— Select —'?'':o}" ${(current||'')===((o==='— Select —')?'':o)?'selected':''}>${o}</option>`).join("")}</select>`;
 }
 
+// Obturation/sealer lines for a visit, included only when that visit
+// actually has obturation data (a master cone, a sealer other than
+// "None", or a technique other than "Not done yet") - returns an empty
+// array otherwise, so callers can skip the section entirely.
+function endoObturationSummaryLines(v){
+  const lines = [];
+  const cones = (v.masterCones||[]).filter(cn=> cn.canal || cn.taper || cn.gpNumber);
+  const hasObturation = cones.length>0 || (v.sealer && v.sealer!=="None") || (v.obturationTechnique && v.obturationTechnique!=="Not done yet");
+  if(!hasObturation) return lines;
+  lines.push("Obturation:");
+  if(v.obturationTechnique && v.obturationTechnique!=="Not done yet") lines.push("  Technique: "+v.obturationTechnique);
+  if(v.sealer && v.sealer!=="None") lines.push("  Sealer: "+v.sealer);
+  cones.forEach(cn=>{
+    const parts=[];
+    if(cn.taper) parts.push("Taper "+cn.taper);
+    if(cn.gpNumber) parts.push("GP #"+cn.gpNumber);
+    lines.push("  • "+(cn.canal||"Canal")+": "+(parts.join(", ")||"—"));
+  });
+  return lines;
+}
+// Full auto-generated notes for the treatment-done entry created from a
+// case's first visit: working length, every selected canal's
+// instrumentation (working length/taper/file number), and - only if
+// present - obturation and sealer.
+function buildEndoVisitNotesSummary(v){
+  const lines = [];
+  if(v.workingLength) lines.push("Working Length: "+v.workingLength+" mm"+(v.apexLocatorReading? " (Apex locator reading: "+v.apexLocatorReading+")":""));
+  const canals = (v.canalInstrumentation||[]).filter(c=> c.workingLength || c.taper || c.fileNumber);
+  if(canals.length){
+    lines.push("Canals — Working Length & Instrumentation:");
+    canals.forEach(c=>{
+      const parts = [];
+      if(c.workingLength) parts.push("WL "+c.workingLength+"mm");
+      if(c.taper) parts.push("Taper "+c.taper);
+      if(c.fileNumber) parts.push("File #"+c.fileNumber);
+      lines.push("  • "+c.canal+": "+(parts.join(", ")||"—"));
+    });
+  }
+  lines.push(...endoObturationSummaryLines(v));
+  return lines.join("\n");
+}
+
+// Appends this visit's obturation/sealer details (if any) to the notes
+// of the Treatment Done entry that was created from the case's first
+// visit - used when a later visit completes obturation, so it's added
+// as a "second sitting" note to that original entry rather than
+// creating a separate treatment-done record. Returns false (and makes
+// no change) if there's no obturation data, or no earlier entry to
+// append to.
+async function appendObturationToFirstVisitTreatmentDone(ref, visit){
+  if(!ref || !ref.planId || !ref.itemId) return false;
+  const obLines = endoObturationSummaryLines(visit);
+  if(!obLines.length) return false;
+  const plans = await dbGetAll("treatmentPlans");
+  const plan = plans.find(p=>p.id===ref.planId);
+  if(!plan) return false;
+  const item = (plan.items||[]).find(it=>it.id===ref.itemId);
+  if(!item) return false;
+  const dateStr = visit.date ? new Date(visit.date).toLocaleDateString() : "";
+  const block = "\n\nSecond Sitting"+(dateStr?" ("+dateStr+")":"")+":\n"+obLines.join("\n");
+  item.notes = (item.notes||"") + block;
+  plan.updatedAt = nowIso();
+  await dbPut("treatmentPlans", plan);
+  return true;
+}
+
 async function openEndoVisitForm(c, patient, body, visitId){
   const isEdit = !!visitId;
   const v = isEdit ? (c.visits||[]).find(x=>x.id===visitId) : { id: uid("endovisit"), date: nowIso(), status:"Pending", irrigants:[], masterCones:[] };
@@ -19628,6 +19883,49 @@ async function openEndoVisitForm(c, patient, body, visitId){
   const customFileSystems = (await dbGetAll("endoFileSystemPresets")).map(p=>p.name);
   const allFileSystems = [...ENDO_FILE_SYSTEM_BUILTIN, ...customFileSystems.filter(n=>!ENDO_FILE_SYSTEM_BUILTIN.includes(n))];
   let masterConesDraft = JSON.parse(JSON.stringify(v.masterCones||[]));
+  // Keyed by canal name so a checkbox toggle can look its row up directly.
+  // Starts pre-checked for any canal that already has saved data (editing
+  // an existing visit) or an empty object otherwise (nothing checked).
+  const canalInstrumentDraft = {};
+  (v.canalInstrumentation||[]).forEach(row=>{ if(row && row.canal) canalInstrumentDraft[row.canal] = {workingLength: row.workingLength||"", taper: row.taper||"", fileNumber: row.fileNumber||""}; });
+
+  function canalChecklistHtml(){
+    return ENDO_CANAL_NAMES.map(name=>{
+      const checked = Object.prototype.hasOwnProperty.call(canalInstrumentDraft, name);
+      const row = canalInstrumentDraft[name] || {workingLength:"", taper:"", fileNumber:""};
+      return `
+        <div class="list-card" style="padding:10px;margin-bottom:8px;">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+            <input type="checkbox" class="endo-canal-check" data-canal="${escapeAttr(name)}" ${checked?'checked':''} style="accent-color:var(--green);">
+            <span style="font-weight:600;font-size:13px;">${escapeHtml(name)}</span>
+          </label>
+          <div class="endo-canal-detail" data-canal-detail="${escapeAttr(name)}" style="margin-top:8px;${checked?'':'display:none;'}">
+            <div class="field-row">
+              <div class="field"><label>Working Length (mm)</label><input type="number" step="0.1" class="endo-canal-wl" data-canal="${escapeAttr(name)}" value="${escapeAttr(row.workingLength)}"></div>
+              <div class="field"><label>% Taper</label><select class="endo-canal-taper" data-canal="${escapeAttr(name)}">${ENDO_TAPER_OPTIONS.map(o=>`<option value="${o==='— Select —'?'':o}" ${(row.taper||'')===(o==='— Select —'?'':o)?'selected':''}>${o}</option>`).join("")}</select></div>
+            </div>
+            <div class="field"><label>File Number (instrumentation)</label><select class="endo-canal-file" data-canal="${escapeAttr(name)}">${ENDO_INSTRUMENT_FILE_OPTIONS.map(o=>`<option value="${o==='— Select —'?'':o}" ${(row.fileNumber||'')===(o==='— Select —'?'':o)?'selected':''}>${o}</option>`).join("")}</select></div>
+          </div>
+        </div>
+      `;
+    }).join("");
+  }
+  function wireCanalChecklistInputs(){
+    document.querySelectorAll(".endo-canal-check").forEach(el=> el.onchange = ()=>{
+      const name = el.dataset.canal;
+      const detail = document.querySelector(`[data-canal-detail="${CSS.escape(name)}"]`);
+      if(el.checked){
+        if(!canalInstrumentDraft[name]) canalInstrumentDraft[name] = {workingLength:"", taper:"", fileNumber:""};
+        if(detail) detail.style.display = "";
+      }else{
+        delete canalInstrumentDraft[name];
+        if(detail) detail.style.display = "none";
+      }
+    });
+    document.querySelectorAll(".endo-canal-wl").forEach(el=> el.oninput = ()=>{ if(canalInstrumentDraft[el.dataset.canal]) canalInstrumentDraft[el.dataset.canal].workingLength = el.value; });
+    document.querySelectorAll(".endo-canal-taper").forEach(el=> el.onchange = ()=>{ if(canalInstrumentDraft[el.dataset.canal]) canalInstrumentDraft[el.dataset.canal].taper = el.value; });
+    document.querySelectorAll(".endo-canal-file").forEach(el=> el.onchange = ()=>{ if(canalInstrumentDraft[el.dataset.canal]) canalInstrumentDraft[el.dataset.canal].fileNumber = el.value; });
+  }
 
   function conesHtml(){
     if(!masterConesDraft.length) return `<div style="color:var(--grey);font-size:12.5px;margin-bottom:8px;">No cones added yet.</div>`;
@@ -19679,6 +19977,10 @@ async function openEndoVisitForm(c, patient, body, visitId){
       <div class="field"><label>Canal Configuration</label><input id="endoVf_canalConfiguration" value="${escapeAttr(v.canalConfiguration)}" placeholder="e.g. MB, DB, P"></div>
     </div>
 
+    <div class="section-title" style="margin:12px 0 6px;">Canals — Working Length &amp; Instrumentation</div>
+    <p style="margin:-4px 0 10px;">Check each canal present in this tooth, then record its working length, taper and instrumentation file number.</p>
+    <div id="endoCanalChecklistContainer">${canalChecklistHtml()}</div>
+
     <div class="section-title" style="margin:12px 0 6px;">Irrigation &amp; Medicament</div>
     <div class="field"><label>Irrigants Used</label>
       <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:4px;">
@@ -19727,6 +20029,7 @@ async function openEndoVisitForm(c, patient, body, visitId){
     <button class="btn btn-primary btn-block" id="btnSaveEndoVisit" style="margin-top:10px;">Save Visit</button>
   `);
   wireConeInputs();
+  wireCanalChecklistInputs();
   document.getElementById("btnAddCone").onclick = ()=>{
     masterConesDraft.push({ canal:"", taper:"", gpNumber:"" });
     document.getElementById("endoConesContainer").innerHTML = conesHtml();
@@ -19736,11 +20039,15 @@ async function openEndoVisitForm(c, patient, body, visitId){
     "intracanalMedicament","fileSystem","apicalSize","technique","handFiles","temporaryRestoration","tempSeal",
     "sealer","obturationTechnique","postSpacePrep","coreBuildUp","finalRestoration","complications","prognosis","notes"];
   document.getElementById("btnSaveEndoVisit").onclick = async ()=>{
+    // Must be checked BEFORE this visit is added, to know whether it's
+    // genuinely the case's first ever visit.
+    const isFirstVisitBeingAdded = !isEdit && (c.visits||[]).length===0;
     const newVisit = Object.assign({}, v, {
       date: new Date(document.getElementById("endoVisitDate").value).toISOString(),
       status: document.getElementById("endoVisitStatus").value,
       irrigants: [...document.querySelectorAll(".endo-irrigant-check:checked")].map(cb=>cb.value),
-      masterCones: masterConesDraft.filter(cone=> cone.canal || cone.taper || cone.gpNumber)
+      masterCones: masterConesDraft.filter(cone=> cone.canal || cone.taper || cone.gpNumber),
+      canalInstrumentation: Object.keys(canalInstrumentDraft).map(name=> Object.assign({canal:name}, canalInstrumentDraft[name]))
     });
     fieldIds.forEach(k=>{ newVisit[k] = document.getElementById("endoVf_"+k).value.trim(); });
     // A typed file system name that isn't already known gets saved for next time.
@@ -19754,10 +20061,40 @@ async function openEndoVisitForm(c, patient, body, visitId){
     c.updatedAt = nowIso();
     await dbPut("endoCases", c);
     logActivity("Recorded endodontic visit for tooth "+c.tooth+" — "+patient.name, {patientId: patient.id});
-    showToast("Saved");
-    closeSheetOrReturn();
-    endoCaseSubTab = "Visits";
-    openEndoCaseDetail(c.id, patient, body);
+
+    const finishUp = ()=>{
+      showToast("Saved");
+      closeSheetOrReturn();
+      endoCaseSubTab = "Visits";
+      openEndoCaseDetail(c.id, patient, body);
+    };
+
+    if(isFirstVisitBeingAdded){
+      // First visit for this case: offer to log it as Root Canal
+      // Treatment in Treatment Done, with working length and every
+      // selected canal's instrumentation (and obturation/sealer, if
+      // this same visit already completed that) auto-filled into the
+      // notes. A reference to the saved entry is kept on the case so a
+      // later visit's obturation can be appended to it instead of
+      // creating a second entry.
+      const autoNotes = buildEndoVisitNotesSummary(newVisit);
+      promptForTreatmentCharge(patient, "Root Canal Treatment", c.tooth, async (saved)=>{
+        if(saved && saved.item && saved.plan){
+          c.treatmentDoneItemRef = { planId: saved.plan.id, itemId: saved.item.id };
+          c.updatedAt = nowIso();
+          await dbPut("endoCases", c);
+        }
+        finishUp();
+      }, autoNotes);
+    }else{
+      // A later visit: if it completed obturation, append that to the
+      // first visit's treatment-done notes as a dated second sitting -
+      // silently, since this isn't a new billable treatment by itself.
+      if(c.treatmentDoneItemRef){
+        await appendObturationToFirstVisitTreatmentDone(c.treatmentDoneItemRef, newVisit);
+      }
+      finishUp();
+    }
   };
 }
 
@@ -20855,7 +21192,62 @@ async function openTreatmentStatusPicker(planId, itemId, patient, tabBody, patie
 // New Treatment form produces, so it shows up identically in the Treatment
 // Done list, invoices, reports, etc. Used by the post-save charge prompt
 // below, shared across every clinical module.
-async function saveTreatmentDoneRecord(patient, treatmentLabel, amount, tooth, diagnosis){
+// Maps a free-text treatment label (e.g. "Composite Filling", "Root Canal
+// Treatment", "Crown Cementation") to the matching Tooth Chart condition,
+// so completing a treatment can automatically recolor that tooth. Checked
+// in order - first match wins - since some labels could otherwise match
+// more than one (e.g. "Crown Build-up" containing both "crown" concepts).
+const TREATMENT_TO_TOOTH_CONDITION = [
+  [/\bimplant/i, "Implant"],
+  [/\bextract/i, "Missing"],
+  [/\bbridge/i, "Bridge"],
+  [/\bcrown|\bssc\b|stainless steel crown/i, "Crown"],
+  [/\bveneer/i, "Veneer"],
+  [/\bsealant/i, "Sealant"],
+  [/space maintainer/i, "Space Maintainer"],
+  [/root canal|\brct\b|pulpectomy|endodontic/i, "RCT"],
+  [/filling|restoration|composite|amalgam|\bgic\b/i, "Filled"],
+];
+function toothConditionForTreatmentLabel(label){
+  if(!label) return null;
+  for(const [re, cond] of TREATMENT_TO_TOOTH_CONDITION){
+    if(re.test(label)) return cond;
+  }
+  return null;
+}
+
+// Called whenever a treatment is marked done with a tooth attached -
+// automatically records that tooth's new condition on the Dental Chart
+// (both the stored condition, used everywhere the chart reads from, and
+// therefore the visual color too) dated to when the treatment happened.
+// Silently does nothing if the treatment label doesn't match a known
+// condition, or if no tooth was given - never blocks or alters the
+// treatment-done save itself.
+async function syncToothChartForCompletedTreatment(patient, treatmentLabel, tooth, dateIso){
+  if(!tooth) return;
+  const cond = toothConditionForTreatmentLabel(treatmentLabel);
+  if(!cond) return;
+  const teeth = String(tooth).split(/[,;/\s]+/).map(t=>t.trim()).filter(Boolean);
+  if(!teeth.length) return;
+  try{
+    const dateKey = toDateKey(new Date(dateIso||Date.now()));
+    const charts = await dbGetAll("dentalCharts");
+    let record = charts.find(c=>c.patientId===patient.id && c.date===dateKey);
+    if(!record){
+      const s = (await dbGetAll("settings"))[0] || {};
+      record = { id: uid("chart"), patientId: patient.id, date: dateKey, doctor: s.doctorName||"", entries: [], createdAt: nowIso() };
+    }
+    record.entries = record.entries || [];
+    record.entries.push({
+      id: uid("dcentry"), teeth, category: "Treatment", examination: treatmentLabel, cond,
+      treatmentType: treatmentLabel, notes: "Auto-added from Treatment Done", auto: true, createdAt: nowIso()
+    });
+    record.updatedAt = nowIso();
+    await dbPut("dentalCharts", record);
+  }catch(err){ console.error("syncToothChartForCompletedTreatment failed:", err); }
+}
+
+async function saveTreatmentDoneRecord(patient, treatmentLabel, amount, tooth, diagnosis, notes){
   const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived);
   const item = {
     id: uid("planitem"),
@@ -20870,7 +21262,7 @@ async function saveTreatmentDoneRecord(patient, treatmentLabel, amount, tooth, d
     priority: "Normal",
     status: "Completed",
     performedBy: patient.treatingDoctor || "",
-    notes: ""
+    notes: notes || ""
   };
   const plan = {
     id: uid("plan"), patientId: patient.id,
@@ -20880,6 +21272,7 @@ async function saveTreatmentDoneRecord(patient, treatmentLabel, amount, tooth, d
     items: [item]
   };
   await dbPut("treatmentPlans", plan);
+  await syncToothChartForCompletedTreatment(patient, treatmentLabel, tooth, item.treatmentDate);
   logActivity("Added a treatment for "+patient.name, {patientId: patient.id});
   return {item, plan};
 }
@@ -20888,7 +21281,7 @@ async function saveTreatmentDoneRecord(patient, treatmentLabel, amount, tooth, d
 // Surgery, Prosthodontics, etc.) — entering an amount logs it straight into
 // Treatment Done in the same step; Skip leaves it alone, exactly as if this
 // prompt hadn't appeared at all.
-async function promptForTreatmentCharge(patient, treatmentLabel, tooth, onDone){
+async function promptForTreatmentCharge(patient, treatmentLabel, tooth, onDone, notes){
   const cur = await finCurrency();
   openSheet(`
     <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
@@ -20902,14 +21295,14 @@ async function promptForTreatmentCharge(patient, treatmentLabel, tooth, onDone){
   document.getElementById("btnPtcAdd").onclick = async ()=>{
     const amount = parseFloat(document.getElementById("ptcAmount").value);
     if(!amount || amount<=0){ showToast("Enter an amount, or tap Skip"); return; }
-    await saveTreatmentDoneRecord(patient, treatmentLabel, amount, tooth);
+    const saved = await saveTreatmentDoneRecord(patient, treatmentLabel, amount, tooth, "", notes);
     showToast("Added to Treatment Done — "+finMoney(amount,cur));
     closeSheet();
-    if(onDone) onDone();
+    if(onDone) onDone(saved);
   };
   document.getElementById("btnPtcSkip").onclick = ()=>{
     closeSheet();
-    if(onDone) onDone();
+    if(onDone) onDone(null);
   };
 }
 
@@ -21617,7 +22010,7 @@ async function openRxActionMenu(rxId, patient, tabBody, patientId){
 }
 
 let rxItemsDraft = [];
-const RX_FORMS = ["Tablet","Capsule","Syrup","Gel","Mouthwash","Injection","Ointment","Other"];
+const RX_FORMS = ["Tablet","Capsule","Syrup","Gel","Mouthwash","Injection","Ointment","Toothpaste","Toothbrush","Interdental Aids","Oral Cream","Gum Paint","Powder","Other"];
 
 async function openPrescriptionForm(rxId, patient){
   const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived);
