@@ -957,7 +957,7 @@
   .cal-day-header.today{color:var(--green);background:var(--green-mist);font-weight:800;border-radius:6px 6px 0 0;}
   .cal-day-col.today-col{background:rgba(63,168,138,0.06);}
   .cal-day-header.wide{width:100%;}
-  .cal-grid-scroll{max-height:520px;overflow-y:auto;width:max-content;min-width:100%;border-top:1px solid var(--off-white);}
+  .cal-grid-scroll{max-height:520px;overflow-y:auto;width:max-content;min-width:100%;border-top:1px solid var(--off-white);user-select:none;-webkit-user-select:none;}
   @media (min-width:900px){ .cal-grid-scroll{max-height:none;overflow-y:visible;} }
   .cal-grid{display:flex;position:relative;}
   .cal-time-col{width:48px;flex-shrink:0;}
@@ -973,11 +973,11 @@
     .cal-grid .cal-day-col:not(.wide){ width:auto; flex:1 1 0; min-width:0; }
   }
   .cal-time-col{border-right:1px solid var(--grey-light);}
-  .cal-slot-row{border-bottom:1px solid var(--grey-light);box-sizing:border-box;cursor:pointer;}
+  .cal-slot-row{border-bottom:1px solid var(--grey-light);box-sizing:border-box;cursor:pointer;user-select:none;-webkit-user-select:none;}
   .cal-slot-row.hour-line{border-top:1px solid var(--grey-light);}
   .cal-slot-row:hover{background:var(--off-white);}
   .cal-grid{border-top:1px solid var(--grey-light);}
-  .cal-appt-block{position:absolute;left:2px;right:2px;background:var(--green-mist);border-left:3px solid var(--green);border-radius:5px;padding:2px 5px;font-size:10px;line-height:1.25;overflow:hidden;cursor:pointer;z-index:2;box-shadow:0 0 0 1px rgba(255,255,255,0.9), 0 1px 3px rgba(0,0,0,0.12);}
+  .cal-appt-block{position:absolute;left:2px;right:2px;background:var(--green-mist);border-left:3px solid var(--green);border-radius:5px;padding:2px 5px;font-size:10px;line-height:1.25;overflow:hidden;cursor:pointer;z-index:2;box-shadow:0 0 0 1px rgba(255,255,255,0.9), 0 1px 3px rgba(0,0,0,0.12);user-select:none;-webkit-user-select:none;}
   .cal-appt-block b{display:block;font-size:10.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .cal-appt-block span:not(.status-pill){color:var(--charcoal-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;}
   .cal-appt-block.reserved{background:repeating-linear-gradient(45deg,var(--off-white),var(--off-white) 5px,var(--grey-light) 5px,var(--grey-light) 10px);border-left-color:var(--grey);}
@@ -4465,7 +4465,16 @@ const CAL_LONGPRESS_MS = 420; // touch/pen hold-to-drag threshold
 const CAL_DOUBLE_TAP_MS = 320; // window to detect a second tap on the same appointment
 
 function wireCalGridActions(root){
-  const isTouchCapable = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
+  // (pointer:coarse) asks "is the PRIMARY input mechanism a finger",
+  // rather than "does this device merely have a touchscreen anywhere" -
+  // the old maxTouchPoints/ontouchstart check answers the latter, which
+  // is true on plenty of touchscreen-equipped laptops that are actually
+  // used with a mouse or trackpad day to day, silently routing every
+  // click there into the touch-only handlers below (which never fire
+  // for an actual mouse click), breaking slot-tap-to-book entirely and
+  // leaving appointment-block drags with no handler but the browser's
+  // own default text-selection behavior.
+  const isTouchCapable = window.matchMedia("(pointer: coarse)").matches;
 
   // ---------- Empty slot rows: tap to book/reserve ----------
   root.querySelectorAll(".cal-slot-row").forEach(el=>{
@@ -4474,32 +4483,31 @@ function wireCalGridActions(root){
       el.onclick = ()=> openSlotChoiceSheet(el.dataset.date, el.dataset.time);
       return;
     }
-    // Touch: plain native touch events (not Pointer Events). Pointer
-    // Events have documented inconsistent behavior on some real Android
-    // browsers - losing track of a pointer mid-gesture, or pointermove
-    // simply not firing as expected - even though they work fine in
-    // testing tools. Touch events are the older, far more uniformly
-    // reliable API specifically on Android, so the whole calendar's
-    // touch handling (here and in wireApptDragReschedule below) uses
-    // them instead.
-    let downX=0, downY=0, downT=0, moved=false;
+    // Touch: track movement with raw touch events purely as a
+    // scroll-safety GUARD, but let the actual trigger be the browser's
+    // own native "click" event - which mobile browsers reliably
+    // synthesize after a genuine tap (as long as nothing calls
+    // preventDefault, which nothing here does) regardless of
+    // device-specific quirks in custom touch-timing logic. This is more
+    // defensive than deciding entirely from touchend's own timing: if
+    // anything about the touch sequence behaves slightly differently on
+    // a given phone/browser, the native click still fires normally and
+    // the tap still works - only the scroll-vs-tap distinction (not
+    // whether a tap happened at all) depends on the touch tracking.
+    let downX=0, downY=0, moved=false;
     el.addEventListener("touchstart", (ev)=>{
       const t = ev.touches[0]; if(!t) return;
-      downX=t.clientX; downY=t.clientY; downT=Date.now(); moved=false;
+      downX=t.clientX; downY=t.clientY; moved=false;
     }, {passive:true});
     el.addEventListener("touchmove", (ev)=>{
       const t = ev.touches[0]; if(!t) return;
       if(Math.abs(t.clientX-downX)>CAL_TAP_MOVE_TOLERANCE || Math.abs(t.clientY-downY)>CAL_TAP_MOVE_TOLERANCE) moved=true;
+      // Never preventDefault here - a real scroll stays a real scroll.
     }, {passive:true});
-    el.addEventListener("touchend", (ev)=>{
-      const elapsed = Date.now()-downT;
-      if(!moved && elapsed<CAL_TAP_MAX_MS){
-        openSlotChoiceSheet(el.dataset.date, el.dataset.time);
-      }
-      // If it moved beyond the tolerance, this was a scroll - do nothing,
-      // and critically we never called preventDefault anywhere in this
-      // sequence, so the page scrolled normally the whole time.
-    }, {passive:true});
+    el.addEventListener("click", ()=>{
+      if(moved){ moved=false; return; } // this click followed a scroll - ignore it
+      openSlotChoiceSheet(el.dataset.date, el.dataset.time);
+    });
   });
 
   root.querySelectorAll("[data-jump]").forEach(el=>{
@@ -4761,7 +4769,9 @@ function wireApptTouchReschedule(root){
 }
 
 function wireApptDragReschedule(root){
-  const isTouchCapable = ("ontouchstart" in window) || navigator.maxTouchPoints>0;
+  // Same (pointer:coarse) reasoning as wireCalGridActions above - keeps
+  // the two in agreement about which path a given device should use.
+  const isTouchCapable = window.matchMedia("(pointer: coarse)").matches;
   if(isTouchCapable) wireApptTouchReschedule(root);
   else wireApptMouseDragReschedule(root);
 }
@@ -6284,6 +6294,13 @@ function reminderRowHtml(r){
   const isLabCase = r.type==="Lab Case";
   const isOnlineAppt = r.type==="Online Appointment";
   const isImplant = r.type==="Implant";
+  // Any reminder carrying a followupDate - Aligner, Braces, Fluoride
+  // Varnish, "Follow-up After Procedure", Trauma, Space Maintainer, Pulp
+  // Therapy Review, Caries Risk Recall, Endodontics, Oral Medicine, etc. -
+  // same signature the automated daily job already uses to find these.
+  // Implant reminders use dueDate instead, so they're handled by their
+  // own existing button above rather than this one.
+  const isCaseFollowUp = !!r.followupDate && !isImplant;
   return `
     <div class="appt-row">
       <div class="appt-time" style="${overdue?'color:var(--red);':''}">${r.dueDate? new Date(r.dueDate).toLocaleDateString(undefined,{day:'numeric',month:'short'}) : '—'}</div>
@@ -6306,6 +6323,7 @@ function reminderRowHtml(r){
             ${isLabCase? `<button class="mini-btn" data-ract="remindlab" data-id="${r.id}">${icon('message',13)} Remind Lab</button>` : ""}
             ${isImplant? `<button class="mini-btn" data-ract="remindimplant" data-id="${r.id}">${icon('message',13)} Remind Patient</button>` : ""}
             ${isImplant? `<button class="mini-btn" data-ract="snoozeimplant" data-id="${r.id}">${icon('bell',13)} Snooze</button>` : ""}
+            ${isCaseFollowUp? `<button class="mini-btn" data-ract="remindcasefollowup" data-id="${r.id}">${icon('message',13)} Remind Patient</button>` : ""}
           `}
         </div>
       </div>
@@ -6365,6 +6383,8 @@ function wireReminderRowActions(root){
         openImplantSnoozeSheet(btn.dataset.id);
       }else if(action==="remindimplant"){
         await remindPatientForImplantReminder(btn.dataset.id);
+      }else if(action==="remindcasefollowup"){
+        await remindPatientForCaseFollowUp(btn.dataset.id);
       }
     });
   });
@@ -6389,6 +6409,30 @@ async function remindPatientForImplantReminder(reminderId){
     toName: patient.name, toNumber: patient.whatsappNumber||patient.mobile, patientId: patient.id,
     title: "Implant Follow-up",
     message: `Hi ${patient.name||""}, this is a reminder that your ${procedure.toLowerCase()} is due at Healing Touch Dental. Please get in touch to schedule your visit.`,
+    templateName: "follow_up", templateParams: [patient.name||"", procedure]
+  });
+}
+
+// Sends a WhatsApp follow-up directly from any case/procedure reminder
+// row that carries a followupDate (Aligner, Braces, Fluoride Varnish,
+// "Follow-up After Procedure", Trauma, Space Maintainer, Pulp Therapy
+// Review, Caries Risk Recall, Endodontics, Oral Medicine, etc.) - the
+// same approved template and the same "type" field used as the Procedure
+// detail that the automated daily job already sends with, so a manual
+// send here looks identical to what the automation would have sent.
+async function remindPatientForCaseFollowUp(reminderId){
+  const reminders = await dbGetAll("reminders");
+  const r = reminders.find(x=>x.id===reminderId);
+  if(!r){ showToast("Reminder not found"); return; }
+  if(!r.patientId){ showToast("This reminder isn't linked to a patient"); return; }
+  const patients = await dbGetAll("patients");
+  const patient = patients.find(p=>p.id===r.patientId);
+  if(!patient){ showToast("Patient not found"); return; }
+  const procedure = r.type || "your treatment";
+  openWhatsAppComposer({
+    toName: patient.name, toNumber: patient.whatsappNumber||patient.mobile, patientId: patient.id,
+    title: "Follow-up Reminder",
+    message: `Hi ${patient.name||""}, this is a reminder regarding your follow-up: ${r.title||procedure}. Please get in touch to schedule your visit at Healing Touch Dental.`,
     templateName: "follow_up", templateParams: [patient.name||"", procedure]
   });
 }
@@ -8048,7 +8092,11 @@ async function openReminderTodaySheet(todayAppts){
         time: formatTime(appt.startTime),
         doctorName: appt.doctor||""
       }, `Hi ${p.name}, this is a reminder that you have an appointment today at ${formatTime(appt.startTime)}.`);
-      openWhatsAppComposer({ title:"Appointment Reminder", toName: p.name, toNumber: p.mobile, message, patientId: p.id });
+      const dateStr = appt.date ? fromDateKey(appt.date).toLocaleDateString(undefined,{weekday:'long', day:'numeric', month:'long'}) : "";
+      openWhatsAppComposer({
+        title:"Appointment Reminder", toName: p.name, toNumber: p.whatsappNumber||p.mobile, message, patientId: p.id,
+        templateName: "appointment_reminder", templateParams: [p.name||"", dateStr, formatTime(appt.startTime)]
+      });
     };
   });
 }
