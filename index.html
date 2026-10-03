@@ -4096,6 +4096,8 @@ async function renderPatientProfileSheet(id){
         <button class="qbtn" id="qAppt">${icon('calendar',15)}New Appt</button>
         <button class="qbtn" id="qCall">${icon('phone',15)}Call</button>
         <button class="qbtn" id="qWhatsapp">${icon('message',15)}WhatsApp</button>
+        <button class="qbtn" id="qEmail">${icon('mail',15)}Send Email</button>
+        <button class="qbtn" id="qInstructions">${icon('assist',15)}Send Instructions</button>
         <button class="qbtn" id="qPrint">${icon('print',15)}Print</button>
         <button class="qbtn" id="qNotes">${icon('edit',15)}Notes</button>
         <button class="qbtn" id="qConsent">${icon('file',15)}Consent Forms</button>
@@ -4124,6 +4126,8 @@ async function renderPatientProfileSheet(id){
   document.getElementById("qPrint").onclick = ()=> openPrintCenterSheet(p);
   document.getElementById("qNotes").onclick = ()=> openPatientNotesSheet(p);
   document.getElementById("qConsent").onclick = ()=> openConsentFormsListSheet(p);
+  document.getElementById("qEmail").onclick = ()=> openPatientEmailSheet(p);
+  document.getElementById("qInstructions").onclick = ()=> openSendInstructionsSheet(p);
   document.getElementById("qPaymentDue").onclick = ()=> openPaymentDueListSheet(p);
   const closeAlertBtn = document.getElementById("btnClosePaymentAlert");
   if(closeAlertBtn) closeAlertBtn.onclick = ()=>{ document.getElementById("profilePaymentDueAlert").style.display = "none"; };
@@ -5097,7 +5101,7 @@ async function sendReviewLinkForAppt(appt, patient){
   openWhatsAppComposer({
     toName: appt.patientName, toNumber: patient?(patient.whatsappNumber||patient.mobile):null, patientId: appt.patientId,
     title: "Review Request", message,
-    templateName: "review_link", templateParams: [appt.patientName||"there"]
+    templateName: "review_link", templateParams: [appt.patientName||"there", clinic.googleReviewLink]
   });
 }
 
@@ -5130,7 +5134,7 @@ async function sendReviewLinkForPatient(patient){
   const message = template.split("{patientName}").join(patient.name||"there").split("{clinicName}").join(clinic.name).split("{reviewLink}").join(clinic.googleReviewLink);
   openWhatsAppComposer({
     toName: patient.name, toNumber: patient.whatsappNumber||patient.mobile, patientId: patient.id, title:"Review Request", message,
-    templateName: "review_link", templateParams: [patient.name||"there"]
+    templateName: "review_link", templateParams: [patient.name||"there", clinic.googleReviewLink]
   });
 }
 
@@ -5144,6 +5148,38 @@ async function sendOutstandingPaymentMessage(patient){
   if(total<=0.001){ showToast("This patient has no outstanding balance"); return; }
   const message = `Hi ${patient.name}, this is a gentle reminder that you have an outstanding balance of ${finMoney(total,cur)} at Healing Touch Dental. Please clear it at your earliest convenience. Thank you!`;
   openWhatsAppComposer({ toName: patient.name, toNumber: patient.whatsappNumber||patient.mobile, patientId: patient.id, title:"Outstanding Payment", message });
+}
+
+// Email composer from the patient profile. Opens the device's own mail app
+// (Gmail / Outlook) with everything filled in, the same way the lab
+// emails work. If the patient has no email saved, it can be typed here
+// and saved to their profile in the same step.
+async function openPatientEmailSheet(patient){
+  const clinics = await dbGetAll("clinics");
+  const clinic = clinics.find(c=>c.id===patient.preferredClinicId) || clinics[0];
+  const sign = `\n\nWarm regards,\nHealing Touch Dental${clinic && clinic.phone ? "\n"+clinic.phone : ""}`;
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>Send Email — ${escapeHtml(patient.name)}</h2>
+    <div class="field"><label>To</label><input id="peTo" type="email" inputmode="email" value="${escapeAttr(patient.email||"")}" placeholder="patient@email.com"></div>
+    <div class="field"><label>Subject</label><input id="peSubject" value="Healing Touch Dental"></div>
+    <div class="field"><label>Message</label><textarea id="peBody" rows="8">${escapeHtml(`Dear ${patient.name},\n\n`+sign)}</textarea></div>
+    <button class="btn btn-primary btn-block" id="btnPeSend">${icon('mail',15)} Open Email</button>
+  `);
+  document.getElementById("btnPeSend").onclick = async ()=>{
+    const to = document.getElementById("peTo").value.trim();
+    const subject = document.getElementById("peSubject").value.trim();
+    const body = document.getElementById("peBody").value;
+    if(!to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)){ showToast("Enter a valid email address"); return; }
+    if(to !== (patient.email||"")){
+      const fresh = (await dbGetAll("patients")).find(x=>x.id===patient.id);
+      if(fresh && !fresh.email){ fresh.email = to; await dbPut("patients", fresh); patient.email = to; }
+    }
+    window.open(`mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, "_blank");
+    await logComm({channel:"Email", recipientType:"Patient", recipientName:patient.name, recipientContact:to, message: subject+"\n\n"+body, context:"Patient Email", patientId: patient.id});
+    logActivity("Email opened for "+patient.name, {patientId: patient.id});
+    closeSheet();
+  };
 }
 
 async function openSendInstructionsSheet(patient){
@@ -6531,7 +6567,7 @@ async function remindLabForReminder(reminderId){
   openWhatsAppComposer({
     toName: lab.name, toNumber: lab.phone, patientId: null, title:"Lab Status Check", message,
     templateName: "lab_remind",
-    templateParams: [lab.name||"", labCase.caseType||"the case", labCase.dateSent? new Date(labCase.dateSent).toLocaleDateString() : ""]
+    templateParams: [patient.name||labCase.patientName||"", labCase.caseType||"the case", labCase.dateSent? new Date(labCase.dateSent).toLocaleDateString() : ""]
   });
 }
 
@@ -6645,8 +6681,10 @@ async function renderAssistCommitments(body){
 function commitmentRowHtml(c){
   const overdue = c.status==="Pending" && commitmentDueTs(c) < Date.now();
   const isLabCommitment = c.category==="Check With Lab";
+  const isProcedureFollowUp = c.category==="Follow-up After Procedure";
   const actions = c.status==="Done" ? [] : [
     {label:"Done", action:"done", ico:"check"},
+    ...(isProcedureFollowUp? [{label:"Remind Patient", action:"remindpatient", ico:"message"}] : []),
     {label:"Snooze", action:"snooze", ico:"bell"},
     {label:"Edit", action:"edit", ico:"edit"},
     ...(isLabCommitment? [{label:"Remind Lab", action:"remindlab", ico:"message"}] : [])
@@ -6659,6 +6697,7 @@ function commitmentRowHtml(c){
           <span class="an">${escapeHtml(c.patientName||"—")}</span>
           <span class="status-pill prio-${c.priority||'Normal'}">${c.priority||'Normal'}</span>
           ${c.status==="Done" ? '<span class="status-pill st-Completed">Done</span>' : (overdue ? '<span class="status-pill st-Cancelled">Overdue</span>' : '')}
+          ${c.patientRemindedAt && c.status!=="Done" ? `<span class="status-pill st-Confirmed">Reminded ${new Date(c.patientRemindedAt).toLocaleDateString(undefined,{day:'numeric',month:'short'})}</span>` : ''}
         </div>
         <div class="am">${escapeHtml(c.category||"Other")}${c.notes? " · "+escapeHtml(c.notes):""}</div>
         ${actions.length? `<div class="appt-actions" data-commitment="${c.id}">
@@ -6678,7 +6717,41 @@ function wireCommitmentActions(root){
       else if(act==="snooze"){ openSnoozeSheet(id); }
       else if(act==="edit"){ openCommitmentForm(id); }
       else if(act==="remindlab"){ await remindLabForCommitment(id); }
+      else if(act==="remindpatient"){ await remindPatientForProcedureFollowUp(id); }
     });
+  });
+}
+
+// Sends the approved "follow_up" WhatsApp template (Name / Procedure) to
+// the patient straight from a "Follow-up After Procedure" commitment - the
+// same template and parameter shape the implant and case follow-up
+// reminders already use. The procedure is the reason typed when the
+// follow-up was scheduled (the part after "Follow-up on <date>:" in the
+// notes). A successful send stamps patientRemindedAt so the row shows a
+// "Reminded" tag and nobody sends it twice by accident.
+async function remindPatientForProcedureFollowUp(commitmentId){
+  const items = await dbGetAll("commitments");
+  const c = items.find(x=>x.id===commitmentId);
+  if(!c){ showToast("Commitment not found"); return; }
+  const patient = c.patientId ? (await dbGetAll("patients")).find(p=>p.id===c.patientId) : null;
+  const name = (patient && patient.name) || c.patientName || "";
+  const number = (patient && (patient.whatsappNumber||patient.mobile)) || c.mobile || "";
+  const notes = c.notes || "";
+  const procedure = notes.replace(/^Follow-up on [^:]+:\s*/,"").trim() || "your treatment";
+  const fuDate = c.followUpDate ? new Date(c.followUpDate) : null;
+  const fuDateStr = fuDate && !isNaN(fuDate) ? fuDate.toLocaleDateString(undefined,{weekday:'long', day:'numeric', month:'long'}) : "";
+  openWhatsAppComposer({
+    toName: name, toNumber: number, patientId: c.patientId||null,
+    title: "Follow-up Reminder",
+    message: `Hi ${name}, this is a reminder for your follow-up visit${fuDateStr? " on "+fuDateStr : ""} at Healing Touch Dental regarding ${procedure}. Please get in touch to confirm a convenient time.`,
+    templateName: "follow_up", templateParams: [name, procedure],
+    onSent: async ()=>{
+      const fresh = (await dbGetAll("commitments")).find(x=>x.id===commitmentId);
+      if(fresh){ fresh.patientRemindedAt = nowIso(); await dbPut("commitments", fresh); }
+      logActivity(`Follow-up reminder sent to ${name||"patient"} (${procedure})`, c.patientId?{patientId:c.patientId}:{});
+      showToast("Follow-up reminder sent to "+(name||"patient"));
+      refreshAssistAndHome();
+    }
   });
 }
 
@@ -6701,7 +6774,7 @@ async function remindLabForCommitment(commitmentId){
     openWhatsAppComposer({
       toName: lab.name, toNumber: lab.phone, patientId: null, title:"Lab Status Check", message,
       templateName: "lab_remind",
-      templateParams: [lab.name||"", cases[0].caseType||"the case", cases[0].dateSent? new Date(cases[0].dateSent).toLocaleDateString() : ""]
+      templateParams: [patient.name||cases[0].patientName||"", cases[0].caseType||"the case", cases[0].dateSent? new Date(cases[0].dateSent).toLocaleDateString() : ""]
     });
   }else{
     openRemindLabCasePickerSheet(cases, patient);
@@ -6732,7 +6805,11 @@ function openRemindLabCasePickerSheet(cases, patient){
     const { message, lab } = await buildLabStatusCheckMessage(checked, patient);
     if(!lab || (!lab.phone && !lab.email)){ showToast("No contact number/email on file for this lab — add one under Lab Cases"); return; }
     closeSheet();
-    openWhatsAppComposer({ toName: lab.name, toNumber: lab.phone, patientId: null, title:"Lab Status Check", message });
+    const firstSent = checked.map(c=>c.dateSent).filter(Boolean).sort()[0];
+    openWhatsAppComposer({ toName: lab.name, toNumber: lab.phone, patientId: null, title:"Lab Status Check", message,
+      templateName: "lab_remind",
+      templateParams: [patient.name||"", checked.map(c=>c.caseType||"Lab Case").join(", "), firstSent? new Date(firstSent).toLocaleDateString() : ""]
+    });
   };
 }
 
@@ -7521,7 +7598,7 @@ async function openLabCaseActionMenu(caseId){
       toName: lc.labName, toNumber: lc.labContact,
       message: labCaseSummaryText(lc),
       templateName: "lab_case",
-      templateParams: [lc.labName||"", lc.labPromisedDate? new Date(lc.labPromisedDate).toLocaleDateString() : ""]
+      templateParams: [lc.patientName||"", lc.labPromisedDate? new Date(lc.labPromisedDate).toLocaleDateString() : ""]
     });
   };
   document.getElementById("lcmEmail").onclick = async ()=>{
@@ -7899,7 +7976,7 @@ function sendNewLabCaseWhatsApp(lc){
     message: lines.join("\n"),
     patientId: lc.patientId, recipientType: "Lab",
     templateName: "lab_case",
-    templateParams: [lc.labName||"", lc.labPromisedDate? new Date(lc.labPromisedDate).toLocaleDateString() : ""]
+    templateParams: [lc.patientName||"", lc.labPromisedDate? new Date(lc.labPromisedDate).toLocaleDateString() : ""]
   });
   if(currentPage==="assist") renderAssistBody();
   else if(currentPage==="labcases") renderLabCases();
@@ -8062,43 +8139,117 @@ function sendPdfByEmail(patient, printFn, docLabel){
   }, 500);
 }
 
+// Reminder Today - sends the approved "appointment_reminder" template
+// (Name / Date / Time) straight through the active provider, without
+// routing each one through the composer sheet (which used to replace this
+// list after the first tap, so only one patient could be reminded per
+// opening and any Interakt error vanished with it). Each row now shows
+// its own result - Sent, or the exact error Interakt returned - and
+// "Send to All" works through the whole day in one go.
+//
+// A successful send stamps reminderSentAt on the appointment: the same
+// field the 9 AM automated job (api/cron-daily.js) checks, so a patient
+// reminded manually here is never reminded again by the automation, and
+// vice versa.
 async function openReminderTodaySheet(todayAppts){
-  const settings = (await dbGetAll("settings"))[0] || {};
   const clinics = await dbGetAll("clinics");
   const patients = await dbGetAll("patients");
-  const sorted = (todayAppts||[]).slice().sort((a,b)=> (a.startTime||"").localeCompare(b.startTime||""));
+  const provider = await CommunicationService.getActiveProvider();
+  const isWaWeb = provider.id==="whatsapp_web";
+  const SKIP = ["Cancelled","NoShow","Completed","Reserved"];
+  const sorted = (todayAppts||[])
+    .filter(a=> !SKIP.includes(a.status))
+    .slice().sort((a,b)=> (a.startTime||"").localeCompare(b.startTime||""));
+  const rowInfo = a=>{
+    const p = a.patientId ? patients.find(x=>x.id===a.patientId) : null;
+    const name = (p && p.name) || a.patientName || "";
+    const number = (p && (p.whatsappNumber||p.mobile)) || a.patientMobile || a.mobile || "";
+    return {p, name, number};
+  };
+  const statusHtml = a=>{
+    if(a.reminderSentAt) return `<span class="status-pill st-Confirmed">Sent ${new Date(a.reminderSentAt).toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'})}</span>`;
+    return "";
+  };
+  const pendingCount = ()=> sorted.filter(a=>!a.reminderSentAt && rowInfo(a).number).length;
+
   openSheet(`
     <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
     <h2>Reminder Today</h2>
-    <p style="margin-bottom:12px;">Sends the "Appointment Reminder" WhatsApp template (editable in Admin → Communication → WhatsApp Template) to each patient scheduled today, one at a time.</p>
-    ${sorted.length? `<div class="list-card">${sorted.map(a=>{
-        const p = patients.find(x=>x.id===a.patientId);
-        return `<div class="clinic-row">
-          <div><div class="name">${escapeHtml(p? p.name : (a.patientName||"—"))}</div><div class="addr">${formatTime(a.startTime)}${p&&p.mobile? ' · '+escapeHtml(p.mobile):''}</div></div>
-          <button class="btn btn-primary btn-sm" data-remindappt="${a.id}">Send</button>
+    <p style="margin-bottom:12px;">Sends the "appointment_reminder" WhatsApp template via <b>${escapeHtml(provider.label)}</b> to patients scheduled today. Cancelled, no-show and completed appointments are left out.</p>
+    ${sorted.length? `
+      ${isWaWeb? `<div class="warn-banner" style="margin-bottom:10px;">WhatsApp Mobile/Web is the active provider, so each reminder opens a chat for you to send — tap Send on each row. Switch to Interakt in Communication Settings for automatic sending.</div>`
+        : `<button class="btn btn-primary btn-block" id="btnRemindAllToday" style="margin-bottom:10px;">${icon('message',15)} Send to All (<span id="remindAllCount">${pendingCount()}</span>)</button>`}
+      <div class="list-card">${sorted.map(a=>{
+        const {name, number} = rowInfo(a);
+        return `<div class="clinic-row" style="flex-wrap:wrap;gap:6px;">
+          <div style="min-width:0;flex:1;">
+            <div class="name">${escapeHtml(name||"—")}</div>
+            <div class="addr">${formatTime(a.startTime)}${number? ' · '+escapeHtml(number) : ' · <span style="color:var(--red);">No number on file</span>'}</div>
+            <div id="remindStatus-${a.id}" style="margin-top:4px;font-size:12px;">${statusHtml(a)}</div>
+          </div>
+          <button class="btn ${a.reminderSentAt?'btn-outline':'btn-primary'} btn-sm" data-remindappt="${a.id}" ${number?'':'disabled'}>${a.reminderSentAt?'Resend':'Send'}</button>
         </div>`;
-      }).join("")}</div>` : `<div class="empty-card">No appointments scheduled today</div>`}
+      }).join("")}</div>
+    ` : `<div class="empty-card">No appointments to remind today</div>`}
   `);
+
+  async function sendOne(appt){
+    const {p, name, number} = rowInfo(appt);
+    const statusEl = document.getElementById("remindStatus-"+appt.id);
+    const btn = document.querySelector(`[data-remindappt="${appt.id}"]`);
+    if(!number){ if(statusEl) statusEl.innerHTML = `<span style="color:var(--red);">No WhatsApp/mobile number on file</span>`; return false; }
+    if(btn) btn.disabled = true;
+    if(statusEl) statusEl.innerHTML = `<span style="color:var(--grey);">Sending…</span>`;
+    const clinic = clinics.find(c=>c.id===appt.clinicId) || (p && clinics.find(c=>c.id===p.preferredClinicId));
+    const dateStr = appt.date ? fromDateKey(appt.date).toLocaleDateString(undefined,{weekday:'long', day:'numeric', month:'long'}) : "";
+    const timeStr = formatTime(appt.startTime);
+    const message = await renderWaTemplate("appointment_reminder", {
+      patientName: name,
+      clinicName: clinic? clinic.name.replace('Healing Touch Dental – ',''): "our clinic",
+      date: dateStr, time: timeStr, doctorName: appt.doctor||""
+    }, `Hi ${name}, this is a reminder that you have an appointment today at ${timeStr}.`);
+    const result = await CommunicationService.send("sendText", {
+      toName: name, toNumber: number, message, patientId: (p && p.id) || null,
+      templateName: "appointment_reminder", templateParams: [name, dateStr, timeStr]
+    });
+    if(result.success){
+      appt.reminderSentAt = nowIso();
+      const fresh = (await dbGetAll("appointments")).find(x=>x.id===appt.id);
+      if(fresh){ fresh.reminderSentAt = appt.reminderSentAt; await dbPut("appointments", fresh); }
+      logActivity(`Appointment reminder sent to ${name}`, p?{patientId:p.id}:{});
+      if(statusEl) statusEl.innerHTML = statusHtml(appt);
+      if(btn){ btn.disabled = false; btn.textContent = "Resend"; btn.classList.remove("btn-primary"); btn.classList.add("btn-outline"); }
+    }else{
+      if(statusEl) statusEl.innerHTML = `<span style="color:var(--red);">Failed: ${escapeHtml(result.error||"Couldn't send")}</span>`;
+      if(btn) btn.disabled = false;
+    }
+    const countEl = document.getElementById("remindAllCount");
+    if(countEl) countEl.textContent = pendingCount();
+    return result.success;
+  }
+
   document.querySelectorAll("[data-remindappt]").forEach(btn=>{
     btn.onclick = async ()=>{
       const appt = sorted.find(a=>a.id===btn.dataset.remindappt);
-      const p = patients.find(x=>x.id===appt.patientId);
-      if(!p){ showToast("Patient record not found"); return; }
-      const clinic = clinics.find(c=>c.id===appt.clinicId) || clinics.find(c=>c.id===p.preferredClinicId);
-      const message = await renderWaTemplate("appointment_reminder", {
-        patientName: p.name,
-        clinicName: clinic? clinic.name.replace('Healing Touch Dental – ',''): "our clinic",
-        date: new Date(appt.date).toLocaleDateString(undefined,{day:'numeric',month:'short'}),
-        time: formatTime(appt.startTime),
-        doctorName: appt.doctor||""
-      }, `Hi ${p.name}, this is a reminder that you have an appointment today at ${formatTime(appt.startTime)}.`);
-      const dateStr = appt.date ? fromDateKey(appt.date).toLocaleDateString(undefined,{weekday:'long', day:'numeric', month:'long'}) : "";
-      openWhatsAppComposer({
-        title:"Appointment Reminder", toName: p.name, toNumber: p.whatsappNumber||p.mobile, message, patientId: p.id,
-        templateName: "appointment_reminder", templateParams: [p.name||"", dateStr, formatTime(appt.startTime)]
-      });
+      if(appt) await sendOne(appt);
     };
   });
+
+  const allBtn = document.getElementById("btnRemindAllToday");
+  if(allBtn){
+    allBtn.onclick = async ()=>{
+      const queue = sorted.filter(a=>!a.reminderSentAt && rowInfo(a).number);
+      if(!queue.length){ showToast("Everyone scheduled today has already been reminded"); return; }
+      if(!confirm(`Send the appointment reminder to ${queue.length} patient${queue.length>1?'s':''}?`)) return;
+      allBtn.disabled = true;
+      let sent = 0, failed = 0;
+      for(const appt of queue){
+        (await sendOne(appt)) ? sent++ : failed++;
+      }
+      allBtn.disabled = false;
+      showToast(failed ? `${sent} sent, ${failed} failed — see the red message on each failed row` : `Reminders sent to ${sent} patient${sent>1?'s':''}`);
+    };
+  }
 }
 
 // =========================================================
