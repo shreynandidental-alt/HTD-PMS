@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Receipt — Healing Touch Dental</title><meta name="robots" content="noindex">
+<title>Treatment Plan — Healing Touch Dental</title><meta name="robots" content="noindex">
 <style>
   :root{--green:#0E6F5C;--green-light:#3FA88A;--mist:#E4F2ED;--ink:#1F2326;--grey:#6B7378;--line:#E3E6E8;}
   *{box-sizing:border-box;}
@@ -28,7 +28,8 @@
   .btn-primary{background:var(--green);color:#fff;} .btn-outline{background:#fff;color:var(--green);border:1.5px solid var(--green);}
   .foot{text-align:center;font-size:11.5px;color:var(--grey);padding:6px 0 20px;}
   .msg{padding:60px 20px;text-align:center;color:var(--grey);}
-  @media print{ body{background:#fff;} .wrap{padding:0;max-width:none;} .doc{box-shadow:none;border-radius:0;} .actions,.foot{display:none;}
+  @media (max-width:520px){ .hide-sm{display:none;} }
+  @media print{ .hide-sm{display:table-cell !important;}  body{background:#fff;} .wrap{padding:0;max-width:none;} .doc{box-shadow:none;border-radius:0;} .actions,.foot{display:none;}
     .head,th{-webkit-print-color-adjust:exact;print-color-adjust:exact;} }
 </style></head>
 <body><div class="wrap"><div id="app"><div class="msg">Loading…</div></div></div>
@@ -51,25 +52,26 @@
   (async ()=>{
     if(!token) return fail("This link is incomplete.");
     try{
-      const snap = await getDoc(doc(db, "publicReceipts", token));
+      const snap = await getDoc(doc(db, "publicTreatmentPlans", token));
       if(!snap.exists()) return fail("This link has expired or is no longer available. Please contact the clinic.");
       const d = snap.data();
       const money = n => (d.currency||"₹") + Number(n||0).toLocaleString("en-IN",{maximumFractionDigits:2});
       const fmtDate = v => v ? new Date(v).toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"}) : "";
       const header = `<div class="head">${d.clinicLogo? `<img src="${d.clinicLogo}" alt="">` : ""}<div><h1>${esc(d.clinicName)}</h1><div class="sub">${esc(d.clinicAddress)}${d.clinicPhone? "<br>📞 "+esc(d.clinicPhone):""}</div></div></div>`;
       
-      const rows = (d.lines||[]).map((l,i)=>`<tr><td>${i+1}</td><td>${esc(l.billNo||"—")}</td><td>${esc(l.treatment)}</td><td class="num"><b>${money(l.amount)}</b></td></tr>`).join("");
+      const rows = (d.items||[]).map((it,i)=>`<tr><td>${i+1}</td><td>${esc(it.tooth)}</td><td><b>${esc(it.treatment)}</b>${it.diagnosis? `<div style="font-size:11.5px;color:var(--grey);">${esc(it.diagnosis)}</div>`:""}</td><td class="num">${it.qty}</td><td class="num hide-sm">${money(it.fee)}</td><td class="num hide-sm">${it.discount? money(it.discount):"—"}</td><td class="num"><b>${money(it.net)}</b></td></tr>`).join("");
       app.innerHTML = `<div class="doc">${header}<div class="body">
-        <div class="title">Payment Receipt</div>
-        <div class="meta"><div><b>Received From</b>${esc(d.patientName)}${d.patientCode? " ("+esc(d.patientCode)+")":""}</div><div><b>Date</b>${fmtDate(d.receiptDate)}</div>${d.receiptNumber? `<div><b>Receipt No.</b>${esc(d.receiptNumber)}</div>`:""}${d.mode? `<div><b>Payment Mode</b>${esc(d.mode)}</div>`:""}</div>
-        <div class="tbl-wrap"><table><thead><tr><th>#</th><th>Bill No</th><th>Treatment</th><th class="num">Paid</th></tr></thead><tbody>${rows}</tbody></table></div>
-        <div class="totals"><div class="final"><span>Total Received</span><span>${money(d.total)}</span></div></div>
+        <div class="title">Treatment Plan${d.planTitle? " — "+esc(d.planTitle):""}</div>
+        <div class="meta"><div><b>Patient</b>${esc(d.patientName)}${d.patientCode? " ("+esc(d.patientCode)+")":""}</div><div><b>Date</b>${fmtDate(d.planDate)}</div>${d.doctor? `<div><b>Doctor</b>Dr. ${esc(d.doctor)}</div>`:""}</div>
+        <div class="tbl-wrap"><table><thead><tr><th>#</th><th>Tooth</th><th>Treatment</th><th class="num">Qty</th><th class="num hide-sm">Fee</th><th class="num hide-sm">Discount</th><th class="num">Amount</th></tr></thead><tbody>${rows}</tbody></table></div>
+        <div class="totals"><div><span>Gross</span><span>${money(d.gross)}</span></div>${d.discount? `<div><span>Discount</span><span>− ${money(d.discount)}</span></div>`:""}<div class="final"><span>Estimated Total</span><span>${money(d.total)}</span></div></div>
         ${d.notes? `<div class="notes"><b>Notes:</b> ${esc(d.notes)}</div>`:""}
+        <div class="notes">This is an estimate; the final cost may vary with the clinical findings during treatment.</div>
       </div></div>
-      <div class="actions"><button class="btn btn-primary" onclick="window.print()">⬇ Download PDF</button></div>
-      <div class="foot">Thank you for choosing ${esc(d.clinicName)}</div>`;
+      <div class="actions"><button class="btn btn-primary" onclick="window.print()">⬇ Download PDF</button>${d.clinicPhone? `<a class="btn btn-outline" href="tel:${esc(String(d.clinicPhone).replace(/[^\d+]/g,""))}">📞 Call Clinic</a>`:""}</div>
+      <div class="foot">${esc(d.clinicName)}${d.clinicWebsite? " · "+esc(d.clinicWebsite):""}</div>`;
 
-      document.title = "Receipt — " + (d.patientName||"");
+      document.title = "Treatment Plan — " + (d.patientName||"");
     }catch(e){ console.error(e); fail("Couldn't load this page. Please check your connection and try again."); }
   })();
 </script></body></html>

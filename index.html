@@ -448,6 +448,7 @@
   .patient-card .pinfo{flex:1;min-width:0;}
   .patient-card .pname{font-size:14px;font-weight:600;color:var(--charcoal-2);}
   .patient-card .pmeta{font-size:12px;color:var(--grey);margin-top:1px;}
+  .p-agetag{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:20px;background:var(--green-mist);color:var(--green);font-size:10.5px;font-weight:700;vertical-align:1px;white-space:nowrap;}
   .badge{display:inline-block;font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:999px;text-transform:uppercase;letter-spacing:0.3px;}
   .badge-active{background:var(--green-mist);color:var(--green);}
   .badge-followup{background:#FBF3E7;color:#7A5A22;}
@@ -486,6 +487,107 @@
   .info-grid .item .v{color:var(--charcoal-2);font-weight:500;}
   .quick-icon-row{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin:12px 0 4px;}
   .qbtn{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:7px 3px;border-radius:9px;background:var(--white);border:1px solid var(--grey-light);font-size:9px;font-weight:600;color:var(--charcoal-2);cursor:pointer;text-align:center;line-height:1.15;min-height:52px;}
+
+  /* ---------- Patient profile shortcuts (scoped to .profile-shortcuts so
+     the many OTHER .qbtn rows in the app are untouched). Each tile has
+     its own colour (--c1 / --c2), pops in with a staggered spring, lifts
+     and its icon tilts on hover, shows a ripple + squish on tap, and a
+     light sheen sweeps across on hover. Motion is switched off for anyone
+     who has "reduce motion" turned on in their device settings. */
+  .profile-shortcuts{
+    display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin:16px 0 8px;
+  }
+  @media (min-width:560px){ .profile-shortcuts{ grid-template-columns:repeat(6,1fr); } }
+  .profile-shortcuts .qbtn{
+    --c1:var(--green); --c2:var(--green-light);
+    position:relative; overflow:hidden; isolation:isolate;
+    display:flex; flex-direction:column; align-items:center; justify-content:flex-start; gap:7px;
+    border:1px solid rgba(20,23,26,0.05); border-radius:18px; padding:12px 4px 10px; min-height:84px;
+    background:linear-gradient(180deg, var(--white) 0%, color-mix(in srgb, var(--c2) 7%, var(--white)) 100%);
+    box-shadow:0 1px 2px rgba(20,23,26,0.05), 0 6px 16px -6px color-mix(in srgb, var(--c1) 30%, transparent);
+    font-size:10.5px; font-weight:600; letter-spacing:0.1px;
+    transition:transform 0.25s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.25s ease, border-color 0.25s ease;
+    animation:htdShortcutPop 0.5s cubic-bezier(0.34,1.56,0.64,1) both;
+    -webkit-tap-highlight-color:transparent;
+  }
+  .profile-shortcuts .qbtn::before{ /* sheen */
+    content:""; position:absolute; inset:0; z-index:-1;
+    background:linear-gradient(115deg, transparent 30%, rgba(255,255,255,0.65) 50%, transparent 70%);
+    transform:translateX(-120%); transition:transform 0.7s ease;
+  }
+  .profile-shortcuts .qbtn::after{ /* tap ripple */
+    content:""; position:absolute; left:50%; top:38%; width:12px; height:12px; border-radius:50%;
+    background:var(--c2); opacity:0; transform:translate(-50%,-50%) scale(1); z-index:-1; pointer-events:none;
+  }
+  .profile-shortcuts .qbtn.rippling::after{ animation:htdShortcutRipple 0.55s ease-out; }
+  .profile-shortcuts .qbtn:active{ transform:scale(0.93); }
+  @media (hover:hover){
+    .profile-shortcuts .qbtn:hover{
+      transform:translateY(-4px);
+      border-color:color-mix(in srgb, var(--c1) 25%, transparent);
+      box-shadow:0 2px 4px rgba(20,23,26,0.05), 0 14px 26px -10px color-mix(in srgb, var(--c1) 45%, transparent);
+    }
+    .profile-shortcuts .qbtn:hover::before{ transform:translateX(120%); }
+    .profile-shortcuts .qbtn:hover .qi-ico{ transform:translateY(-2px) rotate(-8deg) scale(1.08); }
+  }
+  .profile-shortcuts .qi-ico{
+    width:42px; height:42px; border-radius:14px; flex-shrink:0;
+    display:flex; align-items:center; justify-content:center; color:#fff;
+    background:linear-gradient(135deg, var(--c2) 0%, var(--c1) 100%);
+    box-shadow:0 6px 14px -4px color-mix(in srgb, var(--c1) 60%, transparent), inset 0 1px 0 rgba(255,255,255,0.35);
+    transition:transform 0.35s cubic-bezier(0.34,1.56,0.64,1);
+  }
+  .profile-shortcuts .qbtn:active .qi-ico{ transform:scale(0.86) rotate(-6deg); }
+  .profile-shortcuts .qi-lbl{
+    color:var(--charcoal-2); line-height:1.2; text-align:center; padding:0 2px;
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+  }
+  /* every shortcut uses the logo green (--c1/--c2 defaults on .qbtn) */
+  .profile-shortcuts .qbtn.danger .qi-lbl{ color:var(--charcoal-2); }
+  @keyframes htdShortcutPop{
+    0%{ opacity:0; transform:translateY(14px) scale(0.7); }
+    60%{ opacity:1; transform:translateY(-2px) scale(1.04); }
+    100%{ opacity:1; transform:translateY(0) scale(1); }
+  }
+  @keyframes htdShortcutRipple{
+    0%{ opacity:0.35; transform:translate(-50%,-50%) scale(1); }
+    100%{ opacity:0; transform:translate(-50%,-50%) scale(14); }
+  }
+  body.dark-mode .profile-shortcuts .qbtn{ background:var(--white); border-color:rgba(255,255,255,0.06); }
+  @media (prefers-reduced-motion:reduce){
+    .profile-shortcuts .qbtn, .profile-shortcuts .qi-ico, .profile-shortcuts .qbtn::before{ animation:none !important; transition:none !important; }
+  }
+  /* ---------- Patient header bio line (age · gender, then address) */
+  .profile-bio{ display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+  .profile-bio .pb-chip{
+    display:inline-flex; align-items:center; gap:5px; font-size:11.5px; font-weight:600;
+    padding:4px 9px; border-radius:20px; background:var(--green-mist); color:var(--green);
+    animation:htdCardIn 0.35s cubic-bezier(0.16,1,0.3,1) both;
+  }
+  .profile-bio .pb-chip.addr{ background:var(--white); border:1px solid var(--grey-light); color:var(--charcoal-2); font-weight:500; max-width:100%; }
+  .profile-bio .pb-chip.addr span{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* ---------- New Treatment: multiple treatments in one form */
+  .nt-block{
+    border:1px solid var(--grey-light); border-radius:14px; padding:12px 12px 4px; margin-bottom:12px;
+    background:var(--white); animation:htdCardIn 0.35s cubic-bezier(0.16,1,0.3,1) both;
+  }
+  .nt-block.removing{ animation:htdNtOut 0.22s ease forwards; }
+  @keyframes htdNtOut{ to{ opacity:0; transform:translateY(-6px) scale(0.97); } }
+  .nt-block-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+  .nt-block-num{
+    display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:700; letter-spacing:0.3px;
+    color:var(--green); text-transform:uppercase;
+  }
+  .nt-block-num b{ width:22px; height:22px; border-radius:50%; background:var(--green); color:#fff; display:inline-flex; align-items:center; justify-content:center; font-size:11.5px; }
+  .nt-remove{ border:none; background:#FBEEEC; color:var(--red); border-radius:20px; padding:5px 10px; font-size:12px; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:4px; }
+  .nt-add-another{
+    width:100%; border:1.5px dashed var(--green); background:var(--green-mist); color:var(--green);
+    border-radius:14px; padding:12px; font-weight:700; font-size:14px; cursor:pointer; margin:2px 0 14px;
+    display:flex; align-items:center; justify-content:center; gap:6px; transition:transform 0.15s ease;
+  }
+  .nt-add-another:active{ transform:scale(0.97); }
+  .nt-total{ display:flex; justify-content:space-between; align-items:center; padding:10px 12px; border-radius:12px; background:var(--off-white); font-size:13.5px; margin-bottom:12px; }
+  .nt-total b{ font-size:15px; color:var(--charcoal); }
   .qbtn:active{background:var(--off-white);}
   .qbtn.danger{color:var(--red);}
 
@@ -665,6 +767,11 @@
   .dchart-tooth-col.selected{border-color:var(--green);background:var(--green-mist);}
   .dchart-crown{width:30px;height:30px;}
   .dchart-root{width:28px;height:32px;margin-top:-2px;}
+  .dchart-tooth{width:32px;height:66px;transition:transform 0.18s cubic-bezier(0.34,1.56,0.64,1);}
+  .dchart-tooth-col.lower .dchart-toothnum{order:-1;margin:0 0 2px;}
+  .dchart-tooth-col.upper{justify-content:flex-end;}
+  .dchart-tooth-col:active .dchart-tooth{transform:scale(0.92);}
+  .dchart-tooth-col.selected .dchart-tooth svg{filter:drop-shadow(0 0 2.5px var(--green));}
   .dchart-toothnum{font-size:10px;font-weight:700;color:var(--charcoal-2);margin-top:2px;}
   .dchart-tooth-col.selected .dchart-toothnum{color:var(--green);}
   .dchart-cross{display:grid;grid-template-columns:1fr 1fr;}
@@ -678,10 +785,13 @@
   .dchart-quad .dchart-tooth-col{width:22px;padding:2px 1px;}
   .dchart-quad .dchart-crown{width:19px;height:19px;}
   .dchart-quad .dchart-root{width:17px;height:20px;}
+  .dchart-quad .dchart-tooth{width:21px;height:44px;}
   .dchart-quad .dchart-toothnum{font-size:7.5px;margin-top:1px;}
   @media (max-width:400px){
     .dchart-crown{width:24px;height:24px;}
     .dchart-root{width:22px;height:26px;}
+    .dchart-tooth{width:25px;height:52px;}
+    .dchart-quad .dchart-tooth{width:20px;height:42px;}
     .dchart-tooth-col{width:28px;padding:2px 1px;}
     .dchart-toothnum{font-size:9px;}
   }
@@ -3667,7 +3777,7 @@ async function renderPatientList(){
         <div class="patient-card" data-id="${p.id}">
           <div class="avatar">${initials(p.name)}</div>
           <div class="pinfo">
-            <div class="pname">${escapeHtml(p.name)}</div>
+            <div class="pname">${escapeHtml(p.name)}${(()=>{ const ag = patientAgeGenderLabel(p); return ag? `<span class="p-agetag">${escapeHtml(ag)}</span>` : ""; })()}</div>
             <div class="pmeta">${escapeHtml(p.mobile||"No mobile")}${p.code? " · "+escapeHtml(p.code):""}</div>
             ${patientSortBy==="recentVisit"? `<div class="pmeta" style="color:var(--grey);">${lastVisitByPatient[p.id]? "Last visit: "+new Date(lastVisitByPatient[p.id]).toLocaleDateString():"No visits yet"}</div>` : ""}
             ${patientSortBy==="recentReg"? `<div class="pmeta" style="color:var(--grey);">Registered: ${p.createdAt? new Date(p.createdAt).toLocaleDateString():"—"}</div>` : ""}
@@ -4068,6 +4178,16 @@ async function renderPatientProfileSheet(id){
         <div>
           <div class="profile-name">${escapeHtml(patientDisplayName(p))}</div>
           <div class="profile-sub">${escapeHtml(p.mobile||"")}${p.code? " · "+escapeHtml(p.code):""}</div>
+          ${(()=>{
+            const age = p.dob? computeAgeFromDob(p.dob) : p.age;
+            const addr = [p.address, p.city].filter(Boolean).join(", ");
+            const chips = [];
+            const hasAge = age!=="" && age!=null;
+            const ageTxt = hasAge? (Number(age)===0 && p.dob? "Under 1 yr" : escapeHtml(String(age))+" yrs") : "";
+            if(hasAge || p.gender) chips.push(`<span class="pb-chip">${icon('cake',13)}${ageTxt}${hasAge && p.gender? " · " : ""}${escapeHtml(p.gender||"")}</span>`);
+            if(addr) chips.push(`<span class="pb-chip addr" style="animation-delay:60ms" title="${escapeAttr(addr)}">${icon('pin',13)}<span>${escapeHtml(addr)}</span></span>`);
+            return chips.length? `<div class="profile-bio">${chips.join("")}</div>` : "";
+          })()}
         </div>
         <div style="margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;gap:6px;max-width:230px;">
           <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;">
@@ -4090,19 +4210,19 @@ async function renderPatientProfileSheet(id){
       <div class="tab-row" id="profileTabs">
         ${tabs.map(t=>`<div class="tab-btn ${patientProfileTab===t?'active':''}" data-tab="${t}">${t}</div>`).join("")}
       </div>
-      <div class="quick-icon-row">
-        <button class="qbtn" id="qEdit">${icon('edit',15)}Edit</button>
-        <button class="qbtn" id="qClinical">${icon('tooth',15)}Clinical</button>
-        <button class="qbtn" id="qAppt">${icon('calendar',15)}New Appt</button>
-        <button class="qbtn" id="qCall">${icon('phone',15)}Call</button>
-        <button class="qbtn" id="qWhatsapp">${icon('message',15)}WhatsApp</button>
-        <button class="qbtn" id="qEmail">${icon('mail',15)}Send Email</button>
-        <button class="qbtn" id="qInstructions">${icon('assist',15)}Send Instructions</button>
-        <button class="qbtn" id="qPrint">${icon('print',15)}Print</button>
-        <button class="qbtn" id="qNotes">${icon('edit',15)}Notes</button>
-        <button class="qbtn" id="qConsent">${icon('file',15)}Consent Forms</button>
-        <button class="qbtn" id="qPaymentDue">${icon('wallet',15)}Payment to be Made</button>
-        <button class="qbtn danger" id="qArchive">${icon('trash',15)}${p.status==="Archived"?"Restore":"Archive"}</button>
+      <div class="quick-icon-row profile-shortcuts" id="profileShortcuts">
+        <button class="qbtn sc-edit" id="qEdit" style="animation-delay:0ms"><span class="qi-ico">${icon('edit',20)}</span><span class="qi-lbl">Edit</span></button>
+        <button class="qbtn sc-clinical" id="qClinical" style="animation-delay:40ms"><span class="qi-ico">${icon('tooth',20)}</span><span class="qi-lbl">Clinical</span></button>
+        <button class="qbtn sc-appt" id="qAppt" style="animation-delay:80ms"><span class="qi-ico">${icon('calendar',20)}</span><span class="qi-lbl">New Appt</span></button>
+        <button class="qbtn sc-call" id="qCall" style="animation-delay:120ms"><span class="qi-ico">${icon('phone',20)}</span><span class="qi-lbl">Call</span></button>
+        <button class="qbtn sc-wa" id="qWhatsapp" style="animation-delay:160ms"><span class="qi-ico">${icon('message',20)}</span><span class="qi-lbl">WhatsApp</span></button>
+        <button class="qbtn sc-email" id="qEmail" style="animation-delay:200ms"><span class="qi-ico">${icon('mail',20)}</span><span class="qi-lbl">Send Email</span></button>
+        <button class="qbtn sc-instr" id="qInstructions" style="animation-delay:240ms"><span class="qi-ico">${icon('assist',20)}</span><span class="qi-lbl">Send Instructions</span></button>
+        <button class="qbtn sc-print" id="qPrint" style="animation-delay:280ms"><span class="qi-ico">${icon('print',20)}</span><span class="qi-lbl">Print</span></button>
+        <button class="qbtn sc-notes" id="qNotes" style="animation-delay:320ms"><span class="qi-ico">${icon('note',20)}</span><span class="qi-lbl">Notes</span></button>
+        <button class="qbtn sc-consent" id="qConsent" style="animation-delay:360ms"><span class="qi-ico">${icon('file',20)}</span><span class="qi-lbl">Consent Forms</span></button>
+        <button class="qbtn sc-pay" id="qPaymentDue" style="animation-delay:400ms"><span class="qi-ico">${icon('wallet',20)}</span><span class="qi-lbl">Payment to be Made</span></button>
+        <button class="qbtn danger sc-archive" id="qArchive" style="animation-delay:440ms"><span class="qi-ico">${icon('trash',20)}</span><span class="qi-lbl">${p.status==="Archived"?"Restore":"Archive"}</span></button>
       </div>
       <div id="profileTabBody"></div>
     </div>
@@ -4113,6 +4233,10 @@ async function renderPatientProfileSheet(id){
   document.getElementById("btnProfileHandwritten").onclick = ()=> openHandwrittenPrescriptionPad(p);
   document.querySelectorAll("#profileTabs [data-tab]").forEach(el=>{
     el.onclick = ()=>{ patientProfileTab = el.dataset.tab; renderPatientProfileSheet(id); };
+  });
+  document.querySelectorAll("#profileShortcuts .qbtn").forEach(btn=>{
+    btn.addEventListener("pointerdown", ()=>{ btn.classList.remove("rippling"); void btn.offsetWidth; btn.classList.add("rippling"); });
+    btn.addEventListener("animationend", e=>{ if(e.animationName==="htdShortcutRipple") btn.classList.remove("rippling"); });
   });
   document.getElementById("qEdit").onclick = ()=>openPatientForm(id);
   document.getElementById("qClinical").onclick = ()=> openClinicalForPatient(id);
@@ -4155,8 +4279,10 @@ async function renderPatientProfileSheet(id){
         <div class="item"><div class="k">Clinic</div><div class="v">${escapeHtml(clinic? clinic.name.replace('Healing Touch Dental – ',''):"—")}</div></div>
         <div class="item"><div class="k">Doctor</div><div class="v">${escapeHtml(p.treatingDoctor||"—")}</div></div>
         <div class="item"><div class="k">DOB</div><div class="v">${p.dob? new Date(p.dob).toLocaleDateString():"—"}</div></div>
+        <div class="item"><div class="k">Age</div><div class="v">${(()=>{ const age = p.dob? computeAgeFromDob(p.dob) : p.age; return (age!=="" && age!=null)? (Number(age)===0 && p.dob? "Under 1 yr" : escapeHtml(String(age))+" yrs") : "—"; })()}</div></div>
         <div class="item"><div class="k">Gender</div><div class="v">${escapeHtml(p.gender||"—")}</div></div>
         <div class="item"><div class="k">Email</div><div class="v">${escapeHtml(p.email||"—")}</div></div>
+        <div class="item"><div class="k">Address</div><div class="v">${escapeHtml(p.address||"—")}</div></div>
         <div class="item"><div class="k">City</div><div class="v">${escapeHtml(p.city||"—")}</div></div>
         <div class="item"><div class="k">Referred By</div><div class="v">${escapeHtml(p.referredBy||"—")}</div></div>
         <div class="item"><div class="k">Alt. Number</div><div class="v">${escapeHtml(p.altMobile||"—")}</div></div>
@@ -9474,9 +9600,10 @@ async function openInteraktConfigSheet(){
     <div class="field"><label>Default Country Code</label><input id="interaktCountryCode" value="${escapeAttr(s.interaktDefaultCountryCode||'+91')}" placeholder="e.g. +91"></div>
     <p style="margin-top:-8px;">Used whenever a patient's number is stored without one.</p>
     <div class="field"><label>Receipt Template Name (Interakt code name)</label><input id="interaktReceiptTemplate" value="${escapeAttr(s.interaktReceiptTemplate||'payment_receipt')}" placeholder="e.g. payment_receipt"></div>
+    <div class="field"><label>Treatment Plan Template Name (Interakt code name)</label><input id="interaktPlanTemplate" value="${escapeAttr(s.interaktPlanTemplate||'treatment_estimate')}" placeholder="e.g. treatment_estimate"></div>
     <p style="margin-top:-8px;">Approved template with 4 body values: 1 Patient name, 2 Amount (number only, the template already has the ₹), 3 Date, 4 Receipt link.</p>
     <div class="field"><label>Receipt Page Address (optional)</label><input id="receiptPageUrl" value="${escapeAttr(s.receiptPageUrl||'')}" placeholder="Leave blank to use this site's /receipt.html"></div>
-    <p style="margin-top:-8px;">Firestore rule needed once: <code>match /publicReceipts/{token} { allow get: if true; allow list: if false; allow create, update, delete: if request.auth != null; }</code></p>
+    <p style="margin-top:-8px;">Firestore rule needed once: <code>match /publicReceipts/{token} { allow get: if true; allow list: if false; allow create, update, delete: if request.auth != null; }</code> — and the same for <code>/publicTreatmentPlans/{token}</code> (treatment plan links).</p>
     <button class="btn btn-primary btn-block" id="btnSaveInteraktConfig" style="margin-bottom:8px;">Save</button>
     <button class="btn btn-outline btn-block" id="btnTestInteraktConnection" style="margin-bottom:8px;">Test Connection</button>
     <div id="interaktTestResult" style="margin-bottom:10px;"></div>
@@ -9494,6 +9621,7 @@ async function openInteraktConfigSheet(){
   document.getElementById("btnSaveInteraktConfig").onclick = async ()=>{
     s.interaktDefaultCountryCode = document.getElementById("interaktCountryCode").value.trim() || "+91";
     s.interaktReceiptTemplate = document.getElementById("interaktReceiptTemplate").value.trim() || "payment_receipt";
+    s.interaktPlanTemplate = document.getElementById("interaktPlanTemplate").value.trim() || "treatment_estimate";
     s.receiptPageUrl = document.getElementById("receiptPageUrl").value.trim();
     await dbPut("settings", s);
     showToast("Saved");
@@ -9668,6 +9796,16 @@ function openEntryActionMenu(label, actions){
     const el = document.querySelector(`[data-eact="${a.key}"]`);
     if(el) el.onclick = a.onClick;
   });
+}
+// "34 yrs · F", "Under 1 yr · M", "12 yrs", "Female"... for list rows.
+function patientAgeGenderLabel(p){
+  if(!p) return "";
+  const age = p.dob ? computeAgeFromDob(p.dob) : p.age;
+  const hasAge = age!=="" && age!=null && !isNaN(Number(age));
+  const ageTxt = hasAge ? (Number(age)===0 && p.dob ? "Under 1 yr" : Number(age)+" yrs") : "";
+  const g = (p.gender||"").trim();
+  const gTxt = /^m(ale)?$/i.test(g) ? "M" : /^f(emale)?$/i.test(g) ? "F" : g;
+  return [ageTxt, gTxt].filter(Boolean).join(" · ");
 }
 function computeAgeFromDob(dobStr){
   const dob = new Date(dobStr);
@@ -15020,6 +15158,86 @@ function toothRootSvg(colorKey){
   return `<svg viewBox="0 0 40 44" width="100%" height="100%"><path d="M12 4h16l-2 14-4 22-2-18h-2l-2 18-4-22Z" fill="${fill}" stroke="#8A6B3E" stroke-width="1.2"/></svg>`;
 }
 
+// Anatomical tooth outlines (FDI), drawn crown-up / roots-down in a 40x84
+// box, then flipped for upper teeth (roots up, like a real chart) and
+// mirrored for the patient's left side so the mesial surface always faces
+// the midline. Crown takes the condition colour; the root stays natural
+// ivory unless the condition is root-related (RCT) or the tooth is missing.
+const TOOTH_SHAPES = (()=>{
+  // ---- crowns
+  const cInc   = "M9.5 5 Q10 2.6 13 2.6 L27 2.6 Q30 2.6 30.5 5 C31.2 13 29.8 23 27.6 30.5 Q20 28 12.4 30.5 C10.2 23 8.8 13 9.5 5 Z";
+  const cLat   = "M11.2 6 Q11.8 3 15 3.2 L25 3.2 Q28.2 3 28.8 6 C29.4 13.5 28.2 23 26.2 30 Q20 28 13.8 30 C11.8 23 10.6 13.5 11.2 6 Z";
+  const cIncL  = "M12.6 5 Q13 2.8 15.4 2.8 L24.6 2.8 Q27 2.8 27.4 5 C27.8 13 27 23 25.4 30.2 Q20 28.4 14.6 30.2 C13 23 12.2 13 12.6 5 Z";
+  const cLatL  = "M12 5 Q12.4 2.8 15 2.8 L25 2.8 Q27.6 2.8 28 5 C28.4 13 27.6 23 25.8 30.2 Q20 28.4 14.2 30.2 C12.4 23 11.6 13 12 5 Z";
+  const rIncL  = "M14.8 29 C14.6 46 17 66 19 73.5 Q20 76 21 73.5 C23 66 25.4 46 25.2 29 Z";
+  const cCan   = "M20 1.4 Q21.2 1.4 29.2 8.4 C31 15.5 29.4 24 26.6 30.6 Q20 28.2 13.4 30.6 C10.6 24 9 15.5 10.8 8.4 Q18.8 1.4 20 1.4 Z";
+  const cPm    = "M20 3 Q22.5 3.2 28.8 9.2 C30.6 15.5 29.2 23.5 26.2 29.6 Q20 27.6 13.8 29.6 C10.8 23.5 9.4 15.5 11.2 9.2 Q17.5 3.2 20 3 Z";
+  const cMolU  = "M5 9.5 Q6.6 3.2 12.4 3.4 Q16.4 3.8 20 7.2 Q23.6 3.8 27.6 3.4 Q33.4 3.2 35 9.5 C36.2 17 34.4 24.5 31.2 29.6 Q20 27.4 8.8 29.6 C5.6 24.5 3.8 17 5 9.5 Z";
+  const cMolL  = "M4.8 9.4 Q5.8 3.6 10.2 3.4 Q13.6 3.6 15.4 6.6 Q17.8 3.2 20.8 3.3 Q24 3.6 25.6 6.6 Q27.6 3.5 30.8 3.6 Q34.4 4 35.2 9.4 C36.2 17 34.4 24.5 31.2 29.6 Q20 27.4 8.8 29.6 C5.6 24.5 3.8 17 4.8 9.4 Z";
+  const cM3U   = "M7.2 10 Q8.8 4.4 13.6 4.6 Q17.2 5 20 8 Q22.8 5 26.4 4.6 Q31.2 4.4 32.8 10 C33.8 17 32.2 24.5 29.4 29.6 Q20 27.6 10.6 29.6 C7.8 24.5 6.2 17 7.2 10 Z";
+  const cM3L   = "M7 10 Q8 4.6 11.8 4.6 Q14.6 4.8 16.2 7.4 Q18.2 4.4 20.6 4.5 Q23.4 4.7 24.8 7.4 Q26.6 4.6 29.2 4.7 Q32.2 5 33 10 C33.8 17 32.2 24.5 29.4 29.6 Q20 27.6 10.6 29.6 C7.8 24.5 6.2 17 7 10 Z";
+  // ---- roots (start just inside the crown's cervical line)
+  const rInc   = (apex)=> `M12.6 29 C12.4 46 15.6 ${apex-9} 18.6 ${apex-1.5} Q20 ${apex+1} 21.4 ${apex-1.5} C24.4 ${apex-9} 27.6 46 27.4 29 Z`;
+  const rLat   = (apex)=> `M14 29 C13.8 45 16.4 ${apex-8} 18.9 ${apex-1.5} Q20 ${apex+1} 21.1 ${apex-1.5} C23.6 ${apex-8} 26.2 45 26 29 Z`;
+  const rCan   = "M13.6 29 C13 48 16 72 18.7 80.5 Q20 83.4 21.3 80.5 C24 72 27 48 26.4 29 Z";
+  const rPm    = (apex)=> `M14 28.6 C13.4 45 16.2 ${apex-8} 18.7 ${apex-1.5} Q20 ${apex+1} 21.3 ${apex-1.5} C23.8 ${apex-8} 26.6 45 26 28.6 Z`;
+  const rPm2   = "M14 28.6 C13 42 13.4 58 15 68 Q16.2 70.6 17.4 68 C18.2 60 18.8 50 20 44 C21.2 50 21.8 60 22.6 68 Q23.8 70.6 25 68 C26.6 58 27 42 26 28.6 Z";
+  const rMolL  = "M9 28.6 C8.4 44 9 61 11.4 71 Q13 74.4 14.6 71 C16 61 17.4 46 20 38.5 C22.6 46 24 61 25.4 71 Q27 74.4 28.6 71 C31 61 31.6 44 31 28.6 Z";
+  const rMolU  = "M9 28.6 C7.4 44 6.8 58 8.2 68 Q9.8 71.4 11.4 68 C12.4 59 14 48 16.2 40.5 C17.2 52 18.4 66 19.8 73.5 Q20.8 76 21.8 73.5 C22.6 66 23.2 52 23.8 40.5 C26 48 27.6 59 28.6 68 Q30.2 71.4 31.8 68 C33.2 58 32.6 44 31 28.6 Z";
+  const rM3    = "M10.6 28.6 C10 42 11.4 55 14.6 63 Q16.4 66 18.4 63.4 Q20 61.8 21.6 63.4 Q23.6 66 25.4 63 C28.6 55 30 42 29.4 28.6 Z";
+  // ---- primary (deciduous): shorter, bulbous crowns, slender roots;
+  //      molar roots flare wide to make room for the successor below.
+  const pcInc  = "M11.4 11 Q12 8.4 15 8.4 L25 8.4 Q28 8.4 28.6 11 C29.4 18 28.2 25 25.8 30.4 Q20 28.6 14.2 30.4 C11.8 25 10.6 18 11.4 11 Z";
+  const pcLat  = "M12.6 11.6 Q13.2 9 16 9 L24 9 Q26.8 9 27.4 11.6 C28 18 27 25 25 30.2 Q20 28.6 15 30.2 C13 25 12 18 12.6 11.6 Z";
+  const pcCan  = "M20 7 Q21 7 28.8 13 C30.4 19 29 25.6 26 30.6 Q20 28.6 14 30.6 C11 25.6 9.6 19 11.2 13 Q19 7 20 7 Z";
+  const pcMol1 = "M6.8 14 Q8.4 9 13 9.2 Q16.6 9.6 20 12 Q23.4 9.6 27 9.2 Q31.6 9 33.2 14 C34.4 20 33 26 30 30 Q20 28.2 10 30 C7 26 5.6 20 6.8 14 Z";
+  const pcMol2 = "M5 13.6 Q6 9 10 9 Q13.4 9.2 15.4 11.8 Q17.8 8.8 20.8 8.9 Q24 9.2 25.6 11.8 Q27.6 9 31 9.2 Q34.4 9.6 35 13.6 C36 20 34.4 26 31 30 Q20 28.2 9 30 C5.6 26 4 20 5 13.6 Z";
+  const prInc  = "M14.6 29 C14.4 42 16.6 55 19 61 Q20 63 21 61 C23.4 55 25.6 42 25.4 29 Z";
+  const prCan  = "M14.4 29 C14 44 16.4 59 19 66 Q20 68 21 66 C23.6 59 26 44 25.6 29 Z";
+  const prMol  = "M10.4 28.8 C7.6 40 4.6 52 4.4 60 Q5.4 62.6 7.4 60.6 C10.4 52 14.4 42 20 37 C25.6 42 29.6 52 32.6 60.6 Q34.6 62.6 35.6 60 C35.4 52 32.4 40 29.6 28.8 Z";
+
+  return {
+    perm: {
+      1:{crown:cIncL, crownUpper:cInc, root:rIncL, rootUpper:rInc(78)}, 2:{crown:cLatL, crownUpper:cLat, root:rIncL, rootUpper:rLat(74)}, 3:{crown:cCan, root:rCan},
+      4:{crown:cPm, root:rPm(75), rootUpper:rPm2}, 5:{crown:cPm, root:rPm(76)},
+      6:{crown:cMolL, crownUpper:cMolU, root:rMolL, rootUpper:rMolU},
+      7:{crown:cMolL, crownUpper:cMolU, root:rMolL, rootUpper:rMolU},
+      8:{crown:cM3L, crownUpper:cM3U, root:rM3}
+    },
+    prim: {
+      1:{crown:pcInc, root:prInc}, 2:{crown:pcLat, root:prInc}, 3:{crown:pcCan, root:prCan},
+      4:{crown:pcMol1, root:prMol}, 5:{crown:pcMol2, root:prMol}
+    }
+  };
+})();
+const TOOTH_ROOT_NATURAL = "#FBF6EA";
+function toothIsUpper(t){ const q = Math.floor(Number(t)/10); return q===1||q===2||q===5||q===6; }
+function toothSvg(t, colorKey){
+  const n = Number(t), q = Math.floor(n/10), pos = n%10;
+  const primary = q>=5;
+  const set = primary ? TOOTH_SHAPES.prim : TOOTH_SHAPES.perm;
+  const def = set[pos] || set[1];
+  const upper = toothIsUpper(n);
+  const left = (q===2||q===3||q===6||q===7);
+  const crown = (upper && def.crownUpper) || def.crown;
+  const root = (upper && def.rootUpper) || def.root;
+  const missing = colorKey==="missing";
+  const crownFill = missing ? "#EDEDED" : (TOOTH_COLOR_HEX[colorKey] || TOOTH_COLOR_HEX.sound);
+  const rootFill = missing ? "#EDEDED" : (colorKey==="amber" ? TOOTH_COLOR_HEX.amber : TOOTH_ROOT_NATURAL);
+  const stroke = missing ? "#B9BDC2" : "#7C6A52";
+  const dash = missing ? ` stroke-dasharray="2.2 1.8"` : "";
+  // flip for upper (roots up), mirror for patient's left
+  const tf = `translate(${left?40:0} ${upper?84:0}) scale(${left?-1:1} ${upper?-1:1})`;
+  const cross = missing ? `<path d="M11 7l18 22M29 7 11 29" stroke="#E15241" stroke-width="2.6" stroke-linecap="round" transform="${upper?'translate(0 48)':''}"/>` : "";
+  return `<svg viewBox="0 0 40 84" width="100%" height="100%" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+    <g transform="${tf}" stroke-linejoin="round">
+      <path d="${root}" fill="${rootFill}" stroke="${stroke}" stroke-width="1.3"${dash}/>
+      <path d="${crown}" fill="${crownFill}" stroke="${stroke}" stroke-width="1.3"${dash}/>
+      ${missing? "" : `<ellipse cx="${primary?15.5:14.5}" cy="${primary?18:15}" rx="2.2" ry="${primary?5:7.5}" fill="#fff" opacity="0.4"/>`}
+    </g>${cross}
+  </svg>`;
+}
+
 let clinicalChartMode = "adult";
 let clinicalChartSelectedTeeth = new Set();
 let clinicalChartViewDate = null;
@@ -15057,9 +15275,8 @@ async function renderDentalChart(body, patient){
     const colorKey = TOOTH_CONDITION_COLOR[cond] || "sound";
     const selected = clinicalChartSelectedTeeth.has(t);
     return `
-      <div class="dchart-tooth-col ${selected?'selected':''}" data-tooth="${t}" title="Tooth ${t} — ${escapeAttr(cond)}">
-        <div class="dchart-crown">${toothCrownSvg(colorKey)}</div>
-        <div class="dchart-root">${toothRootSvg(colorKey)}</div>
+      <div class="dchart-tooth-col ${toothIsUpper(t)?'upper':'lower'} ${selected?'selected':''}" data-tooth="${t}" title="Tooth ${t} — ${escapeAttr(cond)}">
+        <div class="dchart-tooth">${toothSvg(t, colorKey)}</div>
         <div class="dchart-toothnum">${t}</div>
       </div>
     `;
@@ -15286,10 +15503,10 @@ async function openEditChartEntrySheet(entry, record, patient, body, examOptions
 // stylesheet) diagram of the chart with a color-code legend, for inclusion
 // in printed documents like Treatment Advised.
 function printSafeToothCell(t, colorKey){
-  return `<div style="display:inline-flex;flex-direction:column;align-items:center;width:24px;margin:0 1px;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
-    <div style="width:20px;height:20px;">${toothCrownSvg(colorKey)}</div>
-    <div style="width:18px;height:22px;margin-top:-2px;">${toothRootSvg(colorKey)}</div>
-    <div style="font-size:8px;font-weight:700;color:#3A4046;margin-top:1px;">${t}</div>
+  const num = `<div style="font-size:8px;font-weight:700;color:#3A4046;margin:1px 0;">${t}</div>`;
+  const upper = toothIsUpper(t);
+  return `<div style="display:inline-flex;flex-direction:column;align-items:center;vertical-align:${upper?'bottom':'top'};width:24px;margin:0 1px;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+    ${upper? "" : num}<div style="width:22px;height:46px;">${toothSvg(t, colorKey)}</div>${upper? num : ""}
   </div>`;
 }
 async function printSafeDentalChartDiagramHtml(patient, dateKey){
@@ -15478,6 +15695,7 @@ async function openTreatmentPlanActionMenu(planId, patient, onRefresh){
   openEntryActionMenu("Treatment Plan Options", [
     { key:"edit", icon:"edit", text:"Edit Treatment Plan", onClick: ()=>{ closeSheet(); openTreatmentPlanForm(planId, patient); } },
     { key:"print", icon:"print", text:"Print Treatment Plan", onClick: ()=>{ closeSheet(); printTreatmentPlanStandalone(plan, patient); } },
+    { key:"waLink", icon:"message", text:"WhatsApp Plan to Patient (PDF link)", onClick: async ()=>{ closeSheet(); await openTreatmentPlanLinkComposer(plan, patient); } },
     { key:"waPdf", icon:"message", text:"Send PDF on WhatsApp", onClick: ()=>{ closeSheet(); sendPdfOnWhatsApp(patient, ()=>printTreatmentPlanStandalone(plan, patient), "Treatment Plan"); } },
     { key:"share", icon:"share", text:"Share Treatment Plan", onClick: ()=>{ closeSheet(); shareEntityText("Treatment Plan", summary); } },
     { key:"email", icon:"mail", text:"Email Treatment Plan", onClick: ()=>{ closeSheet(); emailEntity("Treatment Plan — "+patient.name, summary, patient.email); } },
@@ -21613,46 +21831,64 @@ async function promptForTreatmentCharge(patient, treatmentLabel, tooth, onDone, 
   };
 }
 
-async function openNewTreatmentSheet(patient, tabBody, patientId, prefill, template){
+// New Treatment form. Several treatments can be entered in one go:
+// "+ Add Another Treatment" adds another card (its own tooth, diagnosis,
+// treatment, qty/fee/discount, priority, status and notes) to the same
+// form. Date and Performed By are shared. Everything is saved into ONE
+// treatment record, and the invoice / print buttons cover every
+// treatment entered, not just the first.
+async function openNewTreatmentSheet(patient, tabBody, patientId, prefill, template, existingPlanId, presetDate){
   const doctors = await dbGetAll("users");
+  const cur = await finCurrency();
   const goBack = ()=> renderPatientProfileSheet(patient.id);
   const hasRxPreset = template && (template.prescriptionItems||[]).length>0;
   const hasPostOpPreset = template && template.postOpInstructions;
   const fromTemplate = hasRxPreset || hasPostOpPreset;
+
+  const blockHtml = (treatmentVal, notesVal)=> `
+    <div class="nt-block">
+      <div class="nt-block-head">
+        <span class="nt-block-num"><b>1</b> Treatment</span>
+        <button type="button" class="nt-remove">${icon('close',12)} Remove</button>
+      </div>
+      <div class="field"><label>Tooth</label>
+        <div class="kiosk-select-display nt-tooth-display">Tap Add Tooth to select</div>
+        <button type="button" class="btn btn-outline btn-sm nt-add-tooth" style="margin-top:6px;">Add Tooth</button>
+      </div>
+      <div class="field"><label>Diagnosis</label><input class="nt-diagnosis"></div>
+      <div class="field"><label>Treatment</label><input class="nt-treatment" value="${escapeAttr(treatmentVal||'')}" placeholder="e.g. Root Canal Treatment"></div>
+      <div class="field-row">
+        <div class="field"><label>Qty</label><input type="number" min="1" class="nt-qty" value="1"></div>
+        <div class="field"><label>Fee (per unit)</label><input type="number" min="0" class="nt-fee" value="0"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Discount</label><input type="number" min="0" class="nt-discount" value="0"></div>
+        <div class="field"><label>Discount Type</label>
+          <select class="nt-discount-type">
+            <option value="flat" selected>₹ Flat Amount</option>
+            <option value="percent">% Percent</option>
+          </select>
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Priority</label>
+          <select class="nt-priority">${TREATMENT_PRIORITIES.map(p=>`<option value="${p}" ${p==="Normal"?'selected':''}>${p}</option>`).join("")}</select>
+        </div>
+        <div class="field"><label>Status</label>
+          <select class="nt-status">${TREATMENT_ITEM_STATUSES.map(s=>`<option value="${s}" ${s==="Started"?'selected':''}>${s}</option>`).join("")}</select>
+        </div>
+      </div>
+      <div class="field"><label>Notes</label><textarea class="nt-notes" rows="2" placeholder="Optional — what was done, observations, etc.">${escapeHtml(notesVal||'')}</textarea></div>
+    </div>`;
+
   renderFormAsPage(`
     <h2>New Treatment</h2>
-    <div class="field-row">
-      <div class="field"><label>Date</label><input id="ntDate" type="date" value="${toDateKey(new Date())}"></div>
-      <div class="field"><label>Tooth</label>
-        <div class="kiosk-select-display" id="ntToothDisplay">Tap Add Tooth to select</div>
-        <button type="button" class="btn btn-outline btn-sm" id="btnNtAddTooth" style="margin-top:6px;">Add Tooth</button>
-      </div>
-    </div>
-    <div class="field"><label>Diagnosis</label><input id="ntDiagnosis"></div>
-    <div class="field"><label>Treatment</label><input id="ntTreatment" value="${escapeAttr(prefill?prefill.treatment:'')}" placeholder="e.g. Root Canal Treatment"></div>
-    <div class="field-row">
-      <div class="field"><label>Qty</label><input type="number" min="1" id="ntQty" value="1"></div>
-      <div class="field"><label>Fee (per unit)</label><input type="number" min="0" id="ntFee" value="0"></div>
-    </div>
-    <div class="field-row">
-      <div class="field"><label>Discount</label><input type="number" min="0" id="ntDiscount" value="0"></div>
-      <div class="field"><label>Discount Type</label>
-        <select id="ntDiscountType">
-          <option value="flat" selected>₹ Flat Amount</option>
-          <option value="percent">% Percent</option>
-        </select>
-      </div>
-    </div>
-    <div class="field-row">
-      <div class="field"><label>Priority</label>
-        <select id="ntPriority">${TREATMENT_PRIORITIES.map(p=>`<option value="${p}" ${p==="Normal"?'selected':''}>${p}</option>`).join("")}</select>
-      </div>
-      <div class="field"><label>Status</label>
-        <select id="ntStatus">${TREATMENT_ITEM_STATUSES.map(s=>`<option value="${s}" ${s==="Started"?'selected':''}>${s}</option>`).join("")}</select>
-      </div>
-    </div>
+    ${existingPlanId? `<p style="margin-bottom:10px;color:var(--grey);">Adding to the same treatment record.</p>` : ""}
+    <div class="field"><label>Date</label><input id="ntDate" type="date" value="${presetDate || toDateKey(new Date())}"></div>
+    <div id="ntBlocks">${blockHtml(prefill?prefill.treatment:'', prefill?prefill.notes:'')}</div>
+    <button type="button" class="nt-add-another" id="btnNtAddAnother">${icon('plus',16)} Add Another Treatment</button>
+    <div class="nt-total" id="ntTotal" style="display:none;"><span id="ntTotalLbl"></span><b id="ntTotalVal"></b></div>
     <div class="field"><label>Performed By (Doctor)</label>${doctorSelectHtml("ntPerformedBy", patient.treatingDoctor||"", doctors)}</div>
-    <div class="field"><label>Notes</label><textarea id="ntNotes" rows="2" placeholder="Optional — what was done, observations, etc.">${escapeHtml(prefill?prefill.notes:'')}</textarea></div>
     ${fromTemplate? `
       <div class="section-title" style="margin-top:10px;">From "${escapeHtml(template.name)}" Template</div>
       ${hasRxPreset? `<label class="ai-crs-check" style="margin-bottom:6px;"><input type="checkbox" id="ntUseRxPreset" checked> Also add preset prescription (${template.prescriptionItems.length} medicine${template.prescriptionItems.length===1?'':'s'})</label>`:""}
@@ -21664,55 +21900,124 @@ async function openNewTreatmentSheet(patient, tabBody, patientId, prefill, templ
   `);
   wireFormBack(goBack);
   wireDoctorSelect("ntPerformedBy");
-  wireTreatmentPresetAutofill(document.getElementById("ntTreatment"), document.getElementById("ntFee"));
 
-  let ntToothValue = "";
-  document.getElementById("btnNtAddTooth").onclick = ()=>{
-    openToothPicker(ntToothValue, (value, count, multiply)=>{
-      ntToothValue = value;
-      document.getElementById("ntToothDisplay").textContent = value || "Tap Add Tooth to select";
-      if(multiply && count>1) document.getElementById("ntQty").value = count;
+  const blocksEl = document.getElementById("ntBlocks");
+  const blockNet = blk=>{
+    const qty = parseFloat(blk.querySelector(".nt-qty").value)||1;
+    const fee = parseFloat(blk.querySelector(".nt-fee").value)||0;
+    const disc = parseFloat(blk.querySelector(".nt-discount").value)||0;
+    const gross = qty*fee;
+    const d = blk.querySelector(".nt-discount-type").value==="flat" ? Math.min(gross,disc) : gross*(disc/100);
+    return gross-d;
+  };
+  function refreshBlocks(){
+    const blocks = [...blocksEl.querySelectorAll(".nt-block:not(.removing)")];
+    blocks.forEach((blk,i)=>{
+      blk.querySelector(".nt-block-num").innerHTML = `<b>${i+1}</b> Treatment`;
+      blk.querySelector(".nt-remove").style.display = blocks.length>1 ? "" : "none";
     });
+    const totalEl = document.getElementById("ntTotal");
+    if(blocks.length>1){
+      totalEl.style.display = "";
+      document.getElementById("ntTotalLbl").textContent = blocks.length+" treatments · Total";
+      document.getElementById("ntTotalVal").textContent = finMoney(blocks.reduce((t,b)=>t+blockNet(b),0), cur);
+    }else totalEl.style.display = "none";
+  }
+  function wireBlock(blk){
+    blk.dataset.tooth = "";
+    blk.querySelector(".nt-add-tooth").onclick = ()=>{
+      openToothPicker(blk.dataset.tooth, (value, count, multiply)=>{
+        blk.dataset.tooth = value || "";
+        blk.querySelector(".nt-tooth-display").textContent = value || "Tap Add Tooth to select";
+        if(multiply && count>1){ blk.querySelector(".nt-qty").value = count; refreshBlocks(); }
+      });
+    };
+    blk.querySelector(".nt-remove").onclick = ()=>{
+      blk.classList.add("removing");
+      setTimeout(()=>{ blk.remove(); refreshBlocks(); }, 220);
+      refreshBlocks();
+    };
+    blk.querySelectorAll(".nt-qty,.nt-fee,.nt-discount,.nt-discount-type").forEach(el=>{
+      el.addEventListener("input", refreshBlocks); el.addEventListener("change", refreshBlocks);
+    });
+    wireTreatmentPresetAutofill(blk.querySelector(".nt-treatment"), blk.querySelector(".nt-fee"));
+  }
+  wireBlock(blocksEl.querySelector(".nt-block"));
+  refreshBlocks();
+  document.getElementById("btnNtAddAnother").onclick = ()=>{
+    const tmp = document.createElement("div");
+    tmp.innerHTML = blockHtml("", "");
+    const blk = tmp.firstElementChild;
+    // New card starts with the same priority/status as the one above it.
+    const prev = [...blocksEl.querySelectorAll(".nt-block:not(.removing)")].pop();
+    if(prev){
+      blk.querySelector(".nt-priority").value = prev.querySelector(".nt-priority").value;
+      blk.querySelector(".nt-status").value = prev.querySelector(".nt-status").value;
+    }
+    blocksEl.appendChild(blk);
+    wireBlock(blk);
+    refreshBlocks();
+    blk.scrollIntoView({behavior:"smooth", block:"start"});
+    setTimeout(()=> blk.querySelector(".nt-treatment").focus({preventScroll:true}), 350);
   };
 
+  let saving = false;
   async function buildAndSaveTreatment(){
-    const treatment = document.getElementById("ntTreatment").value.trim();
-    if(!treatment){ showToast("Please enter a treatment name"); return null; }
-    const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived);
-    const dateVal = document.getElementById("ntDate").value;
-    const item = {
-      id: uid("planitem"),
-      treatmentDate: dateVal ? new Date(dateVal).toISOString() : nowIso(),
-      tooth: ntToothValue,
-      diagnosis: document.getElementById("ntDiagnosis").value,
-      treatment,
-      qty: parseFloat(document.getElementById("ntQty").value)||1,
-      fee: parseFloat(document.getElementById("ntFee").value)||0,
-      discount: parseFloat(document.getElementById("ntDiscount").value)||0,
-      discountType: document.getElementById("ntDiscountType").value,
-      priority: document.getElementById("ntPriority").value,
-      status: document.getElementById("ntStatus").value,
-      performedBy: getDoctorSelectValue("ntPerformedBy"),
-      notes: document.getElementById("ntNotes").value.trim()
-    };
-    const plan = {
-      id: uid("plan"), patientId: patient.id,
-      clinicId: clinicIdForNewRecord(patient, clinics),
-      doctor: patient.treatingDoctor || "",
-      createdDate: item.treatmentDate,
-      items: [item]
-    };
-    await dbPut("treatmentPlans", plan);
-    logActivity("Added a treatment for "+patient.name, {patientId: patient.id});
-    return {item, plan};
+    if(saving) return null;
+    const blocks = [...blocksEl.querySelectorAll(".nt-block:not(.removing)")];
+    const filled = blocks.filter(b=> b.querySelector(".nt-treatment").value.trim());
+    if(!filled.length){ showToast("Please enter a treatment name"); return null; }
+    const emptyIdx = blocks.findIndex(b=> !b.querySelector(".nt-treatment").value.trim());
+    if(emptyIdx>-1 && blocks.length>1){ showToast(`Treatment ${emptyIdx+1} has no name — fill it in or remove it`); return null; }
+    saving = true;
+    try{
+      const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived);
+      const dateVal = document.getElementById("ntDate").value;
+      const treatmentDate = dateVal ? new Date(dateVal).toISOString() : nowIso();
+      const performedBy = getDoctorSelectValue("ntPerformedBy");
+      const items = filled.map(blk=>({
+        id: uid("planitem"),
+        treatmentDate,
+        tooth: blk.dataset.tooth || "",
+        diagnosis: blk.querySelector(".nt-diagnosis").value,
+        treatment: blk.querySelector(".nt-treatment").value.trim(),
+        qty: parseFloat(blk.querySelector(".nt-qty").value)||1,
+        fee: parseFloat(blk.querySelector(".nt-fee").value)||0,
+        discount: parseFloat(blk.querySelector(".nt-discount").value)||0,
+        discountType: blk.querySelector(".nt-discount-type").value,
+        priority: blk.querySelector(".nt-priority").value,
+        status: blk.querySelector(".nt-status").value,
+        performedBy,
+        notes: blk.querySelector(".nt-notes").value.trim()
+      }));
+      let plan;
+      if(existingPlanId){
+        plan = (await dbGetAll("treatmentPlans")).find(pl=>pl.id===existingPlanId);
+      }
+      if(plan){
+        plan.items = (plan.items||[]).concat(items);
+        plan.updatedAt = nowIso();
+      }else{
+        plan = {
+          id: uid("plan"), patientId: patient.id,
+          clinicId: clinicIdForNewRecord(patient, clinics),
+          doctor: patient.treatingDoctor || "",
+          createdDate: treatmentDate,
+          items
+        };
+      }
+      await dbPut("treatmentPlans", plan);
+      logActivity((items.length>1? "Added "+items.length+" treatments" : "Added a treatment")+" for "+patient.name, {patientId: patient.id});
+      return {item: items[0], items, plan};
+    }finally{ saving = false; }
   }
 
   document.getElementById("btnSaveNewTreatment").onclick = async ()=>{
     const result = await buildAndSaveTreatment();
     if(!result) return;
-    const {item, plan} = result;
+    const {items, plan} = result;
     if(!fromTemplate){
-      showToast("Treatment added");
+      showToast(items.length>1? items.length+" treatments added" : "Treatment added");
       goBack();
       return;
     }
@@ -21721,9 +22026,9 @@ async function openNewTreatmentSheet(patient, tabBody, patientId, prefill, templ
     let savedRx = null;
     if(useRx){
       savedRx = {
-        id: uid("rx"), patientId: patient.id, date: item.treatmentDate,
-        clinicId: plan.clinicId, doctor: item.performedBy || patient.treatingDoctor || "",
-        diagnosis: item.diagnosis || "",
+        id: uid("rx"), patientId: patient.id, date: items[0].treatmentDate,
+        clinicId: plan.clinicId, doctor: items[0].performedBy || patient.treatingDoctor || "",
+        diagnosis: items.map(i=>i.diagnosis).filter(Boolean).join("; "),
         items: template.prescriptionItems.map(m=> Object.assign({}, m)),
         advice: "", createdAt: nowIso()
       };
@@ -21731,46 +22036,52 @@ async function openNewTreatmentSheet(patient, tabBody, patientId, prefill, templ
       logActivity("Added a prescription (from template) for "+patient.name, {patientId: patient.id});
     }
     showToast("Treatment saved — printing");
-    await printTreatmentWithPresets(item, plan, patient, savedRx, usePostOp?template.postOpInstructions:null);
+    await printTreatmentWithPresets(items, plan, patient, savedRx, usePostOp?template.postOpInstructions:null);
     goBack();
   };
   document.getElementById("btnSaveAndInvoice").onclick = async ()=>{
     const result = await buildAndSaveTreatment();
     if(!result) return;
-    showToast("Treatment added");
-    await generateInvoiceForTreatmentItem(result.item, patient, patient.id);
+    showToast(result.items.length>1? result.items.length+" treatments added" : "Treatment added");
+    await generateInvoiceForTreatmentItem(result.items, patient, patient.id);
   };
   document.getElementById("btnSaveInvoicePayment").onclick = async ()=>{
     const result = await buildAndSaveTreatment();
     if(!result) return;
-    const {inv, cur} = await createInvoiceForTreatmentItem(result.item, patient);
-    showToast("Treatment added, invoice "+inv.invoiceNumber+" generated");
-    openRecordPaymentSheet(inv, patient, cur);
+    const created = await createInvoiceForTreatmentItem(result.items, patient);
+    if(!created) return;
+    showToast("Treatment added, invoice "+created.inv.invoiceNumber+" generated");
+    openRecordPaymentSheet(created.inv, patient, created.cur);
   };
 }
 
 // Prints Treatment Done, and (when present) the just-saved Prescription and
 // the template's Post-Op Instructions, as one combined document — used when
 // a treatment is saved via a Clinical Template with presets attached.
-async function printTreatmentWithPresets(item, plan, patient, prescription, postOpText){
+async function printTreatmentWithPresets(itemOrItems, plan, patient, prescription, postOpText){
   const clinics = await dbGetAll("clinics");
   const clinic = clinics.find(c=>c.id===patient.preferredClinicId);
   const cur = await finCurrency();
-  const dt = item.treatmentDate || plan.createdDate;
-  const lineGross = (Number(item.fee)||0)*(Number(item.qty)||1);
-  const lineDiscount = item.discountType==="flat" ? Math.min(lineGross,Number(item.discount)||0) : lineGross*((Number(item.discount)||0)/100);
-  const lineNet = lineGross-lineDiscount;
+  const itemList = Array.isArray(itemOrItems) ? itemOrItems : [itemOrItems];
+  const item = itemList[0];
+  const rowsHtml = itemList.map(it=>{
+    const dt = it.treatmentDate || plan.createdDate;
+    const lineGross = (Number(it.fee)||0)*(Number(it.qty)||1);
+    const lineDiscount = it.discountType==="flat" ? Math.min(lineGross,Number(it.discount)||0) : lineGross*((Number(it.discount)||0)/100);
+    const lineNet = lineGross-lineDiscount;
+    return `<tr><td>${dt?new Date(dt).toLocaleDateString():""}</td><td>${escapeHtml(it.tooth||"")}</td><td>${escapeHtml(it.treatment||"")}</td><td>${it.status==="Started"?"In Progress":"Completed"}</td><td>${finMoney(lineGross,cur)}</td><td>${it.discount? (it.discountType==="flat"? finMoney(lineDiscount,cur) : it.discount+"% ("+finMoney(lineDiscount,cur)+")") : "—"}</td><td>${finMoney(lineNet,cur)}</td><td>${escapeHtml(it.notes||"")}</td></tr>`;
+  }).join("");
   let bodyHtml = `
     <h2 style="margin:0 0 10px;">Treatment Done</h2>
     <table><thead><tr><th>Date</th><th>Tooth</th><th>Treatment</th><th>Status</th><th>Fee</th><th>Discount</th><th>Net</th><th>Notes</th></tr></thead><tbody>
-      <tr><td>${dt?new Date(dt).toLocaleDateString():""}</td><td>${escapeHtml(item.tooth||"")}</td><td>${escapeHtml(item.treatment||"")}</td><td>${item.status==="Started"?"In Progress":"Completed"}</td><td>${finMoney(lineGross,cur)}</td><td>${item.discount? (item.discountType==="flat"? finMoney(lineDiscount,cur) : item.discount+"% ("+finMoney(lineDiscount,cur)+")") : "—"}</td><td>${finMoney(lineNet,cur)}</td><td>${escapeHtml(item.notes||"")}</td></tr>
+      ${rowsHtml}
     </tbody></table>
   `;
   if(prescription && (prescription.items||[]).length){
     bodyHtml += `
       <h2 style="margin:22px 0 10px;">Prescription</h2>
       <table><thead><tr><th>Drug</th><th>Strength</th><th>Dose</th><th>Frequency</th><th>Duration</th><th>Instructions</th></tr></thead><tbody>
-        ${prescription.items.map(m=>`<tr><td>${escapeHtml(m.drugName||"")}</td><td>${escapeHtml(m.strength||"")}</td><td>${escapeHtml(m.dose||"")}</td><td>${escapeHtml(m.frequency||"")}</td><td>${escapeHtml(m.duration||"")}</td><td>${escapeHtml(m.instructions||"")}</td></tr>`).join("")}
+        ${prescription.items.map(m=>`<tr><td>${escapeHtml(m.drugName||"")}${m.generic? `<div style="font-size:10.5px;color:#666;font-style:italic;">${escapeHtml(m.generic)}</div>` : ""}</td><td>${escapeHtml(m.strength||"")}</td><td>${escapeHtml(m.dose||"")}</td><td>${escapeHtml(m.frequency||"")}</td><td>${escapeHtml(m.duration||"")}</td><td>${escapeHtml(m.instructions||"")}</td></tr>`).join("")}
       </tbody></table>
     `;
   }
@@ -21803,17 +22114,28 @@ async function computeRemainingInvoiceableAmount(item, patientId){
   return { itemNet, alreadyInvoiced, remaining: Math.max(0, itemNet-alreadyInvoiced) };
 }
 
+// Builds invoice lines for one treatment item or a list of them (a
+// multi-treatment entry), each at whatever is still left to invoice.
+async function invoiceLinesForTreatmentItems(itemOrItems, patientId){
+  const list = Array.isArray(itemOrItems) ? itemOrItems : [itemOrItems];
+  const lines = [];
+  for(const item of list){
+    const { remaining } = await computeRemainingInvoiceableAmount(item, patientId);
+    if(remaining<=0) continue;
+    lines.push({
+      id: uid("invitem"), sourceItemId: item.id,
+      description: (item.treatment||"Treatment")+(item.tooth?" (Tooth "+item.tooth+")":""),
+      qty: 1, unitPrice: remaining, discount: 0, discountType: "flat"
+    });
+  }
+  return lines;
+}
+
 async function createInvoiceForTreatmentItem(item, patient){
   const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived);
   const cur = await finCurrency();
-  const allInvoices = await dbGetAll("invoices");
-  const { remaining } = await computeRemainingInvoiceableAmount(item, patient.id);
-  if(remaining<=0){ showToast("This treatment has already been fully invoiced"); return null; }
-  const items = [{
-    id: uid("invitem"), sourceItemId: item.id,
-    description: (item.treatment||"Treatment")+(item.tooth?" (Tooth "+item.tooth+")":""),
-    qty: 1, unitPrice: remaining, discount: 0, discountType: "flat"
-  }];
+  const items = await invoiceLinesForTreatmentItems(item, patient.id);
+  if(!items.length){ showToast("This treatment has already been fully invoiced"); return null; }
   const totals = computeInvoiceTotals(items, 0, cur);
   const inv = {
     id: uid("inv"), patientId: patient.id, clinicId: clinicIdForNewRecord(patient, clinics),
@@ -21830,18 +22152,14 @@ async function createInvoiceForTreatmentItem(item, patient){
 async function generateInvoiceForTreatmentItem(item, patient, patientId){
   const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived);
   const cur = await finCurrency();
-  const { remaining } = await computeRemainingInvoiceableAmount(item, patient.id);
-  if(remaining<=0){ showToast("This treatment has already been fully invoiced"); return; }
+  const lines = await invoiceLinesForTreatmentItems(item, patient.id);
+  if(!lines.length){ showToast("This treatment has already been fully invoiced"); return; }
   const inv = {
     id: uid("inv"), patientId: patient.id, clinicId: clinicIdForNewRecord(patient, clinics),
     invoiceNumber: await nextInvoiceNumber(),
     date: nowIso(), items: [], taxPercent: 0, amountPaid: 0
   };
-  invoiceItemsDraft = [{
-    id: uid("invitem"), sourceItemId: item.id,
-    description: (item.treatment||"Treatment")+(item.tooth?" (Tooth "+item.tooth+")":""),
-    qty: 1, unitPrice: remaining, discount: 0, discountType: "flat"
-  }];
+  invoiceItemsDraft = lines;
   returnToPatientProfile = patientId;
   renderInvoiceFormSheet(inv, clinics, false, patient, cur);
 }
@@ -22269,7 +22587,7 @@ async function renderPrescriptionTab(body, patientId, patient){
         </div>
         ${items.length? `<ul style="margin:6px 0 0;padding-left:18px;">${items.map(it=>`
           <li style="font-size:13px;color:var(--charcoal-2);margin-bottom:3px;">
-            <b>${escapeHtml(it.drugName||"")}</b>${it.strength? " "+escapeHtml(it.strength):""}${(it.dose||it.frequency||it.duration)? " — "+[it.dose,it.frequency,it.duration].filter(Boolean).map(escapeHtml).join(" · ") : ""}
+            <b>${escapeHtml(it.drugName||"")}</b>${it.strength? " "+escapeHtml(it.strength):""}${(it.dose||it.frequency||it.duration)? " — "+[it.dose,it.frequency,it.duration].filter(Boolean).map(escapeHtml).join(" · ") : ""}${it.generic? `<div style="font-size:11.5px;color:var(--grey);font-style:italic;">${escapeHtml(it.generic)}</div>` : ""}
           </li>
         `).join("")}</ul>` : `<div class="note-meta" style="margin-top:4px;">No medicines listed</div>`}
         ${r.diagnosis? `<div style="font-size:13px;margin-top:6px;color:var(--charcoal-2);">${escapeHtml(r.diagnosis)}</div>` : ""}
@@ -22299,6 +22617,7 @@ async function openRxActionMenu(rxId, patient, tabBody, patientId){
     { key:"print", icon:"print", text:"Print Prescription", onClick: async ()=>{ closeSheet(); const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived); rxItemsDraft = (rx.items||[]).map(it=>Object.assign({}, it)); printPrescription(rx, patient, clinics); } },
     { key:"waPdf", icon:"message", text:"Send PDF on WhatsApp", onClick: async ()=>{ closeSheet(); const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived); rxItemsDraft = (rx.items||[]).map(it=>Object.assign({}, it)); sendPdfOnWhatsApp(patient, ()=>printPrescription(rx, patient, clinics), "Prescription"); } },
     { key:"mailPdf", icon:"mail", text:"Mail Prescription", onClick: async ()=>{ closeSheet(); const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived); rxItemsDraft = (rx.items||[]).map(it=>Object.assign({}, it)); sendPdfByEmail(patient, ()=>printPrescription(rx, patient, clinics), "Prescription"); } },
+    { key:"pharmacyBill", icon:"receipt", text:"Generate Pharmacy Bill", onClick: ()=>{ closeSheet(); openRxPharmacyBillPicker(rx, patient, tabBody, patientId); } },
     { key:"share", icon:"share", text:"Share Prescription", onClick: ()=>{ closeSheet(); shareEntityText("Prescription", summary); } },
     { key:"email", icon:"mail", text:"Email Prescription", onClick: ()=>{ closeSheet(); emailEntity("Prescription — "+patient.name, summary, patient.email); } },
     { key:"delete", icon:"trash", text:"Delete Prescription", onClick: async ()=>{
@@ -22315,6 +22634,87 @@ async function openRxActionMenu(rxId, patient, tabBody, patientId){
     } }
   ]);
 }
+
+// Generate Pharmacy Bill from a prescription: tick which of the prescribed
+// medicines the patient is buying, set the quantity, then it opens the
+// normal Pharmacy "Dispense / New Bill" form already filled in (patient +
+// items), so bill numbering, stock deduction, payment mode and the Pharmacy
+// Sales report all work exactly as for any other pharmacy bill. Each
+// medicine is matched to a Pharmacy product by name (or generic); one that
+// isn't stocked can still be billed by typing its price.
+async function openRxPharmacyBillPicker(rx, patient, tabBody, patientId){
+  const cur = await finCurrency();
+  const products = await dbGetAll("pharmacyProducts");
+  const meds = (rx.items||[]).filter(it=> (it.drugName||"").trim());
+  if(!meds.length){ showToast("This prescription has no medicines"); return; }
+  const norm = v=> normalizeStr(v||"");
+  const findProduct = it=>{
+    const dn = norm(it.drugName), full = norm((it.drugName||"")+" "+(it.strength||"")), gn = norm(it.generic);
+    return products.find(pr=> norm(pr.name)===full) || products.find(pr=> norm(pr.name)===dn)
+      || products.find(pr=> norm(pr.name).includes(dn) || (dn.length>3 && dn.includes(norm(pr.name))))
+      || (gn ? products.find(pr=> norm(pr.name).includes(gn) || norm(pr.generic).includes(gn)) : null) || null;
+  };
+  const rows = meds.map(it=>{
+    const prod = findProduct(it);
+    return { it, prod, price: prod? (Number(prod.ourPrice)||0) : 0, qty: 1, checked: true };
+  });
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>Generate Pharmacy Bill</h2>
+    <p style="margin-bottom:10px;">Tick the medicines ${escapeHtml(patient.name)} is buying and set the quantity.</p>
+    <label class="ai-crs-check" style="margin-bottom:8px;font-weight:700;"><input type="checkbox" id="phbAll" checked> Select All</label>
+    <div class="list-card" id="phbList">${rows.map((r,i)=>`
+      <div class="clinic-row" style="align-items:flex-start;gap:10px;">
+        <input type="checkbox" class="phb-chk" data-i="${i}" checked style="margin-top:3px;width:18px;height:18px;flex-shrink:0;">
+        <div style="flex:1;min-width:0;">
+          <div class="name">${escapeHtml(r.it.drugName)}${r.it.strength? " "+escapeHtml(r.it.strength):""}</div>
+          ${r.it.generic? `<div class="addr" style="font-style:italic;">${escapeHtml(r.it.generic)}</div>` : ""}
+          <div class="addr">${r.prod? `In stock: ${Number(r.prod.stock)||0} · ${escapeHtml(r.prod.name)}` : `<span style="color:var(--amber);">Not in pharmacy stock — enter price</span>`}</div>
+          <div style="display:flex;gap:8px;margin-top:6px;">
+            <div style="flex:1;"><label style="font-size:11px;color:var(--grey);">Qty</label><input type="number" min="1" step="1" class="phb-qty" data-i="${i}" value="1"></div>
+            <div style="flex:1;"><label style="font-size:11px;color:var(--grey);">Price (${cur})</label><input type="number" min="0" step="0.01" class="phb-price" data-i="${i}" value="${r.price}"></div>
+          </div>
+        </div>
+      </div>`).join("")}</div>
+    <div class="nt-total" style="margin-top:10px;"><span id="phbCount"></span><b id="phbTotal"></b></div>
+    <button class="btn btn-primary btn-block" id="btnPhbGenerate">${icon('receipt',15)} Generate Bill</button>
+  `);
+  const refresh = ()=>{
+    const sel = rows.filter(r=>r.checked);
+    document.getElementById("phbCount").textContent = sel.length+" of "+rows.length+" selected";
+    document.getElementById("phbTotal").textContent = finMoney(sel.reduce((t,r)=>t+r.price*r.qty,0), cur);
+    document.getElementById("phbAll").checked = sel.length===rows.length;
+    document.getElementById("btnPhbGenerate").disabled = !sel.length;
+  };
+  document.querySelectorAll(".phb-chk").forEach(el=> el.onchange = ()=>{ rows[+el.dataset.i].checked = el.checked; refresh(); });
+  document.querySelectorAll(".phb-qty").forEach(el=> el.oninput = ()=>{ rows[+el.dataset.i].qty = Math.max(parseFloat(el.value)||1,1); refresh(); });
+  document.querySelectorAll(".phb-price").forEach(el=> el.oninput = ()=>{ rows[+el.dataset.i].price = Math.max(parseFloat(el.value)||0,0); refresh(); });
+  document.getElementById("phbAll").onchange = (e)=>{
+    rows.forEach(r=> r.checked = e.target.checked);
+    document.querySelectorAll(".phb-chk").forEach(el=> el.checked = e.target.checked);
+    refresh();
+  };
+  refresh();
+  document.getElementById("btnPhbGenerate").onclick = ()=>{
+    const sel = rows.filter(r=>r.checked);
+    if(!sel.length){ showToast("Select at least one medicine"); return; }
+    const unpriced = sel.find(r=> !r.price);
+    if(unpriced && !confirm(`${unpriced.it.drugName} has no price — bill it at ${finMoney(0,cur)}?`)) return;
+    editingPharmacySaleId = null;
+    pharmacySalePatient = {id: patient.id, name: patient.name};
+    pharmacySaleItemsDraft = sel.map(r=>({
+      productId: r.prod? r.prod.id : "",
+      name: r.prod? r.prod.name : ((r.it.drugName||"")+(r.it.strength? " "+r.it.strength : "")),
+      mrp: r.prod? (Number(r.prod.mrp)||r.price) : r.price,
+      discount: r.prod? (Number(r.prod.discount)||0) : 0,
+      price: r.price, qty: r.qty,
+      stockAvail: r.prod? (Number(r.prod.stock)||0) : 999999
+    }));
+    pharmacySaleReturnPatientId = patientId || patient.id;
+    renderPharmacySaleFormSheet(cur, null);
+  };
+}
+let pharmacySaleReturnPatientId = null;
 
 let rxItemsDraft = [];
 const RX_FORMS = ["Tablet","Capsule","Syrup","Gel","Mouthwash","Injection","Ointment","Toothpaste","Toothbrush","Interdental Aids","Oral Cream","Gum Paint","Powder","Other"];
@@ -22377,7 +22777,7 @@ function renderRxFormSheet(rx, clinics, isEdit, patient, doctors, rxTemplates){
     ev.target.value = "";
   };
   document.getElementById("btnAddRxItem").onclick = ()=>{
-    rxItemsDraft.push({id:uid("rxitem"), drugName:"", strength:"", form:"Tablet", dose:"", frequency:"", duration:"", instructions:""});
+    rxItemsDraft.push({id:uid("rxitem"), drugName:"", strength:"", generic:"", form:"Tablet", dose:"", frequency:"", duration:"", instructions:""});
     renderRxItems();
   };
   document.getElementById("btnSaveRx").onclick = ()=> saveRx(rx, patient, goBack);
@@ -22411,6 +22811,7 @@ function renderRxFormSheet(rx, clinics, isEdit, patient, doctors, rxTemplates){
           <div class="field"><label>Drug Name</label><input data-f="drugName" data-idx="${idx}" value="${escapeAttr(it.drugName)}"></div>
           <div class="field"><label>Strength</label><input data-f="strength" data-idx="${idx}" value="${escapeAttr(it.strength)}" placeholder="e.g. 500mg"></div>
         </div>
+        <div class="field"><label>Generic Composition</label><input data-f="generic" data-idx="${idx}" value="${escapeAttr(it.generic||'')}" placeholder="e.g. Amoxicillin 500mg + Clavulanic Acid 125mg"></div>
         <div class="field-row">
           <div class="field"><label>Form</label>
             <select data-f="form" data-idx="${idx}">${RX_FORMS.map(f=>`<option value="${f}" ${it.form===f?'selected':''}>${f}</option>`).join("")}</select>
@@ -22442,6 +22843,7 @@ function renderRxFormSheet(rx, clinics, isEdit, patient, doctors, rxTemplates){
           rxItemsDraft[idx][f] = val;
         };
         setField("strength", match.strength||"");
+        setField("generic", match.generic||"");
         setField("form", match.form||"Tablet");
         setField("dose", match.dose||"");
         setField("frequency", match.frequency||"");
@@ -22487,7 +22889,7 @@ async function printPrescription(rx, patient, clinics){
     <div class="row"><b>Doctor</b>Dr. ${escapeHtml(doctor||"")}</div>
     ${rx.diagnosis? `<div class="row"><b>Diagnosis</b>${escapeHtml(rx.diagnosis)}</div>`:""}
     ${items.length? `<table style="margin-top:14px;"><thead><tr><th>Drug</th><th>Strength</th><th>Dose</th><th>Frequency</th><th>Duration</th><th>Instructions</th></tr></thead>
-    <tbody>${items.map(it=>`<tr><td>${escapeHtml(it.drugName)}</td><td>${escapeHtml(it.strength)}</td><td>${escapeHtml(it.dose)}</td><td>${escapeHtml(it.frequency)}</td><td>${escapeHtml(it.duration)}</td><td>${escapeHtml(it.instructions)}</td></tr>`).join("")}</tbody></table>` : ""}
+    <tbody>${items.map(it=>`<tr><td>${escapeHtml(it.drugName)}${it.generic? `<div style="font-size:10.5px;color:#666;font-style:italic;">${escapeHtml(it.generic)}</div>` : ""}</td><td>${escapeHtml(it.strength)}</td><td>${escapeHtml(it.dose)}</td><td>${escapeHtml(it.frequency)}</td><td>${escapeHtml(it.duration)}</td><td>${escapeHtml(it.instructions)}</td></tr>`).join("")}</tbody></table>` : ""}
     ${rx.advice? `<div class="row" style="margin-top:8px;"><b>Advice</b>${escapeHtml(rx.advice)}</div>`:""}
     ${rx.followUpDate? `<div class="row"><b>Follow-up</b>${new Date(rx.followUpDate).toLocaleDateString()}</div>`:""}
     ${sameDayTreatments.length? `<div style="margin-top:10px;"><b style="font-size:12.5px;">Treatment Notes</b>${sameDayTreatments.map(it=>`<div class="row" style="margin-top:2px;">${escapeHtml(it.treatment||"Treatment")}${it.tooth?" (Tooth "+escapeHtml(it.tooth)+")":""} — ${escapeHtml(it.notes)}</div>`).join("")}</div>` : ""}
@@ -23713,6 +24115,7 @@ async function openQuickOpdForm(patient){
           <div class="field"><label>Drug Name</label><input data-qopdrxfield="drugName" data-qopdrxidx="${idx}" value="${escapeAttr(m.drugName)}"></div>
           <div class="field"><label>Strength</label><input data-qopdrxfield="strength" data-qopdrxidx="${idx}" value="${escapeAttr(m.strength)}" placeholder="e.g. 500mg"></div>
         </div>
+        <div class="field"><label>Generic Composition</label><input data-qopdrxfield="generic" data-qopdrxidx="${idx}" value="${escapeAttr(m.generic||'')}" placeholder="e.g. Amoxicillin 500mg + Clavulanic Acid 125mg"></div>
         <div class="field-row">
           <div class="field"><label>Form</label>
             <select data-qopdrxfield="form" data-qopdrxidx="${idx}">${RX_FORMS.map(f=>`<option value="${f}" ${m.form===f?'selected':''}>${f}</option>`).join("")}</select>
@@ -23795,6 +24198,7 @@ async function openQuickOpdForm(patient){
           qopdRx[idx][f] = val;
         };
         setField("strength", match.strength||"");
+        setField("generic", match.generic||"");
         setField("form", match.form||"Tablet");
         setField("dose", match.dose||"");
         setField("frequency", match.frequency||"");
@@ -24007,7 +24411,7 @@ async function openQuickOpdForm(patient){
     renderTreatmentRows();
   };
   document.getElementById("btnQopdAddRx").onclick = ()=>{
-    qopdRx.push({drugName:"", strength:"", form:"Tablet", dose:"", frequency:"", duration:"", instructions:""});
+    qopdRx.push({drugName:"", strength:"", generic:"", form:"Tablet", dose:"", frequency:"", duration:"", instructions:""});
     renderRxRows();
   };
   document.getElementById("qopdRxTemplate").onchange = (ev)=>{
@@ -24209,7 +24613,7 @@ async function printQuickOpdSummary(patient, clinic, r){
 
   if(r.validRxRows.length){
     const rxRows = r.validRxRows.map(m=>
-      `<tr><td>${escapeHtml(m.drugName)}${m.strength? " "+escapeHtml(m.strength):""}</td><td>${escapeHtml(m.dose||"—")}</td><td>${escapeHtml(m.frequency||"—")}</td><td>${escapeHtml(m.duration||"—")}</td><td>${escapeHtml(m.instructions||"—")}</td></tr>`
+      `<tr><td>${escapeHtml(m.drugName)}${m.strength? " "+escapeHtml(m.strength):""}${m.generic? `<div style="font-size:10.5px;color:#666;font-style:italic;">${escapeHtml(m.generic)}</div>` : ""}</td><td>${escapeHtml(m.dose||"—")}</td><td>${escapeHtml(m.frequency||"—")}</td><td>${escapeHtml(m.duration||"—")}</td><td>${escapeHtml(m.instructions||"—")}</td></tr>`
     ).join("");
     let rxHtml = `<table><thead><tr><th>Medicine</th><th>Dose</th><th>Frequency</th><th>Duration</th><th>Instructions</th></tr></thead><tbody>${rxRows}</tbody></table>`;
     if(r.advice) rxHtml += `<table style="margin-top:8px;"><tr><td style="width:150px;color:#555;font-weight:700;">Advice</td><td>${escapeHtml(r.advice)}</td></tr></table>`;
@@ -25147,6 +25551,66 @@ async function publishReceiptLink(payments, patient, cur){
     return null;
   }
 }
+// ---- Treatment plan link: same idea as the receipt link. Only what the plan
+// shows is copied into "publicTreatmentPlans" under an unguessable token;
+// plan.html shows it as a clean page with a Download PDF button.
+async function publishTreatmentPlanLink(plan, patient){
+  try{
+    const st = (await dbGetAll("settings"))[0] || {};
+    const custom = (st.planPageUrl||"").trim();
+    const base = custom || (/^https?:/i.test(location.origin) ? location.origin + "/plan.html" : "");
+    if(!base){ showToast("Open the app from its hosted address to create plan links"); return null; }
+    const clinics = await dbGetAll("clinics");
+    const clinic = clinics.find(c=>c.id===plan.clinicId) || clinics.find(c=>c.id===patient.preferredClinicId) || {};
+    const cur = await finCurrency();
+    const totals = computePlanTotals(plan.items||[], plan.overallDiscount, plan.overallDiscountType);
+    const title = patient.gender==="Female" ? "Ms." : patient.gender==="Male" ? "Mr." : "";
+    const token = plan.publicToken || newReceiptToken();
+    const snapshot = {
+      id: token,
+      clinicName: (clinic.name||"Healing Touch Dental").replace("Healing Touch Dental – ","Healing Touch Dental — "),
+      clinicAddress: clinic.address||"", clinicPhone: clinic.phone||"", clinicWebsite: clinic.website||"",
+      clinicLogo: (clinic.logo && clinic.logo.length<150000) ? clinic.logo : "",
+      patientName: (title+" "+patient.name).trim(), patientCode: patient.code||"",
+      planDate: plan.createdDate||nowIso(), planTitle: plan.title||"", doctor: plan.doctor||"",
+      currency: cur||"₹",
+      items: (plan.items||[]).map(it=>{
+        const g = (Number(it.fee)||0)*(Number(it.qty)||1);
+        const d = it.discountType==="flat" ? Math.min(g, Number(it.discount)||0) : g*((Number(it.discount)||0)/100);
+        return { tooth: it.tooth||"", diagnosis: it.diagnosis||"", treatment: it.treatment||"", qty: Number(it.qty)||1, fee: Number(it.fee)||0, discount: d, net: g-d, status: it.status||"" };
+      }),
+      gross: totals.gross, discount: totals.discount, total: totals.final,
+      notes: plan.notes||"",
+      createdAt: nowIso(), updatedAt: nowIso()
+    };
+    await window.__fb.put("publicTreatmentPlans", snapshot);
+    if(!plan.publicToken){
+      plan.publicToken = token;
+      try{ await dbPut("treatmentPlans", plan); }catch(e){}
+    }
+    return base + (base.includes("?")?"&":"?") + "t=" + token;
+  }catch(err){
+    console.error("publishTreatmentPlanLink failed:", err);
+    showToast("Couldn't create the plan link: "+((err&&err.message)||"unknown error")+" (check the Firestore rule for publicTreatmentPlans)");
+    return null;
+  }
+}
+async function openTreatmentPlanLinkComposer(plan, patient){
+  const number = patient.whatsappNumber||patient.mobile;
+  if(!number){ showToast("No WhatsApp/mobile number on file for "+patient.name); return; }
+  const link = await publishTreatmentPlanLink(plan, patient);
+  if(!link) return;
+  const st = (await dbGetAll("settings"))[0] || {};
+  const templateName = (st.interaktPlanTemplate||"treatment_estimate").trim();
+  const totals = computePlanTotals(plan.items||[], plan.overallDiscount, plan.overallDiscountType);
+  const message = `Hi ${patient.name}, here is your treatment plan from Healing Touch Dental (estimate ${totals.finalTotalStr}). View or download it here: ${link}\n\nFeel free to call us with any questions.`;
+  openWhatsAppComposer({
+    toName: patient.name, toNumber: number, patientId: patient.id, title:"Treatment Plan On WhatsApp",
+    message, templateName, templateParams:[patient.name, link],
+    onSent: ()=> logActivity("Treatment plan link sent to "+patient.name, {patientId: patient.id})
+  });
+}
+
 async function openReceiptLinkComposer(payments, patient, cur, extra){
   extra = extra||{};
   const number = patient.whatsappNumber||patient.mobile;
@@ -25542,7 +26006,7 @@ async function printPatientSummary(patient, opts){
       if(items.length){
         bodyHtml += `
           <table style="margin:6px 0 4px;"><thead><tr><th>Drug</th><th>Strength</th><th>Dose</th><th>Frequency</th><th>Duration</th><th>Instructions</th></tr></thead>
-          <tbody>${items.map(it=>`<tr><td>${escapeHtml(it.drugName||"")}</td><td>${escapeHtml(it.strength||"")}</td><td>${escapeHtml(it.dose||"")}</td><td>${escapeHtml(it.frequency||"")}</td><td>${escapeHtml(it.duration||"")}</td><td>${escapeHtml(it.instructions||"")}</td></tr>`).join("")}</tbody></table>
+          <tbody>${items.map(it=>`<tr><td>${escapeHtml(it.drugName||"")}${it.generic? `<div style="font-size:10.5px;color:#666;font-style:italic;">${escapeHtml(it.generic)}</div>` : ""}</td><td>${escapeHtml(it.strength||"")}</td><td>${escapeHtml(it.dose||"")}</td><td>${escapeHtml(it.frequency||"")}</td><td>${escapeHtml(it.duration||"")}</td><td>${escapeHtml(it.instructions||"")}</td></tr>`).join("")}</tbody></table>
         `;
       }
       if(r.advice) bodyHtml += `<div class="row"><b>Advice</b>${escapeHtml(r.advice)}</div>`;
@@ -25669,7 +26133,7 @@ async function printOpdPrescription(patient, opts){
     ${rxToShow.map((rx,i)=> (rx.items||[]).length? `
       ${ranged? `<div class="row"><b>Date</b>${new Date(rx.date).toLocaleDateString()}</div>`:""}
       <table><thead><tr><th>Drug</th><th>Strength</th><th>Dose</th><th>Frequency</th><th>Duration</th><th>Instructions</th></tr></thead>
-      <tbody>${rx.items.map(it=>`<tr><td>${escapeHtml(it.drugName)}</td><td>${escapeHtml(it.strength)}</td><td>${escapeHtml(it.dose)}</td><td>${escapeHtml(it.frequency)}</td><td>${escapeHtml(it.duration)}</td><td>${escapeHtml(it.instructions)}</td></tr>`).join("")}</tbody></table>
+      <tbody>${rx.items.map(it=>`<tr><td>${escapeHtml(it.drugName)}${it.generic? `<div style="font-size:10.5px;color:#666;font-style:italic;">${escapeHtml(it.generic)}</div>` : ""}</td><td>${escapeHtml(it.strength)}</td><td>${escapeHtml(it.dose)}</td><td>${escapeHtml(it.frequency)}</td><td>${escapeHtml(it.duration)}</td><td>${escapeHtml(it.instructions)}</td></tr>`).join("")}</tbody></table>
       ${rx.advice? `<div class="row" style="margin-top:8px;"><b>Advice</b>${escapeHtml(rx.advice)}</div>`:""}
       ${ranged && i<rxToShow.length-1? `<div style="border-top:1px solid #eee;margin:10px 0;"></div>`:""}
     ` : "").join("")}
@@ -25972,7 +26436,7 @@ async function printSelectedPrescriptions(selected, patient){
     return `
       <div class="row"><b>${new Date(r.date).toLocaleDateString()}</b>${r.doctor?"Dr. "+escapeHtml(r.doctor):""}${r.diagnosis? " · "+escapeHtml(r.diagnosis):""}</div>
       ${items.length? `<table style="margin:6px 0 4px;"><thead><tr><th>Drug</th><th>Strength</th><th>Dose</th><th>Frequency</th><th>Duration</th><th>Instructions</th></tr></thead>
-      <tbody>${items.map(it=>`<tr><td>${escapeHtml(it.drugName||"")}</td><td>${escapeHtml(it.strength||"")}</td><td>${escapeHtml(it.dose||"")}</td><td>${escapeHtml(it.frequency||"")}</td><td>${escapeHtml(it.duration||"")}</td><td>${escapeHtml(it.instructions||"")}</td></tr>`).join("")}</tbody></table>` : ""}
+      <tbody>${items.map(it=>`<tr><td>${escapeHtml(it.drugName||"")}${it.generic? `<div style="font-size:10.5px;color:#666;font-style:italic;">${escapeHtml(it.generic)}</div>` : ""}</td><td>${escapeHtml(it.strength||"")}</td><td>${escapeHtml(it.dose||"")}</td><td>${escapeHtml(it.frequency||"")}</td><td>${escapeHtml(it.duration||"")}</td><td>${escapeHtml(it.instructions||"")}</td></tr>`).join("")}</tbody></table>` : ""}
       ${r.advice? `<div class="row"><b>Advice</b>${escapeHtml(r.advice)}</div>`:""}
       ${i<selected.length-1? `<div style="border-top:1px solid #eee;margin:10px 0;"></div>`:""}
     `;
@@ -26733,6 +27197,7 @@ function openPharmacyBillActionMenu(sale, cur){
 }
 
 async function openPharmacySaleForm(existingSale){
+  pharmacySaleReturnPatientId = null;
   if(existingSale){
     editingPharmacySaleId = existingSale.id;
     pharmacySaleItemsDraft = (existingSale.items||[]).map(it=> Object.assign({}, it, {stockAvail: 999999}));
@@ -26895,6 +27360,8 @@ async function savePharmacySale(cur, shouldPrint){
   editingPharmacySaleId = null;
   closeSheet();
   if(shouldPrint) printPharmacyBill(sale, cur);
+  // A bill started from a prescription goes back to that patient's profile.
+  if(pharmacySaleReturnPatientId){ const pid = pharmacySaleReturnPatientId; pharmacySaleReturnPatientId = null; renderPatientProfileSheet(pid); return; }
   renderPharmacy();
 }
 
@@ -28018,6 +28485,7 @@ async function openClinicalTemplateEditForm(id){
           <div class="field"><label>Drug Name</label><input class="ctm-drug" data-idx="${i}" value="${escapeAttr(m.drugName)}"></div>
           <div class="field"><label>Strength</label><input class="ctm-strength" data-idx="${i}" value="${escapeAttr(m.strength)}"></div>
         </div>
+        <div class="field"><label>Generic Composition</label><input class="ctm-generic" data-idx="${i}" value="${escapeAttr(m.generic||'')}" placeholder="e.g. Amoxicillin 500mg + Clavulanic Acid 125mg"></div>
         <div class="field-row">
           <div class="field"><label>Dose</label><input class="ctm-dose" data-idx="${i}" list="rxDoseDatalist" value="${escapeAttr(m.dose)}"></div>
           <div class="field"><label>Frequency</label><input class="ctm-freq" data-idx="${i}" list="rxFrequencyDatalist" value="${escapeAttr(m.frequency)}"></div>
@@ -28033,6 +28501,7 @@ async function openClinicalTemplateEditForm(id){
   function wireRxInputs(){
     document.querySelectorAll(".ctm-drug").forEach(el=> el.oninput = ()=>{ rxDraft[parseInt(el.dataset.idx)].drugName = el.value; });
     document.querySelectorAll(".ctm-strength").forEach(el=> el.oninput = ()=>{ rxDraft[parseInt(el.dataset.idx)].strength = el.value; });
+    document.querySelectorAll(".ctm-generic").forEach(el=> el.oninput = ()=>{ rxDraft[parseInt(el.dataset.idx)].generic = el.value; });
     document.querySelectorAll(".ctm-dose").forEach(el=> el.oninput = ()=>{ rxDraft[parseInt(el.dataset.idx)].dose = el.value; });
     document.querySelectorAll(".ctm-freq").forEach(el=> el.oninput = ()=>{ rxDraft[parseInt(el.dataset.idx)].frequency = el.value; });
     document.querySelectorAll(".ctm-duration").forEach(el=> el.oninput = ()=>{ rxDraft[parseInt(el.dataset.idx)].duration = el.value; });
@@ -28064,7 +28533,7 @@ async function openClinicalTemplateEditForm(id){
   `);
   wireRxInputs();
   document.getElementById("btnAddCtmRx").onclick = ()=>{
-    rxDraft.push({ drugName:"", strength:"", dose:"", frequency:"", duration:"", instructions:"" });
+    rxDraft.push({ drugName:"", strength:"", generic:"", dose:"", frequency:"", duration:"", instructions:"" });
     document.getElementById("ctmRxContainer").innerHTML = rxItemsHtml();
     wireRxInputs();
   };
@@ -28103,7 +28572,7 @@ async function openManageMedicinesSheet(){
     <div class="list-card" style="margin:14px 0;">
       ${presets.length? presets.map(m=>`
         <div class="clinic-row">
-          <div><div class="name">${escapeHtml(m.name)}${m.strength? ' — '+escapeHtml(m.strength):''}</div><div class="addr">${escapeHtml(m.dose||"")}${m.frequency? ' · '+escapeHtml(m.frequency):''}${m.duration? ' · '+escapeHtml(m.duration):''}</div></div>
+          <div><div class="name">${escapeHtml(m.name)}${m.strength? ' — '+escapeHtml(m.strength):''}</div><div class="addr">${m.generic? '<i>'+escapeHtml(m.generic)+'</i> · ' : ''}${escapeHtml(m.dose||"")}${m.frequency? ' · '+escapeHtml(m.frequency):''}${m.duration? ' · '+escapeHtml(m.duration):''}</div></div>
           <div style="display:flex;gap:6px;">
             <button class="btn btn-outline btn-sm" data-edit="${m.id}">Edit</button>
             <button class="btn btn-outline btn-sm" data-del="${m.id}">Delete</button>
@@ -28219,6 +28688,7 @@ async function openMedicinePresetForm(id){
       <div class="field"><label>Drug Name</label><input id="medpName" value="${escapeAttr(m.name)}" placeholder="e.g. Amoxicillin"></div>
       <div class="field"><label>Strength</label><input id="medpStrength" value="${escapeAttr(m.strength)}" placeholder="e.g. 500mg"></div>
     </div>
+    <div class="field"><label>Generic Composition</label><input id="medpGeneric" value="${escapeAttr(m.generic||'')}" placeholder="e.g. Amoxicillin 500mg + Clavulanic Acid 125mg"></div>
     <div class="field-row">
       <div class="field"><label>Form</label>
         <select id="medpForm">${RX_FORMS.map(f=>`<option value="${f}" ${m.form===f?'selected':''}>${f}</option>`).join("")}</select>
@@ -28238,6 +28708,7 @@ async function openMedicinePresetForm(id){
     const updated = Object.assign({}, m, {
       name,
       strength: document.getElementById("medpStrength").value.trim(),
+      generic: document.getElementById("medpGeneric").value.trim(),
       form: document.getElementById("medpForm").value,
       dose: document.getElementById("medpDose").value.trim(),
       frequency: document.getElementById("medpFrequency").value.trim(),
@@ -28317,7 +28788,7 @@ async function openRxTemplateForm(id){
   `);
   renderRxTemplateItems();
   document.getElementById("btnAddRxTemplateItem").onclick = ()=>{
-    rxTemplateItemsDraft.push({id:uid("rxtmplitem"), drugName:"", strength:"", form:"Tablet", dose:"", frequency:"", duration:"", instructions:""});
+    rxTemplateItemsDraft.push({id:uid("rxtmplitem"), drugName:"", strength:"", generic:"", form:"Tablet", dose:"", frequency:"", duration:"", instructions:""});
     renderRxTemplateItems();
   };
   document.getElementById("btnSaveRxTemplate").onclick = async ()=>{
@@ -28346,6 +28817,7 @@ async function openRxTemplateForm(id){
           <div class="field"><label>Drug Name</label><input data-f="drugName" data-idx="${idx}" value="${escapeAttr(it.drugName)}"></div>
           <div class="field"><label>Strength</label><input data-f="strength" data-idx="${idx}" value="${escapeAttr(it.strength)}" placeholder="e.g. 500mg"></div>
         </div>
+        <div class="field"><label>Generic Composition</label><input data-f="generic" data-idx="${idx}" value="${escapeAttr(it.generic||'')}" placeholder="e.g. Amoxicillin 500mg + Clavulanic Acid 125mg"></div>
         <div class="field-row">
           <div class="field"><label>Form</label>
             <select data-f="form" data-idx="${idx}">${RX_FORMS.map(f=>`<option value="${f}" ${it.form===f?'selected':''}>${f}</option>`).join("")}</select>
@@ -28377,6 +28849,7 @@ async function openRxTemplateForm(id){
           rxTemplateItemsDraft[idx][f] = val;
         };
         setField("strength", match.strength||"");
+        setField("generic", match.generic||"");
         setField("form", match.form||"Tablet");
         setField("dose", match.dose||"");
         setField("frequency", match.frequency||"");
@@ -29970,6 +30443,7 @@ async function importPatientDataWorkbook(workbook, onProgress){
       id: uid("rxitem"),
       drugName: excelCellStr(row["DrugName"]),
       strength: excelCellStr(row["Strength"]),
+      generic: excelCellStr(row["Generic Composition"]||row["Generic"]),
       form: excelCellStr(row["Form"]) || "Tablet",
       dose: excelCellStr(row["Dose"]),
       frequency: excelCellStr(row["Frequency"]),
@@ -30301,6 +30775,9 @@ const ICON_PATHS = {
   image: `<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="8.5" cy="9.5" r="1.6"/><path d="M4 17l5.5-5.5 3 3L18 9.5l2 2"/>`,
   camera: `<path d="M4 8.5h3.2L8.6 6h6.8l1.4 2.5H20a1 1 0 0 1 1 1V18a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9.5a1 1 0 0 1 1-1Z"/><circle cx="12" cy="13.2" r="3.3"/>`,
   shield: `<path d="M12 3.2 19 6v6c0 4.6-3 8.2-7 9.3-4-1.1-7-4.7-7-9.3V6l7-2.8Z"/><path d="M8.7 12.1l2.2 2.2 4.4-4.6"/>`,
+  pin: `<path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11Z"/><circle cx="12" cy="10" r="2.4"/>`,
+  note: `<path d="M6 3.5h9l3.5 3.5V20a.5.5 0 0 1-.5.5H6a.5.5 0 0 1-.5-.5V4a.5.5 0 0 1 .5-.5Z"/><path d="M14.5 3.5V7.5h4"/><path d="M8.5 12h7M8.5 15.5h5"/>`,
+  cake: `<path d="M4 20h16v-7a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7Z"/><path d="M4 15.5c1.3 1 2.7 1 4 0s2.7-1 4 0 2.7 1 4 0 2.7-1 4 0"/><path d="M12 11V8"/><path d="M12 5.2c.8.8.8 1.8 0 2.4-.8-.6-.8-1.6 0-2.4Z"/>`,
 };
 function icon(name, size){
   size = size || 20;
