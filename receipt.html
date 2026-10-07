@@ -1,40 +1,44 @@
 <!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Receipt — Healing Touch Dental</title><meta name="robots" content="noindex">
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Receipt</title>
 <style>
-  :root{--green:#0E6F5C;--green-light:#3FA88A;--mist:#E4F2ED;--ink:#1F2326;--grey:#6B7378;--line:#E3E6E8;}
   *{box-sizing:border-box;}
-  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;background:#F3F5F4;color:var(--ink);}
-  .wrap{max-width:760px;margin:0 auto;padding:16px;}
-  .doc{background:#fff;border-radius:16px;box-shadow:0 2px 6px rgba(0,0,0,.05),0 12px 30px -12px rgba(14,111,92,.25);overflow:hidden;}
-  .head{display:flex;gap:14px;align-items:center;padding:20px;background:linear-gradient(135deg,var(--green),var(--green-light));color:#fff;}
-  .head img{width:56px;height:56px;border-radius:12px;background:#fff;object-fit:contain;padding:4px;}
-  .head h1{margin:0;font-size:18px;} .head .sub{font-size:12.5px;opacity:.9;margin-top:3px;line-height:1.4;}
-  .body{padding:20px;}
-  .title{font-size:20px;font-weight:800;color:var(--green);margin:0 0 12px;}
-  .meta{display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;font-size:13.5px;margin-bottom:16px;}
-  .meta b{display:block;font-size:11px;color:var(--grey);text-transform:uppercase;letter-spacing:.4px;font-weight:700;}
-  .tbl-wrap{overflow-x:auto;}
-  table{width:100%;border-collapse:collapse;font-size:13px;}
-  th{background:var(--mist);color:var(--green);text-align:left;padding:9px 8px;font-size:11.5px;text-transform:uppercase;letter-spacing:.3px;}
-  td{padding:9px 8px;border-bottom:1px solid var(--line);vertical-align:top;}
-  .num{text-align:right;white-space:nowrap;}
-  .totals{margin-top:14px;margin-left:auto;max-width:300px;font-size:14px;}
-  .totals div{display:flex;justify-content:space-between;padding:4px 0;}
-  .totals .final{border-top:2px solid var(--green);margin-top:6px;padding-top:8px;font-size:17px;font-weight:800;color:var(--green);}
-  .notes{margin-top:16px;font-size:13px;color:var(--grey);}
-  .actions{display:flex;gap:10px;margin:16px 0;}
-  .btn{flex:1;border:none;border-radius:12px;padding:13px;font-size:15px;font-weight:700;cursor:pointer;text-decoration:none;text-align:center;}
-  .btn-primary{background:var(--green);color:#fff;} .btn-outline{background:#fff;color:var(--green);border:1.5px solid var(--green);}
-  .foot{text-align:center;font-size:11.5px;color:var(--grey);padding:6px 0 20px;}
-  .msg{padding:60px 20px;text-align:center;color:var(--grey);}
-  @media print{ body{background:#fff;} .wrap{padding:0;max-width:none;} .doc{box-shadow:none;border-radius:0;} .actions,.foot{display:none;}
-    .head,th{-webkit-print-color-adjust:exact;print-color-adjust:exact;} }
-</style></head>
-<body><div class="wrap"><div id="app"><div class="msg">Loading…</div></div></div>
+  body{margin:0;background:#f3f5f4;font-family:Arial,Helvetica,sans-serif;color:#14171A;}
+  .wrap{max-width:640px;margin:0 auto;padding:16px;}
+  .card{background:#fff;border-radius:14px;padding:22px 20px;box-shadow:0 2px 12px rgba(0,0,0,.08);}
+  .head{display:flex;gap:14px;align-items:center;border-bottom:2px solid #14171A;padding-bottom:12px;margin-bottom:16px;}
+  .head img{width:64px;height:64px;object-fit:contain;flex-shrink:0;}
+  .head h1{font-size:16px;margin:0;}
+  .head .sub{font-size:12px;color:#666;margin-top:3px;line-height:1.4;}
+  .title{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;}
+  .meta{background:#f0f1f1;border-radius:10px;padding:10px 14px;font-size:13px;line-height:1.7;margin-bottom:14px;}
+  .thanks{font-size:14px;font-weight:600;margin-bottom:12px;line-height:1.5;}
+  .row{font-size:13px;padding:7px 0;border-bottom:1px solid #eee;}
+  .row b{display:inline-block;width:130px;color:#555;}
+  table{width:100%;border-collapse:collapse;font-size:13px;margin-top:14px;}
+  th{text-align:left;padding:6px 6px;border-bottom:2px solid #14171A;font-size:11px;text-transform:uppercase;color:#333;}
+  td{padding:8px 6px;border-bottom:1px solid #ddd;vertical-align:top;}
+  .r{text-align:right;}
+  .notes{font-size:13px;margin-top:14px;}
+  .btn{display:block;width:100%;margin-top:18px;padding:13px;border:0;border-radius:10px;background:#1F6E42;color:#fff;font-size:15px;font-weight:600;cursor:pointer;}
+  .msg{text-align:center;padding:40px 10px;color:#555;font-size:14px;line-height:1.6;}
+  .foot{text-align:center;font-size:11px;color:#999;margin-top:14px;}
+  @media print{ body{background:#fff;} .card{box-shadow:none;padding:0;} .btn,.foot{display:none;} }
+</style>
+</head>
+<body>
+<div class="wrap"><div class="card" id="root"><div class="msg">Loading your receipt…</div></div>
+<div class="foot">This is a view-only copy of your receipt.</div></div>
+
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
   import { getFirestore, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+
   const firebaseConfig = {
     apiKey: "AIzaSyAGoza4ETqjMJug-7royY0pZfpzBgNAPFU",
     authDomain: "htd-pms.firebaseapp.com",
@@ -43,33 +47,76 @@
     messagingSenderId: "500213236550",
     appId: "1:500213236550:web:86b6e6c0fb4defa38d1b47"
   };
-  const db = getFirestore(initializeApp(firebaseConfig));
-  const esc = v => String(v==null?"":v).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-  const app = document.getElementById("app");
-  const token = new URLSearchParams(location.search).get("t");
-  const fail = m => app.innerHTML = `<div class="doc"><div class="msg">${m}</div></div>`;
-  (async ()=>{
-    if(!token) return fail("This link is incomplete.");
-    try{
-      const snap = await getDoc(doc(db, "publicReceipts", token));
-      if(!snap.exists()) return fail("This link has expired or is no longer available. Please contact the clinic.");
-      const d = snap.data();
-      const money = n => (d.currency||"₹") + Number(n||0).toLocaleString("en-IN",{maximumFractionDigits:2});
-      const fmtDate = v => v ? new Date(v).toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"}) : "";
-      const header = `<div class="head">${d.clinicLogo? `<img src="${d.clinicLogo}" alt="">` : ""}<div><h1>${esc(d.clinicName)}</h1><div class="sub">${esc(d.clinicAddress)}${d.clinicPhone? "<br>📞 "+esc(d.clinicPhone):""}</div></div></div>`;
-      
-      const rows = (d.lines||[]).map((l,i)=>`<tr><td>${i+1}</td><td>${esc(l.billNo||"—")}</td><td>${esc(l.treatment)}</td><td class="num"><b>${money(l.amount)}</b></td></tr>`).join("");
-      app.innerHTML = `<div class="doc">${header}<div class="body">
-        <div class="title">Payment Receipt</div>
-        <div class="meta"><div><b>Received From</b>${esc(d.patientName)}${d.patientCode? " ("+esc(d.patientCode)+")":""}</div><div><b>Date</b>${fmtDate(d.receiptDate)}</div>${d.receiptNumber? `<div><b>Receipt No.</b>${esc(d.receiptNumber)}</div>`:""}${d.mode? `<div><b>Payment Mode</b>${esc(d.mode)}</div>`:""}</div>
-        <div class="tbl-wrap"><table><thead><tr><th>#</th><th>Bill No</th><th>Treatment</th><th class="num">Paid</th></tr></thead><tbody>${rows}</tbody></table></div>
-        <div class="totals"><div class="final"><span>Total Received</span><span>${money(d.total)}</span></div></div>
-        ${d.notes? `<div class="notes"><b>Notes:</b> ${esc(d.notes)}</div>`:""}
-      </div></div>
-      <div class="actions"><button class="btn btn-primary" onclick="window.print()">⬇ Download PDF</button></div>
-      <div class="foot">Thank you for choosing ${esc(d.clinicName)}</div>`;
 
-      document.title = "Receipt — " + (d.patientName||"");
-    }catch(e){ console.error(e); fail("Couldn't load this page. Please check your connection and try again."); }
-  })();
-</script></body></html>
+  const root = document.getElementById("root");
+  const el = (tag, cls, text)=>{ const e=document.createElement(tag); if(cls) e.className=cls; if(text!=null) e.textContent=text; return e; };
+  const money = (n, cur)=> (cur||"₹") + Number(n||0).toLocaleString("en-IN",{maximumFractionDigits:2});
+  const showMsg = (t)=>{ root.replaceChildren(el("div","msg",t)); };
+
+  const token = new URLSearchParams(location.search).get("t") || "";
+  if(!/^[a-zA-Z0-9_-]{16,}$/.test(token)){ showMsg("This receipt link isn't valid. Please contact the clinic."); }
+  else{
+    try{
+      const db = getFirestore(initializeApp(firebaseConfig));
+      const snap = await getDoc(doc(db, "publicReceipts", token));
+      if(!snap.exists()){ showMsg("We couldn't find this receipt. Please contact the clinic."); }
+      else render(snap.data());
+    }catch(err){
+      console.error(err);
+      showMsg("We couldn't load this receipt right now. Please try again in a moment or contact the clinic.");
+    }
+  }
+
+  function render(d){
+    document.title = "Receipt " + (d.receiptNumber||"");
+    root.replaceChildren();
+
+    const head = el("div","head");
+    if(d.clinicLogo){ const img = el("img"); img.src = d.clinicLogo; img.alt = ""; head.append(img); }
+    const hb = el("div");
+    hb.append(el("h1",null,d.clinicName||"Healing Touch Dental"));
+    const sub = [d.clinicAddress, d.clinicPhone, d.clinicWebsite].filter(Boolean).join(" · ");
+    if(sub) hb.append(el("div","sub",sub));
+    head.append(hb);
+    root.append(head);
+
+    root.append(el("div","title","Receipt"));
+
+    const meta = el("div","meta");
+    const line = (label, val)=>{ const p = el("div"); p.append(el("b",null,label+" ")); p.append(document.createTextNode(val)); meta.append(p); };
+    if(d.receiptNumber) line("Receipt Number:", d.receiptNumber);
+    if(d.receiptDate) line("Receipt Date:", new Date(d.receiptDate).toLocaleDateString(undefined,{day:"2-digit",month:"short",year:"numeric"}));
+    if(d.patientCode) line("Patient ID:", d.patientCode);
+    root.append(meta);
+
+    root.append(el("div","thanks","Received with thanks from "+(d.patientName||"")+" the sum of "+money(d.total,d.currency)+"."));
+
+    const modeRow = el("div","row"); modeRow.append(el("b",null,"Mode of Payment")); modeRow.append(document.createTextNode(d.mode||"—"));
+    root.append(modeRow);
+
+    const table = el("table");
+    const thead = el("thead"); const hr = el("tr");
+    ["#","Bill No","Treatment","Paid"].forEach((h,i)=>{ const th = el("th",i===3?"r":null,h); hr.append(th); });
+    thead.append(hr); table.append(thead);
+    const tbody = el("tbody");
+    (d.lines||[]).forEach((l,i)=>{
+      const tr = el("tr");
+      tr.append(el("td",null,String(i+1)), el("td",null,l.billNo||"—"), el("td",null,l.treatment||"Payment"), el("td","r",money(l.amount,d.currency)));
+      tbody.append(tr);
+    });
+    table.append(tbody);
+    const tfoot = el("tfoot"); const ft = el("tr");
+    const tl = el("td","r","Total"); tl.colSpan = 3; tl.style.fontWeight = "bold";
+    const tv = el("td","r",money(d.total,d.currency)); tv.style.fontWeight = "bold";
+    ft.append(tl,tv); tfoot.append(ft); table.append(tfoot);
+    root.append(table);
+
+    if(d.notes){ const n = el("div","notes"); n.append(el("b",null,"Notes: ")); n.append(document.createTextNode(d.notes)); root.append(n); }
+
+    const btn = el("button","btn","Print / Save as PDF");
+    btn.onclick = ()=> window.print();
+    root.append(btn);
+  }
+</script>
+</body>
+</html>
