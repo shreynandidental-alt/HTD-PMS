@@ -602,11 +602,61 @@
   .clinical-nav-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--grey);margin:0 2px 7px;}
   .clinical-nav-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;}
   .clinical-nav-grid-specialty{grid-template-columns:repeat(4,1fr);}
-  .cv-tile{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;padding:10px 4px;border-radius:12px;background:var(--white);border:1px solid var(--grey-light);cursor:pointer;text-align:center;min-height:66px;transition:background 0.15s,border-color 0.15s;}
-  .cv-tile-icon{display:flex;color:var(--charcoal-2);}
-  .cv-tile-label{font-size:10.5px;font-weight:600;color:var(--charcoal-2);line-height:1.2;}
-  .cv-tile.active{background:var(--green);border-color:var(--green);}
-  .cv-tile.active .cv-tile-icon,.cv-tile.active .cv-tile-label{color:#FFFFFF;}
+  /* Clinical tab tiles - same animated green style as the patient
+     profile shortcuts. The active view gets a solid green card. */
+  .cv-tile{position:relative;overflow:hidden;isolation:isolate;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:6px;padding:11px 4px 9px;border-radius:16px;
+    background:linear-gradient(180deg,var(--white) 0%,color-mix(in srgb,var(--green-light) 7%,var(--white)) 100%);
+    border:1px solid rgba(20,23,26,0.05);cursor:pointer;text-align:center;min-height:78px;
+    box-shadow:0 1px 2px rgba(20,23,26,0.05),0 6px 16px -6px color-mix(in srgb,var(--green) 30%,transparent);
+    transition:transform 0.25s cubic-bezier(0.34,1.56,0.64,1),box-shadow 0.25s ease,background 0.2s ease,border-color 0.2s ease;
+    animation:htdShortcutPop 0.5s cubic-bezier(0.34,1.56,0.64,1) both;-webkit-tap-highlight-color:transparent;}
+  .cv-tile::before{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(115deg,transparent 30%,rgba(255,255,255,0.65) 50%,transparent 70%);transform:translateX(-120%);transition:transform 0.7s ease;}
+  .cv-tile::after{content:"";position:absolute;left:50%;top:38%;width:12px;height:12px;border-radius:50%;background:var(--green-light);opacity:0;transform:translate(-50%,-50%);z-index:-1;pointer-events:none;}
+  .cv-tile.rippling::after{animation:htdShortcutRipple 0.55s ease-out;}
+  .cv-tile:active{transform:scale(0.93);}
+  @media (hover:hover){
+    .cv-tile:hover{transform:translateY(-3px);box-shadow:0 2px 4px rgba(20,23,26,0.05),0 14px 26px -10px color-mix(in srgb,var(--green) 45%,transparent);}
+    .cv-tile:hover::before{transform:translateX(120%);}
+    .cv-tile:hover .cv-tile-icon{transform:translateY(-2px) rotate(-8deg) scale(1.08);}
+  }
+  .cv-tile-icon{width:38px;height:38px;border-radius:13px;display:flex;align-items:center;justify-content:center;color:#fff;
+    background:linear-gradient(135deg,var(--green-light) 0%,var(--green) 100%);
+    box-shadow:0 6px 14px -4px color-mix(in srgb,var(--green) 60%,transparent),inset 0 1px 0 rgba(255,255,255,0.35);
+    transition:transform 0.35s cubic-bezier(0.34,1.56,0.64,1);}
+  .cv-tile:active .cv-tile-icon{transform:scale(0.86) rotate(-6deg);}
+  .cv-tile-label{font-size:10.5px;font-weight:600;color:var(--charcoal-2);line-height:1.2;padding:0 2px;}
+  .cv-tile.active{background:linear-gradient(135deg,var(--green-light) 0%,var(--green) 100%);border-color:var(--green);box-shadow:0 10px 22px -8px color-mix(in srgb,var(--green) 70%,transparent);}
+  .cv-tile.active .cv-tile-icon{background:rgba(255,255,255,0.22);box-shadow:inset 0 1px 0 rgba(255,255,255,0.35);}
+  .cv-tile.active .cv-tile-label{color:#FFFFFF;}
+  body.dark-mode .cv-tile:not(.active){background:var(--white);border-color:rgba(255,255,255,0.06);}
+  @media (prefers-reduced-motion:reduce){ .cv-tile,.cv-tile-icon,.cv-tile::before{animation:none !important;transition:none !important;} }
+  /* Examination card preview */
+  .exam-preview{margin-top:8px;display:flex;flex-direction:column;gap:5px;}
+  .exam-preview .ep-row{display:flex;gap:8px;font-size:13px;line-height:1.4;}
+  .exam-preview .ep-k{flex:0 0 112px;font-weight:700;color:var(--green);font-size:12px;padding-top:1px;}
+  .exam-preview .ep-v{flex:1;color:var(--charcoal-2);white-space:pre-wrap;word-break:break-word;}
+  /* Saved chief-complaint presets */
+  .filter-chip.cc-custom{padding-right:6px;}
+  .filter-chip .cc-del{margin-left:6px;display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;background:rgba(0,0,0,0.08);font-size:12px;line-height:1;}
+  .filter-chip.cc-add{border:1.5px dashed var(--green);color:var(--green);background:var(--green-mist);font-weight:700;}
+  /* Tooth picker: anatomical chart */
+  .tp-chart{display:grid;grid-template-columns:1fr 1fr;background:var(--white);border-radius:14px;padding:8px 4px;border:1px solid var(--grey-light);}
+  .tp-quad{padding:4px 2px;}
+  .tp-quad.ur,.tp-quad.lr{border-right:1.5px solid var(--grey-light);}
+  .tp-quad.ur,.tp-quad.ul{border-bottom:1.5px solid var(--grey-light);}
+  .tp-qlabel{font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;color:var(--grey);margin:0 4px 3px;}
+  .tp-quad.ur .tp-qlabel,.tp-quad.lr .tp-qlabel{text-align:right;}
+  .tp-row{display:grid;gap:1px;}
+  .tp-tooth{display:flex;flex-direction:column;align-items:center;gap:1px;padding:2px 0;border:none;background:transparent;border-radius:8px;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:background 0.15s ease;}
+  .tp-tooth.upper{justify-content:flex-end;}
+  .tp-tooth.lower .tp-num{order:-1;}
+  .tp-tooth .tp-svg{width:100%;max-width:26px;aspect-ratio:40/84;transition:transform 0.18s cubic-bezier(0.34,1.56,0.64,1);}
+  .tp-tooth:active .tp-svg{transform:scale(0.9);}
+  .tp-num{font-size:9.5px;font-weight:700;color:var(--charcoal-2);line-height:1.5;padding:0 3px;border-radius:6px;}
+  .tp-tooth.sel{background:var(--green-mist);}
+  .tp-tooth.sel .tp-svg svg{filter:drop-shadow(0 0 2.5px var(--green));}
+  .tp-tooth.sel .tp-num{background:var(--green);color:#fff;}
+  .tp-tooth:disabled{opacity:0.35;cursor:not-allowed;}
   /* Desktop: one row for Overview & Records (6 items); Specialty Modules (8 items) stays 4-across at every size */
   @media (min-width:900px){
     .clinical-nav-grid-overview{grid-template-columns:repeat(6,1fr);}
@@ -15110,8 +15160,15 @@ async function renderClinicalWorkspace(){
   document.getElementById("btnClinicalOpenProfile").onclick = ()=> openPatientProfile(patient.id);
   document.getElementById("btnClinicalChangePatient").onclick = ()=>{ clinicalPatientId = null; renderClinical(); };
   document.getElementById("btnClinicalTemplates").onclick = ()=> openClinicalTemplatesPicker(patient);
-  document.querySelectorAll("#clinicalViewTabs [data-view]").forEach(el=>{
-    el.onclick = ()=>{ clinicalView = el.dataset.view; renderClinicalBody(patient); };
+  document.querySelectorAll("#clinicalViewTabs [data-view]").forEach((el,i)=>{
+    el.style.animationDelay = (i*35)+"ms";
+    el.addEventListener("pointerdown", ()=>{ el.classList.remove("rippling"); void el.offsetWidth; el.classList.add("rippling"); });
+    el.addEventListener("animationend", e=>{ if(e.animationName==="htdShortcutRipple") el.classList.remove("rippling"); });
+    el.onclick = ()=>{
+      clinicalView = el.dataset.view;
+      document.querySelectorAll("#clinicalViewTabs .cv-tile").forEach(t=> t.classList.toggle("active", t===el));
+      renderClinicalBody(patient);
+    };
   });
   await renderClinicalBody(patient);
 }
@@ -15695,7 +15752,6 @@ async function openTreatmentPlanActionMenu(planId, patient, onRefresh){
   openEntryActionMenu("Treatment Plan Options", [
     { key:"edit", icon:"edit", text:"Edit Treatment Plan", onClick: ()=>{ closeSheet(); openTreatmentPlanForm(planId, patient); } },
     { key:"print", icon:"print", text:"Print Treatment Plan", onClick: ()=>{ closeSheet(); printTreatmentPlanStandalone(plan, patient); } },
-    { key:"waLink", icon:"message", text:"WhatsApp Plan to Patient (PDF link)", onClick: async ()=>{ closeSheet(); await openTreatmentPlanLinkComposer(plan, patient); } },
     { key:"waPdf", icon:"message", text:"Send PDF on WhatsApp", onClick: ()=>{ closeSheet(); sendPdfOnWhatsApp(patient, ()=>printTreatmentPlanStandalone(plan, patient), "Treatment Plan"); } },
     { key:"share", icon:"share", text:"Share Treatment Plan", onClick: ()=>{ closeSheet(); shareEntityText("Treatment Plan", summary); } },
     { key:"email", icon:"mail", text:"Email Treatment Plan", onClick: ()=>{ closeSheet(); emailEntity("Treatment Plan — "+patient.name, summary, patient.email); } },
@@ -15707,10 +15763,9 @@ async function openTreatmentPlanActionMenu(planId, patient, onRefresh){
       closeSheet();
       if(onRefresh) onRefresh();
     } },
-    { key:"whatsapp", icon:"message", text:"Treatment Plan On WhatsApp", onClick: ()=>{
-      closeSheet();
-      openWhatsAppComposer({ toName: patient.name, toNumber: patient.whatsappNumber||patient.mobile, patientId: patient.id, title:"Treatment Plan On WhatsApp", message: summary });
-    } }
+    // Interakt only sends approved templates, so this also goes out as the
+    // "treatment_estimate" template ({{1}} name, {{2}} link to the plan page).
+    { key:"whatsapp", icon:"message", text:"Treatment Plan On WhatsApp", onClick: async ()=>{ closeSheet(); await openTreatmentPlanLinkComposer(plan, patient); } }
   ]);
 }
 
@@ -15839,9 +15894,10 @@ function renderToothPickerModal(){
   }
   const s = toothPickerState;
   const chart = s.dentition==="Adult" ? FDI_ADULT_TEETH : FDI_PRIMARY_TEETH;
-  const teethBtnHtml = (nums)=> nums.map(n=>`
-    <button type="button" class="tooth-btn ${s.selected.has(String(n))?'sel':''}" data-tooth-num="${n}" ${s.fullMouth?'disabled':''}>${n}</button>
-  `).join("");
+  const teethBtnHtml = (nums)=> `<div class="tp-row" style="grid-template-columns:repeat(${nums.length},1fr);">${nums.map(n=>`
+    <button type="button" class="tp-tooth ${toothIsUpper(n)?'upper':'lower'} ${s.selected.has(String(n))?'sel':''}" data-tooth-num="${n}" ${s.fullMouth?'disabled':''} aria-label="Tooth ${n}">
+      <span class="tp-svg">${toothSvg(n, s.selected.has(String(n))? "green" : "sound")}</span><span class="tp-num">${n}</span>
+    </button>`).join("")}</div>`;
   const count = s.selected.size;
   wrap.innerHTML = `
     <div class="kiosk-modal-card" style="max-width:520px;">
@@ -15854,11 +15910,11 @@ function renderToothPickerModal(){
         <input type="checkbox" id="toothFullMouth" ${s.fullMouth?'checked':''}>
         <b>Full Mouth</b>&nbsp;<span style="color:var(--grey);font-weight:400;">(whole-mouth procedure, not tooth-specific)</span>
       </label>
-      <div class="tooth-quad-grid">
-        <div class="tooth-quad"><div class="tq-label">Upper Right</div><div class="tq-row">${teethBtnHtml(chart["Upper Right"])}</div></div>
-        <div class="tooth-quad"><div class="tq-label">Upper Left</div><div class="tq-row">${teethBtnHtml(chart["Upper Left"])}</div></div>
-        <div class="tooth-quad"><div class="tq-label">Lower Right</div><div class="tq-row">${teethBtnHtml(chart["Lower Right"])}</div></div>
-        <div class="tooth-quad"><div class="tq-label">Lower Left</div><div class="tq-row">${teethBtnHtml(chart["Lower Left"])}</div></div>
+      <div class="tp-chart">
+        <div class="tp-quad ur"><div class="tp-qlabel">Upper Right</div>${teethBtnHtml(chart["Upper Right"].slice().sort((a,b)=>b-a))}</div>
+        <div class="tp-quad ul"><div class="tp-qlabel">Upper Left</div>${teethBtnHtml(chart["Upper Left"].slice().sort((a,b)=>a-b))}</div>
+        <div class="tp-quad lr">${teethBtnHtml(chart["Lower Right"].slice().sort((a,b)=>b-a))}<div class="tp-qlabel" style="margin-top:3px;">Lower Right</div></div>
+        <div class="tp-quad ll">${teethBtnHtml(chart["Lower Left"].slice().sort((a,b)=>a-b))}<div class="tp-qlabel" style="margin-top:3px;">Lower Left</div></div>
       </div>
       <div id="toothSelectedSummary" class="small-note" style="margin:10px 0;">
         ${s.fullMouth ? "Full Mouth selected" : (count? `${count} ${count===1?'tooth':'teeth'} selected: ${Array.from(s.selected).sort((a,b)=>Number(a)-Number(b)).join(", ")}` : "No teeth selected yet")}
@@ -20132,7 +20188,18 @@ async function openEndoDiagnosisForm(id, patient, body){
       openEndoCaseDetail(c.id, patient, body);
     };
     if(!isEdit){
-      promptForTreatmentCharge(patient, "Root Canal Treatment", tooth, goToCaseDetail);
+      // New case: record the first visit straight away. The Treatment Done
+      // entry (and its amount) is asked for after that visit is saved, so
+      // it carries the visit's date and details.
+      openSheet(`
+        <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+        <h2>Add First Visit?</h2>
+        <p style="margin-bottom:12px;">Endodontic case for tooth ${escapeHtml(tooth)} was saved. Record the first visit now?</p>
+        <button class="btn btn-primary btn-block" id="btnEndoAddFirstVisit">${icon('plus',15)} Add First Visit</button>
+        <button class="btn btn-outline btn-block" id="btnEndoFirstVisitLater" style="margin-top:8px;">Later</button>
+      `);
+      document.getElementById("btnEndoAddFirstVisit").onclick = ()=>{ closeSheet(); openEndoVisitForm(c, patient, body); };
+      document.getElementById("btnEndoFirstVisitLater").onclick = goToCaseDetail;
     }else{
       goToCaseDetail();
     }
@@ -20384,6 +20451,23 @@ function buildEndoVisitNotesSummary(v){
 // creating a separate treatment-done record. Returns false (and makes
 // no change) if there's no obturation data, or no earlier entry to
 // append to.
+async function upsertEndoVisitSitting(ref, visit){
+  if(!ref || !ref.planId || !ref.itemId) return false;
+  const plan = (await dbGetAll("treatmentPlans")).find(p=>p.id===ref.planId);
+  if(!plan) return false;
+  const item = (plan.items||[]).find(it=>it.id===ref.itemId);
+  if(!item) return false;
+  item.sittings = item.sittings || [];
+  const summary = (buildEndoVisitNotesSummary(visit)||"").trim();
+  const note = summary || ("Endodontic visit"+(visit.status? " — "+visit.status : ""));
+  const existing = item.sittings.find(st=> st.endoVisitId===visit.id);
+  if(existing){ existing.date = visit.date; existing.note = note; existing.updatedAt = nowIso(); }
+  else item.sittings.push({ id: uid("sitting"), date: visit.date || nowIso(), note, endoVisitId: visit.id, createdAt: nowIso() });
+  plan.updatedAt = nowIso();
+  await dbPut("treatmentPlans", plan);
+  return true;
+}
+
 async function appendObturationToFirstVisitTreatmentDone(ref, visit){
   if(!ref || !ref.planId || !ref.itemId) return false;
   const obLines = endoObturationSummaryLines(visit);
@@ -20610,13 +20694,14 @@ async function openEndoVisitForm(c, patient, body, visitId){
           await dbPut("endoCases", c);
         }
         finishUp();
-      }, autoNotes);
+      }, autoNotes, newVisit.date);
     }else{
-      // A later visit: if it completed obturation, append that to the
-      // first visit's treatment-done notes as a dated second sitting -
-      // silently, since this isn't a new billable treatment by itself.
+      // Any later visit (2nd, 3rd...) is added to that Treatment Done entry
+      // as the next sitting (same as "Add Treatment Notes"), dated with the
+      // visit date and carrying what was recorded. Editing a visit updates
+      // its sitting instead of adding another.
       if(c.treatmentDoneItemRef){
-        await appendObturationToFirstVisitTreatmentDone(c.treatmentDoneItemRef, newVisit);
+        await upsertEndoVisitSitting(c.treatmentDoneItemRef, newVisit);
       }
       finishUp();
     }
@@ -21320,7 +21405,12 @@ async function renderExaminationTab(body, patientId, patient){
           <button class="qmenu-btn" data-exmenu="${e.id}" style="transform:none;">${icon('settings',16)}</button>
         </div>
         <div class="note-meta">${new Date(e.date).toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'})} · Dr. ${escapeHtml(e.doctor||"—")}</div>
-        <div style="font-size:13px;margin-top:6px;color:var(--charcoal-2);"><b>CC:</b> ${escapeHtml((e.chiefComplaint||"—").slice(0,100))}</div>
+        <div class="exam-preview">
+          ${[["Chief Complaint", e.chiefComplaint],["Observations", e.observations],["Diagnosis", e.diagnosis],["Investigations", e.investigations],["Treatment Advised", e.treatmentAdvised],["Notes", e.notes]]
+            .filter(([,v])=> v && String(v).trim() && String(v).trim()!=="—")
+            .map(([k,v])=>`<div class="ep-row"><span class="ep-k">${k}</span><span class="ep-v">${escapeHtml(String(v))}</span></div>`).join("")
+            || `<div class="ep-row"><span class="ep-v" style="color:var(--grey);">No details recorded</span></div>`}
+        </div>
       </div>
     `).join("") : `<div class="empty-card"><b>No examinations recorded yet</b>Add one to document chief complaint, observations and diagnosis.</div>`}
   `;
@@ -21370,6 +21460,60 @@ async function openExamActionMenu(examId, patient, tabBody, patientId){
   ]);
 }
 
+// Chief complaint chips: the built-in list plus the clinic's own saved
+// presets (kept in Settings, so they're shared by every device and both the
+// Examination and Quick OPD forms). "+ Add Preset" saves a new one and puts
+// it in the box; a saved preset can be removed with its ×.
+async function wireChiefComplaintChips(wrapId, textareaId){
+  const wrap = document.getElementById(wrapId);
+  if(!wrap) return;
+  const load = async ()=>{ const st = (await dbGetAll("settings"))[0] || {}; return Array.isArray(st.customChiefComplaints) ? st.customChiefComplaints : []; };
+  const saveList = async (list)=>{
+    const rows = await dbGetAll("settings");
+    const st = rows[0] || {id: uid("settings")};
+    st.customChiefComplaints = list;
+    if(rows.length) await dbPut("settings", st); else await dbAdd("settings", st);
+  };
+  const insert = (val)=>{
+    const ta = document.getElementById(textareaId);
+    if(!ta) return;
+    const existing = ta.value.trim();
+    if(!existing) ta.value = val;
+    else if(!existing.split(",").map(x=>x.trim().toLowerCase()).includes(val.toLowerCase())) ta.value = existing + ", " + val;
+    ta.dispatchEvent(new Event("input", {bubbles:true}));
+    ta.focus();
+  };
+  const render = async ()=>{
+    const custom = await load();
+    const builtIn = CHIEF_COMPLAINT_PRESETS.filter(c=> !custom.some(x=>x.toLowerCase()===c.toLowerCase()));
+    wrap.innerHTML =
+      builtIn.map(c=>`<span class="filter-chip" data-ccpick="${escapeAttr(c)}">${escapeHtml(c)}</span>`).join("") +
+      custom.map(c=>`<span class="filter-chip cc-custom" data-ccpick="${escapeAttr(c)}">${escapeHtml(c)}<b class="cc-del" data-ccdel="${escapeAttr(c)}" title="Remove preset">×</b></span>`).join("") +
+      `<span class="filter-chip cc-add" data-ccadd="1">+ Add Preset</span>`;
+    wrap.querySelectorAll("[data-ccpick]").forEach(ch=> ch.onclick = (ev)=>{ if(ev.target.closest("[data-ccdel]")) return; insert(ch.dataset.ccpick); });
+    wrap.querySelectorAll("[data-ccdel]").forEach(x=> x.onclick = async (ev)=>{
+      ev.stopPropagation();
+      if(!confirm(`Remove "${x.dataset.ccdel}" from saved complaints?`)) return;
+      await saveList((await load()).filter(c=> c!==x.dataset.ccdel));
+      render();
+    });
+    wrap.querySelector("[data-ccadd]").onclick = async ()=>{
+      const ta = document.getElementById(textareaId);
+      const typed = ta ? ta.value.split(",").pop().trim() : "";
+      const val = (prompt("New chief complaint preset:", typed) || "").trim();
+      if(!val) return;
+      const list = await load();
+      if(!list.some(c=>c.toLowerCase()===val.toLowerCase()) && !CHIEF_COMPLAINT_PRESETS.some(c=>c.toLowerCase()===val.toLowerCase())){
+        list.push(val); await saveList(list);
+        showToast("Preset saved");
+      }
+      insert(val);
+      render();
+    };
+  };
+  await render();
+}
+
 async function openExaminationForm(examId, patient){
   let exam;
   if(examId){
@@ -21389,9 +21533,7 @@ async function openExaminationForm(examId, patient){
     </div>
     <div class="field">
       <label>Chief Complaint</label>
-      <div class="chip-wrap" id="ccChips">
-        ${CHIEF_COMPLAINT_PRESETS.map(c=>`<span class="filter-chip" data-cc="${escapeAttr(c)}">${escapeHtml(c)}</span>`).join("")}
-      </div>
+      <div class="chip-wrap" id="ccChips"></div>
       <textarea id="exChiefComplaint" rows="2" placeholder="Tap a common complaint above, or type your own...">${escapeHtml(exam.chiefComplaint)}</textarea>
     </div>
     <div class="field"><label>Observations</label><textarea id="exObservations" rows="3">${escapeHtml(exam.observations)}</textarea></div>
@@ -21429,6 +21571,7 @@ async function openExaminationForm(examId, patient){
       ta.focus();
     };
   });
+  await wireChiefComplaintChips("ccChips", "exChiefComplaint");
   const obsPresets = (await dbGetAll("observationPresets")).map(o=>o.text);
   const diagPresets = (await dbGetAll("diagnosisPresets")).map(d=>d.text);
   wireCommaAutosuggest(document.getElementById("exObservations"), obsPresets);
@@ -21772,11 +21915,11 @@ async function syncToothChartForCompletedTreatment(patient, treatmentLabel, toot
   }catch(err){ console.error("syncToothChartForCompletedTreatment failed:", err); }
 }
 
-async function saveTreatmentDoneRecord(patient, treatmentLabel, amount, tooth, diagnosis, notes){
+async function saveTreatmentDoneRecord(patient, treatmentLabel, amount, tooth, diagnosis, notes, dateIso){
   const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived);
   const item = {
     id: uid("planitem"),
-    treatmentDate: nowIso(),
+    treatmentDate: dateIso || nowIso(),
     tooth: tooth || "",
     diagnosis: diagnosis || "",
     treatment: treatmentLabel,
@@ -21806,7 +21949,7 @@ async function saveTreatmentDoneRecord(patient, treatmentLabel, amount, tooth, d
 // Surgery, Prosthodontics, etc.) — entering an amount logs it straight into
 // Treatment Done in the same step; Skip leaves it alone, exactly as if this
 // prompt hadn't appeared at all.
-async function promptForTreatmentCharge(patient, treatmentLabel, tooth, onDone, notes){
+async function promptForTreatmentCharge(patient, treatmentLabel, tooth, onDone, notes, dateIso){
   const cur = await finCurrency();
   openSheet(`
     <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
@@ -21820,7 +21963,7 @@ async function promptForTreatmentCharge(patient, treatmentLabel, tooth, onDone, 
   document.getElementById("btnPtcAdd").onclick = async ()=>{
     const amount = parseFloat(document.getElementById("ptcAmount").value);
     if(!amount || amount<=0){ showToast("Enter an amount, or tap Skip"); return; }
-    const saved = await saveTreatmentDoneRecord(patient, treatmentLabel, amount, tooth, "", notes);
+    const saved = await saveTreatmentDoneRecord(patient, treatmentLabel, amount, tooth, "", notes, dateIso);
     showToast("Added to Treatment Done — "+finMoney(amount,cur));
     closeSheet();
     if(onDone) onDone(saved);
@@ -24256,9 +24399,7 @@ async function openQuickOpdForm(patient){
       <div class="qopd-section-body">
         <div class="field">
           <label>Chief Complaint</label>
-          <div class="chip-wrap" id="qopdCcChips">
-            ${CHIEF_COMPLAINT_PRESETS.map(c=>`<span class="filter-chip" data-cc="${escapeAttr(c)}">${escapeHtml(c)}</span>`).join("")}
-          </div>
+          <div class="chip-wrap" id="qopdCcChips"></div>
           <textarea id="qopdChiefComplaint" rows="2" placeholder="Tap a common complaint above, or type your own..."></textarea>
         </div>
         <div class="field"><label>Observations</label><textarea id="qopdObservations" rows="3"></textarea></div>
@@ -24383,7 +24524,8 @@ async function openQuickOpdForm(patient){
   wireCommaAutosuggest(document.getElementById("qopdObservations"), obsPresets);
   wireCommaAutosuggest(document.getElementById("qopdDiagnosis"), diagPresets);
 
-  document.querySelectorAll("#qopdCcChips [data-cc]").forEach(chip=>{
+  await wireChiefComplaintChips("qopdCcChips", "qopdChiefComplaint");
+  document.querySelectorAll("#qopdCcChips [data-cc-none]").forEach(chip=>{
     chip.onclick = ()=>{
       const ta = document.getElementById("qopdChiefComplaint");
       const existing = ta.value.trim();
@@ -24562,7 +24704,7 @@ async function openQuickOpdForm(patient){
     const result = await performQuickOpdSave();
     if(!result) return;
     showToast("Saved: "+result.createdParts.join(", "));
-    goBack();
+    openPatientProfile(patient.id);
   };
 
   document.getElementById("btnSaveAndPrintQuickOpd").onclick = async ()=>{
@@ -24570,7 +24712,7 @@ async function openQuickOpdForm(patient){
     if(!result) return;
     showToast("Saved — printing");
     await printQuickOpdSummary(patient, clinics.find(c=>c.id===result.clinicId), result);
-    goBack();
+    openPatientProfile(patient.id);
   };
 }
 
@@ -27365,7 +27507,7 @@ async function savePharmacySale(cur, shouldPrint){
   renderPharmacy();
 }
 
-function printPharmacyBill(sale, cur){
+async function printPharmacyBill(sale, cur){
   const bodyHtml = `
     <table><thead><tr><th>Product</th><th>Qty</th><th>MRP</th><th>Price</th><th>Amount</th></tr></thead>
     <tbody>${(sale.items||[]).map(it=>`<tr><td>${escapeHtml(it.name)}</td><td>${it.qty}</td><td>${finMoney(it.mrp,cur)}</td><td>${finMoney(it.price,cur)}</td><td>${finMoney(it.lineTotal,cur)}</td></tr>`).join("")}</tbody></table>
@@ -27374,7 +27516,18 @@ function printPharmacyBill(sale, cur){
       ${sale.mode? `<div style="margin-top:4px;color:#666;">Paid via ${escapeHtml(sale.mode)}</div>`:""}
     </div>
   `;
-  printDocument({ title:"Pharmacy Bill", patient: sale.patientId? {name:sale.patientName} : {name:"Walk-in Customer"}, docNumber: sale.billNumber, docDate: new Date(sale.date).toLocaleDateString(), bodyHtml });
+  // Same letterhead as every other print: the patient's clinic, else the
+  // clinic currently selected at the top, else the first clinic.
+  const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived);
+  let clinic = sale.clinicId ? clinics.find(c=>c.id===sale.clinicId) : null;
+  let patient = null;
+  if(sale.patientId){
+    patient = (await dbGetAll("patients")).find(p=>p.id===sale.patientId) || null;
+    if(!clinic && patient) clinic = clinics.find(c=>c.id===patient.preferredClinicId);
+  }
+  if(!clinic && selectedClinicId && selectedClinicId!=="ALL") clinic = clinics.find(c=>c.id===selectedClinicId);
+  if(!clinic) clinic = clinics[0];
+  printDocument({ title:"Pharmacy Bill", patient: patient || (sale.patientId? {name:sale.patientName} : {name:"Walk-in Customer"}), clinic, docNumber: sale.billNumber, docDate: new Date(sale.date).toLocaleDateString(), bodyHtml });
 }
 // ---------------------------------------------------------
 // Sheet helpers
