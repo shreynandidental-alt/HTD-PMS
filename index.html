@@ -5358,6 +5358,19 @@ async function openPatientEmailSheet(patient){
   };
 }
 
+// Turns multi-line instructions into one WhatsApp-safe line: no newlines or
+// tabs, no runs of 4+ spaces (WhatsApp rejects those in a variable), bullets
+// and numbering tidied, kept under WhatsApp's body length limit.
+function whatsappInstructionsParam(text){
+  const lines = String(text||"").replace(/\r/g,"").split("\n")
+    .map(l=> l.replace(/\t/g," ").replace(/^\s*[-*•●▪]\s*/,"").replace(/\s{2,}/g," ").trim())
+    .filter(Boolean);
+  let out = lines.join(" • ");
+  const MAX = 850;
+  if(out.length > MAX){ out = out.slice(0, MAX).replace(/\s+\S*$/,"") + "… (full instructions available at the clinic)"; }
+  return out || "-";
+}
+
 async function openSendInstructionsSheet(patient){
   openSheet(`
     <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
@@ -5408,7 +5421,14 @@ async function openSendInstructionsSheet(patient){
     const found = await getSelectedTemplate();
     if(!found) return;
     const message = `Hi ${patient.name},\n\n${found.t.body}\n\nCall us if you have any questions.\n— Healing Touch Dental`;
-    openWhatsAppComposer({ toName: patient.name, toNumber: patient.whatsappNumber||patient.mobile, patientId: patient.id, title:(found.type==="post"?"Post-Op":"Pre-Op")+" Instructions", message });
+    // Approved templates: "pre_operative" / "post_operative" — {{1}} patient
+    // name, {{2}} the instructions. WhatsApp doesn't allow line breaks inside
+    // a template variable, so the instruction lines are joined with " • ".
+    const instr = whatsappInstructionsParam(found.t.body);
+    openWhatsAppComposer({ toName: patient.name, toNumber: patient.whatsappNumber||patient.mobile, patientId: patient.id, title:(found.type==="post"?"Post-Op":"Pre-Op")+" Instructions", message,
+      templateName: found.type==="post" ? "post_operative" : "pre_operative",
+      templateParams: [patient.name||"Patient", instr],
+      onSent: ()=> logActivity("Sent "+(found.type==="post"?"post-op":"pre-op")+" instructions on WhatsApp to "+patient.name, {patientId: patient.id}) });
   };
 }
 
@@ -7184,24 +7204,36 @@ async function renderLabCases(){
 }
 
 // ---- Manage Labs ----
+// Aligner labs (Invisalign, Spark, Illusion...) live in the same "labs"
+// store with kind:"aligner", so they're kept out of the normal lab pickers
+// and only appear for aligner cases, the aligner split and their report.
+function isAlignerLab(l){ return !!l && l.kind==="aligner"; }
+async function getAlignerLabs(){ return (await dbGetAll("labs")).filter(isAlignerLab).sort((a,b)=> (a.name||"").localeCompare(b.name||"")); }
 async function openManageLabsSheet(){
-  const labs = (await dbGetAll("labs")).sort((a,b)=> (a.name||"").localeCompare(b.name||""));
-  openSheet(`
-    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
-    <h2>Manage Labs</h2>
-    <p style="margin-bottom:10px;">Preset your labs here — they'll show up as quick options when creating a lab case, and enable automatic WhatsApp updates to the right number.</p>
-    <button class="btn btn-primary btn-block" id="btnAddLab" style="margin-bottom:14px;">+ Add Lab</button>
-    ${labs.length? `<div class="list-card">${labs.map(l=>`
+  const all = (await dbGetAll("labs")).sort((a,b)=> (a.name||"").localeCompare(b.name||""));
+  const labs = all.filter(l=>!isAlignerLab(l));
+  const aLabs = all.filter(isAlignerLab);
+  const rowsHtml = (list)=> `<div class="list-card">${list.map(l=>`
       <div class="clinic-row">
         <div><div class="name">${escapeHtml(l.name)}</div><div class="addr">${escapeHtml(l.phone||"")}</div></div>
         <div style="display:flex;gap:6px;">
           <button class="btn btn-outline btn-sm" data-editlab="${l.id}">Edit</button>
           <button class="btn btn-outline btn-sm" data-dellab="${l.id}">Delete</button>
         </div>
-      </div>
-    `).join("")}</div>` : `<div class="empty-card">No labs added yet</div>`}
+      </div>`).join("")}</div>`;
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>Manage Labs</h2>
+    <p style="margin-bottom:10px;">Preset your labs here — they'll show up as quick options when creating a lab case, and enable automatic WhatsApp updates to the right number.</p>
+    <button class="btn btn-primary btn-block" id="btnAddLab" style="margin-bottom:14px;">+ Add Lab</button>
+    ${labs.length? rowsHtml(labs) : `<div class="empty-card">No labs added yet</div>`}
+    <div class="section-title" style="margin-top:18px;">Aligner Labs</div>
+    <p style="margin-top:-6px;margin-bottom:10px;">Aligner companies your aligner cases go to (e.g. Invisalign, Spark, Illusion). Pick one when adding an aligner case.</p>
+    <button class="btn btn-outline btn-block" id="btnAddAlignerLab" style="margin-bottom:14px;">+ Add Aligner Lab</button>
+    ${aLabs.length? rowsHtml(aLabs) : `<div class="empty-card">No aligner labs added yet</div>`}
   `);
   document.getElementById("btnAddLab").onclick = ()=> openLabContactForm(null);
+  document.getElementById("btnAddAlignerLab").onclick = ()=> openLabContactForm(null, "aligner");
   document.querySelectorAll("[data-editlab]").forEach(b=> b.onclick=()=> openLabContactForm(b.dataset.editlab));
   document.querySelectorAll("[data-dellab]").forEach(b=> b.onclick= async ()=>{
     if(!confirm("Delete this lab?")) return;
@@ -7211,26 +7243,28 @@ async function openManageLabsSheet(){
   });
 }
 
-async function openLabContactForm(id){
+async function openLabContactForm(id, kind){
   let l;
   if(id){
     l = (await dbGetAll("labs")).find(x=>x.id===id);
     if(!l){ showToast("Not found"); return; }
   }else{
     l = { id: uid("lab_contact"), name:"", phone:"", email:"", address:"", notes:"", createdAt: nowIso() };
+    if(kind==="aligner") l.kind = "aligner";
   }
   const isEdit = !!id;
+  const isAligner = isAlignerLab(l);
   openSheet(`
     <button class="sheet-close" onclick="openManageLabsSheet()">${icon('close',18)}</button>
-    <h2>${isEdit?"Edit":"Add"} Lab</h2>
-    <div class="field"><label>Lab Name</label><input id="lcName" value="${escapeAttr(l.name)}" placeholder="e.g. Precision Dental Lab"></div>
+    <h2>${isEdit?"Edit":"Add"} ${isAligner?"Aligner Lab":"Lab"}</h2>
+    <div class="field"><label>${isAligner?"Aligner Company / Lab Name":"Lab Name"}</label><input id="lcName" value="${escapeAttr(l.name)}" placeholder="${isAligner?"e.g. Spark (Ormco)":"e.g. Precision Dental Lab"}"></div>
     <div class="field-row">
       <div class="field"><label>Phone / WhatsApp Number</label><input id="lcPhone" value="${escapeAttr(l.phone)}" inputmode="tel"></div>
       <div class="field"><label>Email</label><input id="lcEmail" type="email" value="${escapeAttr(l.email)}"></div>
     </div>
     <div class="field"><label>Address</label><input id="lcAddress" value="${escapeAttr(l.address)}"></div>
     <div class="field"><label>Notes</label><textarea id="lcNotes" rows="2">${escapeHtml(l.notes)}</textarea></div>
-    ${isEdit? `
+    ${isEdit && !isAligner? `
       <div class="section-title">Lab Work &amp; Pricing</div>
       <p style="margin-top:-8px;">Add this lab's work types and prices — they'll show up as quick picks when creating a new case for this lab.</p>
       <div id="lcWorkItemsList"></div>
@@ -7239,7 +7273,7 @@ async function openLabContactForm(id){
     ${isEdit? `<button class="btn btn-outline btn-block" id="btnDeleteLab" style="margin-bottom:8px;">Delete</button>`:""}
     <button class="btn btn-primary btn-block" id="btnSaveLab">${isEdit?"Save Changes":"Save Lab"}</button>
   `);
-  if(isEdit) renderLabWorkItemsList(l);
+  if(isEdit && !isAligner) renderLabWorkItemsList(l);
   const addWorkBtn = document.getElementById("btnAddLabWorkItem");
   if(addWorkBtn) addWorkBtn.onclick = ()=> openLabWorkItemForm(l.id, null);
   document.getElementById("btnSaveLab").onclick = async ()=>{
@@ -7333,6 +7367,7 @@ async function renderAssistLab(body){
     <div class="filter-row" id="labCasesTabRow" style="flex-wrap:wrap;overflow-x:visible;margin-bottom:12px;">
       <button class="filter-chip ${labCasesActiveTab==='All Cases'?'active':''}" data-lctab="All Cases">All Cases</button>
       <button class="filter-chip ${labCasesActiveTab==='Prosthesis Ready'?'active':''}" data-lctab="Prosthesis Ready">Prosthesis Ready to Deliver</button>
+      <button class="filter-chip ${labCasesActiveTab==='Aligner Cases'?'active':''}" data-lctab="Aligner Cases">Aligner Cases</button>
     </div>
     <div id="labCasesTabBody"></div>
   `;
@@ -7341,7 +7376,70 @@ async function renderAssistLab(body){
   });
   const tabBody = document.getElementById("labCasesTabBody");
   if(labCasesActiveTab==="Prosthesis Ready") await renderProsthesisReadyTab(tabBody, body);
+  else if(labCasesActiveTab==="Aligner Cases") await renderAlignerLabCasesTab(tabBody, body);
   else await renderAllLabCasesList(tabBody, body);
+}
+
+let alignerLabCaseSearch = "";
+let alignerLabCaseLabFilter = "ALL";
+async function renderAlignerLabCasesTab(body, outerBody){
+  const cur = await finCurrency();
+  const patients = await dbGetAll("patients");
+  const aLabs = await getAlignerLabs();
+  let cases = (await dbGetAll("alignerCases")).sort((a,b)=> new Date(b.startDate||0)-new Date(a.startDate||0));
+  const pById = {}; patients.forEach(p=> pById[p.id]=p);
+  if(selectedClinicId!=="ALL") cases = cases.filter(c=>{ const p = pById[c.patientId]; return !p || !p.preferredClinicId || p.preferredClinicId===selectedClinicId; });
+  if(alignerLabCaseLabFilter!=="ALL") cases = cases.filter(c=> c.alignerLabId===alignerLabCaseLabFilter);
+  const nq = normalizeStr(alignerLabCaseSearch);
+  if(nq) cases = cases.filter(c=> normalizeStr((pById[c.patientId]||{}).name).includes(nq) || normalizeStr(c.alignerLabName).includes(nq) || normalizeStr(c.brand).includes(nq));
+  const tCharge = cases.reduce((t,c)=>t+(Number(c.alignerLabCharge)||0),0);
+  const tPaid = cases.reduce((t,c)=>t+alignerLabPaidTotal(c),0);
+  body.innerHTML = `
+    <div class="search-bar" style="margin-bottom:8px;">
+      <span class="icon-btn" style="background:none;color:var(--grey);">${icon('search',18)}</span>
+      <input id="alcSearch" placeholder="Search by patient, aligner lab or brand..." value="${escapeAttr(alignerLabCaseSearch)}">
+    </div>
+    <div class="field"><select id="alcLab"><option value="ALL">All Aligner Labs</option>${aLabs.map(l=>`<option value="${l.id}" ${alignerLabCaseLabFilter===l.id?'selected':''}>${escapeHtml(l.name)}</option>`).join("")}</select></div>
+    <div class="plan-totals" style="margin-bottom:12px;">
+      <div class="row"><span>${cases.length} aligner case${cases.length===1?'':'s'} · Lab Charges</span><span>${finMoney(tCharge,cur)}</span></div>
+      <div class="row"><span>Paid to Labs</span><span>${finMoney(tPaid,cur)}</span></div>
+      <div class="row final"><span>Balance Due to Labs</span><span>${finMoney(Math.max(0,tCharge-tPaid),cur)}</span></div>
+    </div>
+    ${cases.length? `<div class="list-card">${cases.map(c=>{
+      const p = pById[c.patientId]; const paid = alignerLabPaidTotal(c); const bal = Math.max(0,(Number(c.alignerLabCharge)||0)-paid);
+      return `<div class="clinic-row" data-alcase="${c.id}" style="cursor:pointer;">
+        <div>
+          <div class="name">${escapeHtml(p? p.name : "—")}</div>
+          <div class="addr">${escapeHtml(c.brand||"Clear Aligners")} — ${escapeHtml(c.alignerLabName||"No aligner lab set")} · ${new Date(c.startDate).toLocaleDateString()}</div>
+          <div class="addr">Lab ${finMoney(c.alignerLabCharge||0,cur)} · Paid ${finMoney(paid,cur)}${bal>0? ` · <b style="color:var(--red);">Due ${finMoney(bal,cur)}</b>` : (c.alignerLabCharge? ' · <b style="color:var(--green);">Settled</b>':'')}</div>
+        </div>
+        <span class="status-pill ${orthoStatusClass(c.status)}">${escapeHtml(c.status||'Active')}</span>
+      </div>`;
+    }).join("")}</div>` : `<div class="empty-card"><b>No aligner cases found</b>Aligner cases added in Clinical → Orthodontic → Aligners appear here.</div>`}
+  `;
+  document.getElementById("alcSearch").oninput = (e)=>{ alignerLabCaseSearch = e.target.value; renderAlignerLabCasesTab(body, outerBody).then(()=>{ const el=document.getElementById("alcSearch"); if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); } }); };
+  document.getElementById("alcLab").onchange = (e)=>{ alignerLabCaseLabFilter = e.target.value; renderAlignerLabCasesTab(body, outerBody); };
+  body.querySelectorAll("[data-alcase]").forEach(el=> el.onclick = ()=>{
+    const c = cases.find(x=>x.id===el.dataset.alcase); const p = pById[c.patientId];
+    const pays = (c.alignerLabPayments||[]).slice().sort((a,b)=> new Date(a.date)-new Date(b.date));
+    openSheet(`
+      <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+      <h2>Aligner Case — ${escapeHtml(p? p.name : "")}</h2>
+      <div class="list-card" style="padding:12px;margin-bottom:12px;font-size:13.5px;line-height:1.7;">
+        <div><b>Brand:</b> ${escapeHtml(c.brand||"—")}</div>
+        <div><b>Aligner Lab:</b> ${escapeHtml(c.alignerLabName||"—")}</div>
+        <div><b>Start Date:</b> ${new Date(c.startDate).toLocaleDateString()} · <b>Status:</b> ${escapeHtml(c.status||"Active")}</div>
+        <div><b>Aligners:</b> ${Number(c.alignersDelivered)||0} of ${Number(c.totalAligners)||0} delivered</div>
+        <div><b>Lab Charges:</b> ${finMoney(c.alignerLabCharge||0,cur)} · <b>Paid:</b> ${finMoney(alignerLabPaidTotal(c),cur)} · <b>Due:</b> ${finMoney(Math.max(0,(Number(c.alignerLabCharge)||0)-alignerLabPaidTotal(c)),cur)}</div>
+      </div>
+      <div class="section-title" style="margin-top:0;">Payments to Lab</div>
+      ${pays.length? `<div class="list-card" style="margin-bottom:12px;">${pays.map(x=>`<div class="clinic-row"><div><div class="name">${finMoney(x.amount,cur)}</div><div class="addr">${new Date(x.date).toLocaleDateString()}${x.receiptNumber? ' · from receipt '+escapeHtml(x.receiptNumber):''}${x.notes? ' · '+escapeHtml(x.notes):''}</div></div></div>`).join("")}</div>`
+        : `<div class="empty-card" style="margin-bottom:12px;">No payments split with the lab yet. Use "Split with Aligner Lab" on the patient's receipt.</div>`}
+      ${p? `<button class="btn btn-outline btn-block" id="btnAlcOpenCase">${icon('braces',15)} Open Aligner Case</button>` : ""}
+    `);
+    const ob = document.getElementById("btnAlcOpenCase");
+    if(ob) ob.onclick = ()=>{ closeSheet(); clinicalPatientId = p.id; clinicalView = "Orthodontic"; clinicalOrthoSubTab = "Aligners"; goTo("clinical"); };
+  });
 }
 
 async function renderAllLabCasesList(body, outerBody){
@@ -7774,7 +7872,7 @@ async function openLabCaseActionMenu(caseId){
       toName: lc.labName, toNumber: lc.labContact,
       message: labCaseSummaryText(lc),
       templateName: "lab_case",
-      templateParams: [lc.patientName||"", lc.labPromisedDate? new Date(lc.labPromisedDate).toLocaleDateString() : ""]
+      templateParams: [lc.patientName||"Patient", labCasePatientPromisedDateText(lc)]
     });
   };
   document.getElementById("lcmEmail").onclick = async ()=>{
@@ -7913,7 +8011,7 @@ async function openLabBillsReportSheet(){
 }
 
 async function openLabCaseForm(id, prefillPatient){
-  const labs = (await dbGetAll("labs")).sort((a,b)=> (a.name||"").localeCompare(b.name||""));
+  const labs = (await dbGetAll("labs")).filter(l=>!isAlignerLab(l)).sort((a,b)=> (a.name||"").localeCompare(b.name||""));
   let lc;
   if(id){
     lc = (await dbGetAll("labCases")).find(x=>x.id===id);
@@ -8152,7 +8250,7 @@ function sendNewLabCaseWhatsApp(lc){
     message: lines.join("\n"),
     patientId: lc.patientId, recipientType: "Lab",
     templateName: "lab_case",
-    templateParams: [lc.patientName||"", lc.labPromisedDate? new Date(lc.labPromisedDate).toLocaleDateString() : ""]
+    templateParams: [lc.patientName||"Patient", labCasePatientPromisedDateText(lc)]
   });
   if(currentPage==="assist") renderAssistBody();
   else if(currentPage==="labcases") renderLabCases();
@@ -8583,6 +8681,16 @@ class Dialog360Provider extends PlaceholderCommProvider { constructor(){ super("
 // stored in Settings/Firestore and never touches the browser, so there is
 // nothing here for _getConfig() to read except the one non-secret setting
 // (default country code) that's safe to keep client-side.
+// {{2}} of the "lab_case" template: the date promised to the patient.
+// Falls back to the lab's promised date, then "To be confirmed", because
+// Interakt rejects a template whose variable is empty.
+function labCasePatientPromisedDateText(lc){
+  const d = (lc && (lc.patientPromisedDate || lc.labPromisedDate)) || "";
+  if(!d) return "To be confirmed";
+  const dt = /^\d{4}-\d{2}-\d{2}$/.test(d) ? fromDateKey(d) : new Date(d);
+  return isNaN(dt) ? String(d) : dt.toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"});
+}
+
 class InteraktProvider extends CommunicationProvider {
   constructor(){ super("interakt", "Interakt"); }
   async _getConfig(){
@@ -8610,7 +8718,7 @@ class InteraktProvider extends CommunicationProvider {
     return this._post({
       countryCode: cfg.defaultCountryCode, phoneNumber: sanitizePhone(opts.toNumber),
       templateName: opts.templateName, languageCode: opts.templateLanguage||"en",
-      bodyValues: opts.templateParams||[], headerValues: opts.templateHeaderValues||undefined
+      bodyValues: (opts.templateParams||[]).map(v=> (v==null || String(v).trim()==="") ? "-" : String(v)), headerValues: opts.templateHeaderValues||undefined
     });
   }
   async sendText(opts){
@@ -9100,6 +9208,140 @@ requestApptSubmitScript("inline"),
   ].join("\n");
 }
 
+// ---- Option 3: Bubbles Dental (kids) request form ----
+// Same onlineBookings pipeline as the Healing Touch forms, in the Bubbles
+// pink & blue theme, with its own element ids (bdRa*) so both forms can sit
+// on one page. Every request is tagged source:"Bubbles Dental" and the
+// Bubbles clinic, so it shows (and converts) correctly in Online Appointments.
+const BUBBLES_SERVICES = [
+  "Consultation / Dental Check-up",
+  "First Dental Visit (Baby / Toddler)",
+  "Cleaning & Polishing",
+  "Fluoride Varnish Application",
+  "Pit & Fissure Sealants",
+  "Tooth-Coloured Fillings",
+  "Baby Root Canal (Pulpotomy / Pulpectomy)",
+  "Crowns for Baby Teeth (Zirconia / Stainless Steel)",
+  "Tooth Extraction (Milk Tooth)",
+  "Space Maintainers",
+  "Dental Trauma / Injured Tooth",
+  "Toothache / Dental Emergency",
+  "Early Orthodontics / Habit Breaking Appliance",
+  "Palatal Expander",
+  "Braces for Kids / Teens",
+  "Invisalign for Kids / Teens",
+  "Treatment under Sedation / Laughing Gas",
+  "Special Needs Dental Care",
+  "Cavity Prevention & Diet Counselling",
+  "Other"
+];
+const BUBBLES_CLINIC_NAME = "Bubbles Dental \u2013 Pediatric Wing";
+function bubblesRequestFormInnerHtml(){
+  const inp = 'width:100%;box-sizing:border-box;padding:11px 12px;border:1.5px solid #CFE3F7;border-radius:12px;margin-bottom:12px;font-size:14px;background:#fff;font-family:inherit;color:#2B2D42;';
+  const lbl = 'display:block;font-size:12.5px;font-weight:700;color:#4A5C7A;margin-bottom:4px;';
+  return [
+'    <label style="'+lbl+'">Patient\'s Name *</label>',
+'    <input id="bdRaName" placeholder="Child\'s full name" style="'+inp+'">',
+'    <div style="display:flex;gap:10px;">',
+'      <div style="flex:1;"><label style="'+lbl+'">Age of Patient *</label><input id="bdRaAge" type="number" min="0" max="25" placeholder="e.g. 6" style="'+inp+'"></div>',
+'      <div style="flex:1.4;"><label style="'+lbl+'">Mobile Number *</label><input id="bdRaMobile" type="tel" inputmode="tel" placeholder="Parent\'s mobile" style="'+inp+'"></div>',
+'    </div>',
+'    <label style="'+lbl+'">Email <span style="font-weight:400;color:#8A97AD;">(optional)</span></label>',
+'    <input id="bdRaEmail" type="email" style="'+inp+'">',
+'    <label style="'+lbl+'">Date of Appointment *</label>',
+'    <input id="bdRaDate" type="date" style="'+inp+'">',
+'    <label style="'+lbl+'">Service *</label>',
+'    <select id="bdRaService" style="'+inp+'">',
+'      <option value="">Select a service</option>',
+BUBBLES_SERVICES.map(x=>'      <option value="'+x.replace(/"/g,'&quot;')+'">'+x.replace(/&/g,'&amp;')+'</option>').join("\n"),
+'    </select>',
+'    <div id="bdRaOtherWrap" style="display:none;"><label style="'+lbl+'">Please specify</label><input id="bdRaOther" style="'+inp+'"></div>',
+'    <div id="bdRaStatus" style="font-size:13px;margin-bottom:10px;"></div>',
+'    <button id="bdRaSubmit" style="width:100%;background:linear-gradient(135deg,#F7A8C4,#7EC4F2);color:#fff;border:none;padding:13px;border-radius:24px;font-size:15.5px;font-weight:800;cursor:pointer;font-family:inherit;box-shadow:0 6px 16px -6px rgba(126,196,242,.8);">Request Appointment</button>'
+  ].join("\n");
+}
+function bubblesRequestScript(mode){
+  const done = '<div style=\\"text-align:center;padding:22px 4px;\\"><div style=\\"font-size:40px;\\">\uD83E\uDEE7</div><p style=\\"color:#2B6CB0;font-weight:800;font-size:16px;margin:6px 0;\\">Thank you!</p><p style=\\"color:#4A5C7A;font-size:13.5px;margin:0;\\">Your request has been sent \u2014 our team will call you shortly to confirm the time.</p></div>';
+  return [
+'  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";',
+'  import { getFirestore, collection, doc, setDoc } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";',
+'  const fbDb = getFirestore(initializeApp('+JSON.stringify(REQUEST_APPT_FC)+', "bubbles-request-appt-'+mode+'-"+Date.now()+Math.random()));',
+'  const $ = (id) => document.getElementById(id);',
+'  const dateEl = $("bdRaDate");',
+'  if(dateEl){ const t = new Date(); dateEl.min = t.getFullYear()+"-"+String(t.getMonth()+1).padStart(2,"0")+"-"+String(t.getDate()).padStart(2,"0"); }',
+(mode==="popup" ? [
+'  const overlay = $("bdRaOverlay");',
+'  if($("bdRaBtn")) $("bdRaBtn").onclick = () => { overlay.style.display = "flex"; };',
+'  if($("bdRaCancel")) $("bdRaCancel").onclick = () => { overlay.style.display = "none"; };',
+'  if(overlay) overlay.addEventListener("click", (e) => { if(e.target === overlay) overlay.style.display = "none"; });'
+].join("\n") : ""),
+'  const svc = $("bdRaService");',
+'  if(svc) svc.onchange = () => { $("bdRaOtherWrap").style.display = svc.value === "Other" ? "block" : "none"; };',
+'  const btn = $("bdRaSubmit");',
+'  if(btn && btn.dataset.bdWired !== "1"){',
+'    btn.dataset.bdWired = "1";',
+'    btn.onclick = async () => {',
+'      if(btn.dataset.busy === "1") return;',
+'      const st = $("bdRaStatus");',
+'      const name = $("bdRaName").value.trim(), age = $("bdRaAge").value.trim(), mobile = $("bdRaMobile").value.trim();',
+'      const date = $("bdRaDate").value, service = svc.value === "Other" ? ($("bdRaOther").value.trim() || "Other") : svc.value;',
+'      const digits = mobile.replace(/\\D/g, "");',
+'      if(!name || !age || !mobile || !date || !svc.value){ st.textContent = "Please fill in all the fields marked *."; st.style.color = "#C53030"; return; }',
+'      if(digits.length < 10){ st.textContent = "Please enter a valid 10-digit mobile number."; st.style.color = "#C53030"; return; }',
+'      btn.dataset.busy = "1"; btn.disabled = true; btn.textContent = "Sending...";',
+'      try{',
+'        const ref = doc(collection(fbDb, "onlineBookings"));',
+'        await setDoc(ref, { id: ref.id, name, age, phone: mobile, email: $("bdRaEmail").value.trim(),',
+'          clinicLocation: '+JSON.stringify(BUBBLES_CLINIC_NAME)+', date, reason: service, source: "Bubbles Dental",',
+'          processed: false, createdAt: new Date().toISOString() });',
+'        $("bdRaForm").innerHTML = "'+done+'"'+(mode==="popup" ? ' + "<button onclick=\\"document.getElementById(\'bdRaOverlay\').style.display=\'none\'\\" style=\\"width:100%;margin-top:10px;background:#7EC4F2;color:#fff;border:none;padding:12px;border-radius:24px;font-size:15px;font-weight:700;cursor:pointer;\\">Close</button>"' : '')+';',
+'      }catch(e){',
+'        st.textContent = "Something went wrong. Please try again or WhatsApp us on 7827168138."; st.style.color = "#C53030";',
+'        btn.disabled = false; btn.textContent = "Request Appointment"; btn.dataset.busy = "0";',
+'      }',
+'    };',
+'  }'
+  ].join("\n");
+}
+function bubblesFormCardHtml(extraBottom){
+  return [
+'  <div style="background:linear-gradient(180deg,#FFF0F6 0%,#EEF7FF 100%);border:2px solid #F9D2E2;border-radius:22px;padding:22px;max-width:420px;width:100%;box-sizing:border-box;font-family:\'Nunito\',\'Segoe UI\',Roboto,Arial,sans-serif;max-height:92vh;overflow-y:auto;">',
+'    <div style="text-align:center;margin-bottom:14px;">',
+'      <div style="font-size:30px;line-height:1;">\uD83E\uDEE7\uD83E\uDDB7</div>',
+'      <h2 style="margin:6px 0 2px;font-size:20px;color:#E0578D;font-weight:800;">Book a Visit at Bubbles Dental</h2>',
+'      <p style="margin:0;color:#4A5C7A;font-size:13px;">Exclusive Kids Dentistry in Gurgaon \u2014 we\'ll call you to confirm a time.</p>',
+'    </div>',
+'    <div id="bdRaForm">',
+bubblesRequestFormInnerHtml(),
+extraBottom||"",
+'    </div>',
+'  </div>'
+  ].join("\n");
+}
+function generateBubblesRequestPopupCode(){
+  return [
+'<!-- Bubbles Dental \u2014 Request Appointment button (opens a pop-up form). -->',
+'<button id="bdRaBtn" style="background:linear-gradient(135deg,#F7A8C4,#7EC4F2);color:#fff;border:none;padding:13px 26px;border-radius:26px;font-size:15.5px;font-weight:800;cursor:pointer;font-family:inherit;box-shadow:0 6px 16px -6px rgba(126,196,242,.8);">Request Appointment</button>',
+'<div id="bdRaOverlay" style="display:none;position:fixed;inset:0;background:rgba(43,45,66,0.55);z-index:99999;align-items:center;justify-content:center;padding:14px;">',
+bubblesFormCardHtml('      <button id="bdRaCancel" style="width:100%;background:none;color:#8A97AD;border:none;padding:10px;font-size:14px;cursor:pointer;margin-top:4px;">Cancel</button>'),
+'</div>',
+'<script type="module">',
+bubblesRequestScript("popup"),
+'<'+'/script>'
+  ].join("\n");
+}
+function generateBubblesRequestInlineCode(){
+  return [
+'<!-- Bubbles Dental \u2014 Request Appointment form (embedded on the page). -->',
+'<div style="display:flex;justify-content:center;">',
+bubblesFormCardHtml(""),
+'</div>',
+'<script type="module">',
+bubblesRequestScript("inline"),
+'<'+'/script>'
+  ].join("\n");
+}
+
 async function openRequestApptButtonSheet(){
   const s = (await dbGetAll("settings"))[0] || {id:"main"};
   const notifsOn = !!s.requestApptEnabled;
@@ -9124,6 +9366,10 @@ async function openRequestApptButtonSheet(){
     <div class="section-title" style="margin-bottom:6px;">Option 2 — Form embedded directly on the page</div>
     <p style="margin:0 0 8px;">No button, no pop-up — the form itself sits inline wherever you paste it, with its own Submit button.</p>
     <button class="btn btn-outline btn-block" id="btnCopyRaEmbedInline" style="margin-bottom:16px;">${icon('file',15)} Copy Inline Form Code</button>
+    <div class="section-title" style="margin-bottom:6px;">Option 3 — Bubbles Dental (kids) form</div>
+    <p style="margin:0 0 8px;">For bubblesdental.in, in the pink &amp; blue Bubbles theme: Patient's Name, Age, Mobile, Email (optional), Date of Appointment and a Service list of pediatric treatments. Requests are tagged <b>Bubbles Dental</b> in Online Appointments.</p>
+    <button class="btn btn-outline btn-block" id="btnCopyBdInline" style="margin-bottom:8px;">${icon('file',15)} Copy Bubbles Inline Form Code</button>
+    <button class="btn btn-outline btn-block" id="btnCopyBdPopup" style="margin-bottom:16px;">${icon('file',15)} Copy Bubbles Pop-up Button Code</button>
     <p style="margin:0 0 16px;">Paste whichever you choose anywhere in your website's HTML — in the body, a page template, or right before <code>&lt;/body&gt;</code>.</p>
     <div class="section-title" style="margin-top:20px;margin-bottom:6px;">Firestore Security Rule (required)</div>
     <p style="margin:0 0 8px;">Without this rule, submissions from your website will fail with "Something went wrong" — visitors aren't logged in, so Firestore blocks the write by default until this is added. In the <a href="https://console.firebase.google.com/" target="_blank" rel="noopener">Firebase Console</a> → your project → Firestore Database → Rules tab, make sure a rule like this is present (merge it into whatever rules are already there — don't just replace the whole file):</p>
@@ -9157,6 +9403,12 @@ async function openRequestApptButtonSheet(){
       showToast("Couldn't copy — select and copy the code manually");
     }
   };
+  const copyBd = async (code, label)=>{
+    try{ await navigator.clipboard.writeText(code); showToast(label+" copied — paste it into the Bubbles Dental website"); }
+    catch(e){ showToast("Couldn't copy — select and copy the code manually"); }
+  };
+  document.getElementById("btnCopyBdInline").onclick = ()=> copyBd(generateBubblesRequestInlineCode(), "Bubbles inline form code");
+  document.getElementById("btnCopyBdPopup").onclick = ()=> copyBd(generateBubblesRequestPopupCode(), "Bubbles pop-up button code");
   document.getElementById("btnCopyRaRules").onclick = async ()=>{
     try{
       await navigator.clipboard.writeText(document.getElementById("raRulesSnippet").textContent);
@@ -9227,11 +9479,11 @@ function onlineApptCardHtml(b){
     <div class="swipe-wrap" data-oacard="${b.id}" style="position:relative;overflow:hidden;border-radius:10px;margin-bottom:10px;">
       <div class="swipe-delete-bg" style="position:absolute;inset:0;background:var(--red);color:#fff;display:flex;align-items:center;justify-content:flex-end;padding-right:20px;font-weight:700;font-size:13px;">${icon('trash',16)}&nbsp;Delete</div>
       <div class="note-card swipe-content" style="position:relative;margin-bottom:0;background:#fff;touch-action:pan-y;">
-        <div class="note-head"><b>${escapeHtml(b.name||"Unknown")}${b.age? " · Age "+escapeHtml(String(b.age)):""}</b>${b.processed? `<span class="status-pill">Reviewed</span>`:`<span class="status-pill" style="background:var(--amber-bg);color:var(--amber);">New</span>`}</div>
+        <div class="note-head"><b>${escapeHtml(b.name||"Unknown")}${b.age? " · Age "+escapeHtml(String(b.age)):""}${b.source==="Bubbles Dental"? ` <span class="status-pill" style="background:#FDE7F0;color:#D6457E;margin-left:4px;">Bubbles Dental</span>`:""}</b>${b.processed? `<span class="status-pill">Reviewed</span>`:`<span class="status-pill" style="background:var(--amber-bg);color:var(--amber);">New</span>`}</div>
         <div class="note-meta">${escapeHtml(b.phone||"No phone")}${b.email?" · "+escapeHtml(b.email):""}</div>
         ${b.clinicLocation? `<div class="note-meta" style="margin-top:2px;">${escapeHtml(b.clinicLocation)}</div>`:""}
         <div class="note-meta" style="margin-top:2px;">Preferred date: ${b.date? new Date(b.date).toLocaleDateString():"Not specified"}</div>
-        ${b.reason? `<div class="note-meta" style="margin-top:2px;">Reason: ${escapeHtml(b.reason)}</div>`:""}
+        ${b.reason? `<div class="note-meta" style="margin-top:2px;">${b.source==="Bubbles Dental"?"Service":"Reason"}: ${escapeHtml(b.reason)}</div>`:""}
         <div class="note-meta" style="margin-top:2px;color:var(--grey);">Submitted ${b.createdAt? new Date(b.createdAt).toLocaleString():""}</div>
         <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;">
           <button class="btn btn-outline btn-sm" data-oaadd="${b.id}">${icon('check',13)} Add Appointment</button>
@@ -12210,6 +12462,7 @@ const REPORT_DEFS = [
   {id:"birthday", section:"Communication", title:"Birthday Report", icon:"message", monthOnly:true},
   {id:"followups", section:"Communication", title:"Patient Follow-up Report", icon:"assist", custom:true},
   {id:"labwork", section:"Labwork", title:"Lab Case Report", icon:"flask", labFilter:true},
+  {id:"alignerLab", section:"Labwork", title:"Aligner Lab Case Report", icon:"braces", labFilter:true},
   {id:"inventory", section:"Inventory", title:"Inventory Stock Report", icon:"box", vendorFilter:true},
   {id:"pharmacySales", section:"Inventory", title:"Pharmacy Sales Report", icon:"box", custom:true},
 ];
@@ -13959,8 +14212,8 @@ async function renderReportDetailPage(def){
       <div class="field">
         <label>Lab</label>
         <select id="repLabFilter">
-          <option value="ALL">All Labs</option>
-          ${(await dbGetAll("labs")).map(l=>`<option value="${l.id}" ${reportFilters.labId===l.id?"selected":""}>${escapeHtml(l.name)}</option>`).join("")}
+          <option value="ALL">${def.id==="alignerLab"?"All Aligner Labs":"All Labs"}</option>
+          ${(await dbGetAll("labs")).filter(l=> def.id==="alignerLab" ? isAlignerLab(l) : !isAlignerLab(l)).map(l=>`<option value="${l.id}" ${reportFilters.labId===l.id?"selected":""}>${escapeHtml(l.name)}</option>`).join("")}
         </select>
       </div>
       ` : ""}
@@ -14389,6 +14642,33 @@ const REPORT_RUNNERS = {
       summary: [{label:"Pending", value:pending}, {label:"Done", value:done}, {label:"Overdue", value:overdue}],
       columns: ["Due Date","Patient","Category","Priority","Status"],
       rows: items.map(c=>[c.dueDate? fromDateKey(c.dueDate).toLocaleDateString():"", c.patientName||"", c.category, c.priority, c.status])
+    };
+  },
+
+  alignerLab: async (f)=>{
+    const cur = await finCurrency();
+    const patients = await dbGetAll("patients");
+    const clinics = await dbGetAll("clinics");
+    const pById = {}; patients.forEach(p=> pById[p.id]=p);
+    let cases = (await dbGetAll("alignerCases")).filter(c=> c.startDate && toDateKey(c.startDate)>=f.from && toDateKey(c.startDate)<=f.to);
+    if(f.labId && f.labId!=="ALL") cases = cases.filter(c=> c.alignerLabId===f.labId);
+    if(f.clinicId && f.clinicId!=="ALL") cases = cases.filter(c=>{ const p = pById[c.patientId]; return p && p.preferredClinicId===f.clinicId; });
+    cases.sort((a,b)=> new Date(b.startDate)-new Date(a.startDate));
+    const tCharge = cases.reduce((t,c)=>t+(Number(c.alignerLabCharge)||0),0);
+    const tPaid = cases.reduce((t,c)=>t+alignerLabPaidTotal(c),0);
+    const tFee = cases.reduce((t,c)=>t+(Number(c.cost)||0),0);
+    return {
+      summary: [
+        {label:"Aligner Cases", value: cases.length},
+        {label:"Patient Fees", value: finMoney(tFee,cur)},
+        {label:"Lab Charges", value: finMoney(tCharge,cur)},
+        {label:"Paid to Labs", value: finMoney(tPaid,cur)},
+        {label:"Balance Due to Labs", value: finMoney(Math.max(0,tCharge-tPaid),cur)}
+      ],
+      columns: ["Patient","Clinic","Brand","Aligner Lab","Start Date","Status","Patient Fee","Lab Charges","Paid to Lab","Balance Due"],
+      rows: cases.map(c=>{ const p = pById[c.patientId]||{}; const paid = alignerLabPaidTotal(c);
+        return [p.name||"", finClinicLabel(clinics,p.preferredClinicId), c.brand||"", c.alignerLabName||"", new Date(c.startDate).toLocaleDateString(), c.status||"Active",
+          finMoney(c.cost||0,cur), finMoney(c.alignerLabCharge||0,cur), finMoney(paid,cur), finMoney(Math.max(0,(Number(c.alignerLabCharge)||0)-paid),cur)]; })
     };
   },
 
@@ -17373,6 +17653,7 @@ async function openAlignerCaseForm(patient, caseId){
   const all = await dbGetAll("alignerCases");
   const existing = caseId ? all.find(c=>c.id===caseId) : null;
   const consultants = await dbGetAll("consultants");
+  const alignerLabs = await getAlignerLabs();
   const brandKnown = existing && ALIGNER_BRANDS.includes(existing.brand);
   const brandIsCustom = !!(existing && existing.brand && !brandKnown);
 
@@ -17407,6 +17688,14 @@ async function openAlignerCaseForm(patient, caseId){
       <div class="field"><label>Cost</label><input type="number" min="0" step="0.01" id="alCost" value="${existing?existing.cost||0:0}"></div>
       <div class="field"><label>Next Follow-up Date</label><input type="date" id="alFollowupDate" value="${existing&&existing.nextFollowupDate? toDateKey(new Date(existing.nextFollowupDate)) : ''}"></div>
     </div>
+    <div class="section-title" style="margin-top:6px;">Aligner Lab</div>
+    <div class="field-row">
+      <div class="field"><label>Aligner Lab</label>
+        <select id="alLab"><option value="">— Select aligner lab —</option>${alignerLabs.map(l=>`<option value="${l.id}" ${existing&&existing.alignerLabId===l.id?'selected':''}>${escapeHtml(l.name)}</option>`).join("")}</select>
+        ${alignerLabs.length? "" : `<div class="small-note" style="margin-top:4px;">Add aligner labs in Settings → Manage Labs → Aligner Labs.</div>`}
+      </div>
+      <div class="field"><label>Lab Charges (total for this patient)</label><input type="number" min="0" step="0.01" id="alLabCharge" value="${existing?existing.alignerLabCharge||0:0}"></div>
+    </div>
     <div class="field"><label>Notes</label><input id="alNotes" placeholder="Optional" value="${escapeAttr(existing?existing.notes||'':'')}"></div>
     <button class="btn btn-primary btn-block" id="btnSaveAlignerCase" style="margin-top:10px;">Save Aligner Case</button>
   `);
@@ -17439,6 +17728,10 @@ async function openAlignerCaseForm(patient, caseId){
     rec.estimatedCompletionDate = completionVal ? new Date(completionVal).toISOString() : null;
     rec.status = document.getElementById("alStatus").value;
     rec.cost = parseFloat(document.getElementById("alCost").value)||0;
+    { const labId = document.getElementById("alLab").value; const lab = alignerLabs.find(l=>l.id===labId);
+      rec.alignerLabId = lab ? lab.id : ""; rec.alignerLabName = lab ? lab.name : "";
+      rec.alignerLabCharge = parseFloat(document.getElementById("alLabCharge").value)||0;
+      rec.alignerLabPayments = rec.alignerLabPayments || []; }
     rec.notes = document.getElementById("alNotes").value.trim();
     rec.visits = rec.visits || [];
     rec.nextFollowupDate = followupVal ? new Date(followupVal).toISOString() : null;
@@ -22030,7 +22323,17 @@ async function openNewTreatmentSheet(patient, tabBody, patientId, prefill, templ
     <div class="field"><label>Date</label><input id="ntDate" type="date" value="${presetDate || toDateKey(new Date())}"></div>
     <div id="ntBlocks">${blockHtml(prefill?prefill.treatment:'', prefill?prefill.notes:'')}</div>
     <button type="button" class="nt-add-another" id="btnNtAddAnother">${icon('plus',16)} Add Another Treatment</button>
-    <div class="nt-total" id="ntTotal" style="display:none;"><span id="ntTotalLbl"></span><b id="ntTotalVal"></b></div>
+    <div id="ntOverallWrap" style="display:none;">
+      <div class="field-row">
+        <div class="field"><label>Overall Discount</label><input type="number" min="0" id="ntOverallDiscount" value="0"></div>
+        <div class="field"><label>Discount Type</label><select id="ntOverallDiscountType"><option value="flat" selected>₹ Flat Amount</option><option value="percent">% Percent</option></select></div>
+      </div>
+    </div>
+    <div class="nt-total" id="ntTotal" style="display:none;flex-direction:column;align-items:stretch;gap:4px;">
+      <div style="display:flex;justify-content:space-between;"><span id="ntTotalLbl"></span><span id="ntSubVal"></span></div>
+      <div id="ntOdRow" style="display:none;justify-content:space-between;color:var(--red);"><span>Overall Discount</span><span id="ntOdVal"></span></div>
+      <div style="display:flex;justify-content:space-between;"><b>Net Total</b><b id="ntTotalVal"></b></div>
+    </div>
     <div class="field"><label>Performed By (Doctor)</label>${doctorSelectHtml("ntPerformedBy", patient.treatingDoctor||"", doctors)}</div>
     ${fromTemplate? `
       <div class="section-title" style="margin-top:10px;">From "${escapeHtml(template.name)}" Template</div>
@@ -22060,10 +22363,16 @@ async function openNewTreatmentSheet(patient, tabBody, patientId, prefill, templ
       blk.querySelector(".nt-remove").style.display = blocks.length>1 ? "" : "none";
     });
     const totalEl = document.getElementById("ntTotal");
+    document.getElementById("ntOverallWrap").style.display = blocks.length>1 ? "" : "none";
     if(blocks.length>1){
-      totalEl.style.display = "";
-      document.getElementById("ntTotalLbl").textContent = blocks.length+" treatments · Total";
-      document.getElementById("ntTotalVal").textContent = finMoney(blocks.reduce((t,b)=>t+blockNet(b),0), cur);
+      totalEl.style.display = "flex";
+      const sub = blocks.reduce((t,b)=>t+blockNet(b),0);
+      const od = ntOverallDiscountAmt(sub);
+      document.getElementById("ntTotalLbl").textContent = blocks.length+" treatments · Subtotal";
+      document.getElementById("ntSubVal").textContent = finMoney(sub, cur);
+      document.getElementById("ntOdRow").style.display = od>0 ? "flex" : "none";
+      document.getElementById("ntOdVal").textContent = "− "+finMoney(od, cur);
+      document.getElementById("ntTotalVal").textContent = finMoney(sub-od, cur);
     }else totalEl.style.display = "none";
   }
   function wireBlock(blk){
@@ -22085,6 +22394,13 @@ async function openNewTreatmentSheet(patient, tabBody, patientId, prefill, templ
     });
     wireTreatmentPresetAutofill(blk.querySelector(".nt-treatment"), blk.querySelector(".nt-fee"));
   }
+  function ntOverallDiscountAmt(sub){
+    const v = parseFloat(document.getElementById("ntOverallDiscount").value)||0;
+    const t = document.getElementById("ntOverallDiscountType").value;
+    return Math.max(0, t==="flat" ? Math.min(sub, v) : sub*(Math.min(v,100)/100));
+  }
+  document.getElementById("ntOverallDiscount").addEventListener("input", ()=>refreshBlocks());
+  document.getElementById("ntOverallDiscountType").addEventListener("change", ()=>refreshBlocks());
   wireBlock(blocksEl.querySelector(".nt-block"));
   refreshBlocks();
   document.getElementById("btnNtAddAnother").onclick = ()=>{
@@ -22133,6 +22449,15 @@ async function openNewTreatmentSheet(patient, tabBody, patientId, prefill, templ
         performedBy,
         notes: blk.querySelector(".nt-notes").value.trim()
       }));
+      // Overall discount (2+ treatments): shared out across the treatments in
+      // proportion to their amounts and added to each one's own discount,
+      // so Treatment Done, invoices and balances all show the same net.
+      if(items.length>1){
+        const nets = items.map(it=>{ const g = it.fee*it.qty; const d = it.discountType==="flat" ? Math.min(g,it.discount) : g*(it.discount/100); return g-d; });
+        const sub = nets.reduce((a,b)=>a+b,0);
+        const od = ntOverallDiscountAmt(sub);
+        if(od>0 && sub>0) applyOverallDiscountToItems(items, nets, od);
+      }
       let plan;
       if(existingPlanId){
         plan = (await dbGetAll("treatmentPlans")).find(pl=>pl.id===existingPlanId);
@@ -22196,6 +22521,24 @@ async function openNewTreatmentSheet(patient, tabBody, patientId, prefill, templ
     showToast("Treatment added, invoice "+created.inv.invoiceNumber+" generated");
     openRecordPaymentSheet(created.inv, patient, created.cur);
   };
+}
+
+// Spreads an overall discount over treatment items in proportion to each
+// one's net, turning each item's discount into a flat amount that includes
+// its share (kept separately as overallDiscountShare for reference).
+function applyOverallDiscountToItems(items, nets, overallAmt){
+  const sub = nets.reduce((a,b)=>a+b,0);
+  let left = Math.round(overallAmt*100)/100;
+  items.forEach((it,i)=>{
+    const share = i===items.length-1 ? left : Math.round((overallAmt*nets[i]/sub)*100)/100;
+    left = Math.round((left-share)*100)/100;
+    const g = (Number(it.fee)||0)*(Number(it.qty)||1);
+    const own = it.discountType==="flat" ? Math.min(g, Number(it.discount)||0) : g*((Number(it.discount)||0)/100);
+    it.discount = Math.round((own+share)*100)/100;
+    it.discountType = "flat";
+    it.overallDiscountShare = share;
+  });
+  return items;
 }
 
 // Prints Treatment Done, and (when present) the just-saved Prescription and
@@ -22799,7 +23142,9 @@ async function openRxPharmacyBillPicker(rx, patient, tabBody, patientId){
   };
   const rows = meds.map(it=>{
     const prod = findProduct(it);
-    return { it, prod, price: prod? (Number(prod.ourPrice)||0) : 0, qty: 1, checked: true };
+    const ps = prod ? phPackSize(prod) : 1;
+    const suggested = ps>1 ? rxSuggestTabletCount(it) : 0;
+    return { it, prod, ps, price: prod? (Number(prod.ourPrice)||0)/ps : 0, qty: suggested || 1, checked: true };
   });
   openSheet(`
     <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
@@ -22812,10 +23157,10 @@ async function openRxPharmacyBillPicker(rx, patient, tabBody, patientId){
         <div style="flex:1;min-width:0;">
           <div class="name">${escapeHtml(r.it.drugName)}${r.it.strength? " "+escapeHtml(r.it.strength):""}</div>
           ${r.it.generic? `<div class="addr" style="font-style:italic;">${escapeHtml(r.it.generic)}</div>` : ""}
-          <div class="addr">${r.prod? `In stock: ${Number(r.prod.stock)||0} · ${escapeHtml(r.prod.name)}` : `<span style="color:var(--amber);">Not in pharmacy stock — enter price</span>`}</div>
+          <div class="addr">${r.prod? `In stock: ${phStockLabel(r.prod)} · ${escapeHtml(r.prod.name)}` : `<span style="color:var(--amber);">Not in pharmacy stock — enter price</span>`}</div>
           <div style="display:flex;gap:8px;margin-top:6px;">
-            <div style="flex:1;"><label style="font-size:11px;color:var(--grey);">Qty</label><input type="number" min="1" step="1" class="phb-qty" data-i="${i}" value="1"></div>
-            <div style="flex:1;"><label style="font-size:11px;color:var(--grey);">Price (${cur})</label><input type="number" min="0" step="0.01" class="phb-price" data-i="${i}" value="${r.price}"></div>
+            <div style="flex:1;"><label style="font-size:11px;color:var(--grey);">Qty${r.ps>1? " (tablets)":""}</label><input type="number" min="1" step="1" class="phb-qty" data-i="${i}" value="1"></div>
+            <div style="flex:1;"><label style="font-size:11px;color:var(--grey);">Price${r.ps>1? " per tablet":""} (${cur})</label><input type="number" min="0" step="0.01" class="phb-price" data-i="${i}" value="${r.price}"></div>
           </div>
         </div>
       </div>`).join("")}</div>
@@ -22845,14 +23190,9 @@ async function openRxPharmacyBillPicker(rx, patient, tabBody, patientId){
     if(unpriced && !confirm(`${unpriced.it.drugName} has no price — bill it at ${finMoney(0,cur)}?`)) return;
     editingPharmacySaleId = null;
     pharmacySalePatient = {id: patient.id, name: patient.name};
-    pharmacySaleItemsDraft = sel.map(r=>({
-      productId: r.prod? r.prod.id : "",
-      name: r.prod? r.prod.name : ((r.it.drugName||"")+(r.it.strength? " "+r.it.strength : "")),
-      mrp: r.prod? (Number(r.prod.mrp)||r.price) : r.price,
-      discount: r.prod? (Number(r.prod.discount)||0) : 0,
-      price: r.price, qty: r.qty,
-      stockAvail: r.prod? (Number(r.prod.stock)||0) : 999999
-    }));
+    pharmacySaleItemsDraft = sel.map(r=> r.prod
+      ? Object.assign(phDraftLine(r.prod, "tablet", r.qty), { price: r.price, qty: r.qty })
+      : { productId:"", name: (r.it.drugName||"")+(r.it.strength? " "+r.it.strength : ""), mrp: r.price, discount:0, price: r.price, qty: r.qty, unitType:"unit", packSize:1, stockAvail: 999999 });
     pharmacySaleReturnPatientId = patientId || patient.id;
     renderPharmacySaleFormSheet(cur, null);
   };
@@ -24125,6 +24465,7 @@ async function openReceiptActionMenu(paymentId, patient, tabBody, patientId, cur
       }
       await dbDelete("payments", paymentId);
       await removeIncomeTransactionForPayment(paymentId);
+      await removeAlignerLabSplitsForPayment(paymentId);
       const relatedSplits = (await dbGetAll("consultantPayments")).filter(s=>s.paymentId===paymentId);
       for(const s of relatedSplits){ await dbDelete("consultantPayments", s.id); await removeExpenseTransactionForSplit(s.id); }
       logActivity("Deleted a payment record for "+patient.name, {patientId:patient.id});
@@ -24135,6 +24476,10 @@ async function openReceiptActionMenu(paymentId, patient, tabBody, patientId, cur
     { key:"split", icon:"user", text:"Split with Consultant", onClick: ()=>{
       closeSheet();
       openSplitPaymentSheet(paymentId, patient, tabBody, patientId, cur);
+    } },
+    { key:"splitAligner", icon:"braces", text:"Split with Aligner Lab", onClick: ()=>{
+      closeSheet();
+      openAlignerLabSplitSheet(paymentId, patient, tabBody, patientId, cur);
     } },
     { key:"whatsapp", icon:"message", text:"Receipt On WhatsApp", onClick: ()=>{
       closeSheet();
@@ -24639,16 +24984,23 @@ async function openQuickOpdForm(patient){
       const amountPaid = parseFloat(document.getElementById("qopdAmountPaid").value)||0;
       const mode = document.getElementById("qopdMode").value;
 
+      // The overall discount is shared across the treatments (by amount) and
+      // stored on each Treatment Done item and its invoice line, so the
+      // treatment, the invoice and the receipt all show the discounted net.
+      const planItems = validTreatmentRows.map(r=> ({ id: uid("planitem"), treatmentDate: nowTs, tooth: r.tooth, diagnosis, treatment: r.treatment.trim(),
+          qty: rowQty(r), fee: Number(r.fee)||0, discount:0, discountType:"flat", priority:"Normal", status:"Completed", performedBy: doctor }));
+      if(discountAmt>0) applyOverallDiscountToItems(planItems, planItems.map(it=> it.fee*it.qty), discountAmt);
       const plan = {
         id: uid("plan"), patientId: patient.id, clinicId, doctor, createdDate: nowTs,
-        items: validTreatmentRows.map(r=> ({ id: uid("planitem"), treatmentDate: nowTs, tooth: r.tooth, diagnosis, treatment: r.treatment.trim(),
-          qty: rowQty(r), fee: Number(r.fee)||0, discount:0, discountType:"flat", priority:"Normal", status:"Completed", performedBy: doctor })),
-        overallDiscount: discount, overallDiscountType: discountType, quickOpd:true, createdAt: nowTs
+        items: planItems,
+        overallDiscount: 0, overallDiscountType: "flat",
+        quickOpdOverallDiscount: discount, quickOpdOverallDiscountType: discountType, quickOpdOverallDiscountAmt: discountAmt,
+        quickOpd:true, createdAt: nowTs
       };
       await dbAdd("treatmentPlans", plan);
       createdParts.push("Treatment Done");
 
-      const invItems = validTreatmentRows.map(r=> ({ description: r.treatment.trim()+(r.tooth?" (Tooth "+r.tooth+")":""), qty: rowQty(r), unitPrice: Number(r.fee)||0, discount:0, discountType:"flat" }));
+      const invItems = planItems.map(it=> ({ id: uid("invitem"), sourceItemId: it.id, description: it.treatment+(it.tooth?" (Tooth "+it.tooth+")":""), qty: it.qty, unitPrice: it.fee, discount: it.discount, discountType:"flat" }));
       const invoice = {
         id: uid("inv"), patientId: patient.id, clinicId,
         invoiceNumber: await nextInvoiceNumber(),
@@ -27160,7 +27512,7 @@ function pharmacyProductRowHtml(p, cur){
   const low = (Number(p.stock)||0) <= (Number(p.lowStockThreshold)||0);
   return `<div class="clinic-row" data-product="${p.id}" style="cursor:pointer;">
     <div><div class="name">${escapeHtml(p.name)}</div><div class="addr">MRP ${finMoney(p.mrp||0,cur)} · Our Price ${finMoney(p.ourPrice||0,cur)}${p.discount?` (${p.discount}% off)`:''}</div></div>
-    <span class="status-pill ${low?'st-Cancelled':'st-Completed'}">${p.stock||0} in stock</span>
+    <span class="status-pill ${low?'st-Cancelled':'st-Completed'}">${phStockLabel(p)} in stock</span>
   </div>`;
 }
 
@@ -27186,6 +27538,58 @@ async function renderPharmacyStock(body){
   wirePaginationBar("pharmacyStock", products.length, pharmacyStockPage, PAGE_SIZE, (newPage)=>{ pharmacyStockPage = newPage; renderPharmacyStock(body); });
 }
 
+// ---- Loose tablets: a product can have "Tablets per Strip" (packSize).
+// Stock stays counted in strips (it can go fractional, e.g. 4.5 strips),
+// MRP / price are per strip, and a bill line can be in Tablets (price =
+// strip price / tablets per strip) or whole Strips.
+function finMoneyPlain(n){ return "₹"+(Number(n)||0).toLocaleString("en-IN",{maximumFractionDigits:2}); }
+function phPackSize(prod){ const n = Math.floor(Number(prod && prod.packSize)||0); return n>1 ? n : 1; }
+function phStockLabel(prod){
+  const ps = phPackSize(prod), st = Number(prod.stock)||0;
+  return ps>1 ? `${+st.toFixed(2)} strips (${Math.round(st*ps)} tabs)` : `${+st.toFixed(2)}`;
+}
+// Builds a bill line for a product, in tablets when it has a strip size.
+function phDraftLine(prod, unitType, qty){
+  const ps = phPackSize(prod);
+  const ut = ps>1 ? (unitType||"tablet") : "unit";
+  const div = ut==="tablet" ? ps : 1;
+  return {
+    productId: prod.id, name: prod.name, packSize: ps, unitType: ut,
+    stripMrp: Number(prod.mrp)||0, stripPrice: Number(prod.ourPrice)||0,
+    mrp: (Number(prod.mrp)||0)/div, discount: Number(prod.discount)||0, price: (Number(prod.ourPrice)||0)/div,
+    qty: qty||1, stockAvail: (Number(prod.stock)||0) * div
+  };
+}
+function phUnitLabel(it, qty){
+  const q = qty!=null ? qty : it.qty;
+  if(it.unitType==="tablet") return q===1 ? "tab" : "tabs";
+  if(it.unitType==="strip") return q===1 ? "strip" : "strips";
+  return "";
+}
+// Tablets needed for a prescription line: dose pattern (1-0-1, BD, TDS...)
+// × duration (days / weeks). 0 when it can't be worked out.
+function rxSuggestTabletCount(it){
+  const form = String(it.form||"").toLowerCase();
+  if(form && !/tab|cap/.test(form)) return 0;
+  const pat = String(it.dose||"")+" "+String(it.frequency||"");
+  let perDay = 0;
+  const m = pat.match(/(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)(?:\s*-\s*(\d+(?:\.\d+)?))?/);
+  if(m) perDay = [m[1],m[2],m[3],m[4]].filter(Boolean).reduce((a,b)=>a+Number(b),0);
+  else{
+    const f = pat.toLowerCase();
+    if(/\b(od|once|hs|sos)\b/.test(f)) perDay = 1;
+    else if(/\b(bd|bid|twice)\b/.test(f)) perDay = 2;
+    else if(/\b(tds|tid|thrice)\b/.test(f)) perDay = 3;
+    else if(/\b(qid|qds)\b/.test(f)) perDay = 4;
+  }
+  const d = String(it.duration||"").toLowerCase();
+  const dm = d.match(/(\d+)/);
+  let days = dm ? Number(dm[1]) : 0;
+  if(/week|wk/.test(d)) days *= 7;
+  else if(/month/.test(d)) days *= 30;
+  return perDay>0 && days>0 ? Math.ceil(perDay*days) : 0;
+}
+
 async function openPharmacyProductForm(id){
   const products = await dbGetAll("pharmacyProducts");
   const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived);
@@ -27208,8 +27612,12 @@ async function openPharmacyProductForm(id){
       <div class="field"><label>Discount %</label><input id="ppDiscount" type="number" min="0" max="100" step="0.01" value="${p.discount}"></div>
     </div>
     <div class="field"><label>Our Price (selling price)</label><input id="ppOurPrice" type="number" min="0" step="0.01" value="${p.ourPrice}"></div>
+    <div class="field"><label>Tablets per Strip <span style="font-weight:400;color:var(--grey);">(for tablets/capsules sold loose)</span></label>
+      <input id="ppPackSize" type="number" min="1" step="1" value="${phPackSize(p)>1? phPackSize(p) : ''}" placeholder="e.g. 10 — leave blank if sold as a whole unit">
+      <div class="small-note" id="ppPerTab" style="margin-top:4px;"></div>
+    </div>
     <div class="field-row">
-      <div class="field"><label>Stock Quantity</label><input id="ppStock" type="number" min="0" step="1" value="${p.stock}"></div>
+      <div class="field"><label id="ppStockLbl">Stock Quantity</label><input id="ppStock" type="number" min="0" step="any" value="${p.stock}"></div>
       <div class="field"><label>Low Stock Alert Below</label><input id="ppLowThreshold" type="number" min="0" step="1" value="${p.lowStockThreshold}"></div>
     </div>
     ${id? `<button class="btn btn-outline btn-block" id="btnDeleteProduct" style="margin-bottom:8px;">Delete Product</button>`:""}
@@ -27225,6 +27633,20 @@ async function openPharmacyProductForm(id){
   }
   mrpEl.addEventListener("input", recalcPrice);
   discEl.addEventListener("input", recalcPrice);
+  const packEl = document.getElementById("ppPackSize");
+  function refreshPerTab(){
+    const ps = Math.floor(parseFloat(packEl.value)||0);
+    const note = document.getElementById("ppPerTab");
+    const stockLbl = document.getElementById("ppStockLbl");
+    if(ps>1){
+      const per = (parseFloat(priceEl.value)||0)/ps, perMrp = (parseFloat(mrpEl.value)||0)/ps;
+      const stockN = parseFloat(document.getElementById("ppStock").value)||0;
+      note.innerHTML = `Per tablet: <b>${finMoneyPlain(per)}</b> (MRP ${finMoneyPlain(perMrp)}) · Stock ${Math.round(stockN*ps)} tablets. MRP / price above are per strip.`;
+      stockLbl.textContent = "Stock (strips)";
+    }else{ note.textContent = ""; stockLbl.textContent = "Stock Quantity"; }
+  }
+  [packEl, mrpEl, discEl, priceEl, document.getElementById("ppStock")].forEach(el=> el.addEventListener("input", refreshPerTab));
+  refreshPerTab();
   document.getElementById("btnSaveProduct").onclick = async ()=>{
     const name = document.getElementById("ppName").value.trim();
     if(!name){ showToast("Product name is required"); return; }
@@ -27236,6 +27658,7 @@ async function openPharmacyProductForm(id){
     p.discount = parseFloat(document.getElementById("ppDiscount").value)||0;
     p.ourPrice = parseFloat(document.getElementById("ppOurPrice").value)||0;
     p.stock = parseFloat(document.getElementById("ppStock").value)||0;
+    { const ps = Math.floor(parseFloat(document.getElementById("ppPackSize").value)||0); p.packSize = ps>1 ? ps : 0; }
     p.lowStockThreshold = parseFloat(document.getElementById("ppLowThreshold").value)||0;
     p.updatedAt = nowIso();
     await dbPut("pharmacyProducts", p);
@@ -27410,13 +27833,13 @@ function renderPharmacySaleFormSheet(cur, existingSale){
       const products = await dbGetAll("pharmacyProducts");
       const nq = normalizeStr(q);
       const matches = products.filter(x=> normalizeStr(x.name||"").includes(nq)).slice(0,8);
-      prodResults.innerHTML = matches.length? matches.map(x=>`<div class="patient-picker-result" data-prodid="${x.id}">${escapeHtml(x.name)} · ${finMoney(x.ourPrice||0,cur)} · ${x.stock||0} in stock</div>`).join("") : `<div class="patient-picker-result" style="color:var(--grey);">No matches.</div>`;
+      prodResults.innerHTML = matches.length? matches.map(x=>`<div class="patient-picker-result" data-prodid="${x.id}">${escapeHtml(x.name)} · ${phPackSize(x)>1? finMoney((x.ourPrice||0)/phPackSize(x),cur)+"/tab" : finMoney(x.ourPrice||0,cur)} · ${phStockLabel(x)} in stock</div>`).join("") : `<div class="patient-picker-result" style="color:var(--grey);">No matches.</div>`;
       prodResults.querySelectorAll("[data-prodid]").forEach(el=>{
         el.onclick = ()=>{
           const prod = matches.find(x=>x.id===el.dataset.prodid);
           const existing = pharmacySaleItemsDraft.find(it=>it.productId===prod.id);
           if(existing) existing.qty += 1;
-          else pharmacySaleItemsDraft.push({productId:prod.id, name:prod.name, mrp:Number(prod.mrp)||0, discount:Number(prod.discount)||0, price:Number(prod.ourPrice)||0, qty:1, stockAvail:Number(prod.stock)||0});
+          else pharmacySaleItemsDraft.push(phDraftLine(prod, "tablet", 1));
           prodInput.value = ""; prodResults.innerHTML = "";
           renderPharmacySaleItems(cur);
         };
@@ -27437,8 +27860,10 @@ function renderPharmacySaleItems(cur){
     <div class="fin-row">
       <div class="fmain">
         <div class="fname">${escapeHtml(it.name)}</div>
-        <div class="fmeta">MRP ${finMoney(it.mrp,cur)} · Price ${finMoney(it.price,cur)}${it.discount?` (${it.discount}% off)`:''}${it.stockAvail<it.qty? ' · Low stock!':''}</div>
+        <div class="fmeta">MRP ${finMoney(it.mrp,cur)} · Price ${finMoney(it.price,cur)}${it.unitType==="tablet"?" per tablet":it.unitType==="strip"?" per strip":""}${it.discount?` (${it.discount}% off)`:''}${it.stockAvail<it.qty? ' · Low stock!':''}</div>
+        <div class="fmeta" style="color:var(--charcoal-2);font-weight:600;">${it.qty} ${phUnitLabel(it)} = ${finMoney(it.price*it.qty,cur)}</div>
       </div>
+      ${(Number(it.packSize)||1)>1? `<select data-unit-idx="${i}" style="width:auto;margin-right:6px;padding:6px 4px;font-size:12.5px;"><option value="tablet" ${it.unitType==="tablet"?'selected':''}>Tablets</option><option value="strip" ${it.unitType==="strip"?'selected':''}>Strips</option></select>` : ""}
       <input type="number" min="1" step="1" value="${it.qty}" data-qty-idx="${i}" style="width:56px;text-align:center;margin-right:8px;">
       <button class="icon-btn" data-remove-idx="${i}" style="background:var(--off-white);color:var(--red);width:28px;height:28px;">${icon('close',13)}</button>
     </div>
@@ -27453,6 +27878,20 @@ function renderPharmacySaleItems(cur){
   wrap.querySelectorAll("[data-remove-idx]").forEach(el=>{
     el.onclick = ()=>{
       pharmacySaleItemsDraft.splice(parseInt(el.dataset.removeIdx), 1);
+      renderPharmacySaleItems(cur);
+    };
+  });
+  wrap.querySelectorAll("[data-unit-idx]").forEach(el=>{
+    el.onchange = ()=>{
+      const it = pharmacySaleItemsDraft[parseInt(el.dataset.unitIdx)];
+      const ps = Number(it.packSize)||1;
+      const stripMrp = it.stripMrp!=null ? it.stripMrp : (it.unitType==="tablet"? it.mrp*ps : it.mrp);
+      const stripPrice = it.stripPrice!=null ? it.stripPrice : (it.unitType==="tablet"? it.price*ps : it.price);
+      const stripStock = it.unitType==="tablet" ? it.stockAvail/ps : it.stockAvail;
+      it.unitType = el.value;
+      const div = it.unitType==="tablet" ? ps : 1;
+      it.mrp = stripMrp/div; it.price = stripPrice/div; it.stockAvail = stripStock*div;
+      it.stripMrp = stripMrp; it.stripPrice = stripPrice;
       renderPharmacySaleItems(cur);
     };
   });
@@ -27476,7 +27915,7 @@ async function savePharmacySale(cur, shouldPrint){
     patientId: pharmacySalePatient? pharmacySalePatient.id : "",
     patientName: pharmacySalePatient? pharmacySalePatient.name : "Walk-in",
     date: isEdit ? (prevSale? prevSale.date : nowIso()) : nowIso(),
-    items: pharmacySaleItemsDraft.map(it=>({productId:it.productId, name:it.name, mrp:it.mrp, discount:it.discount, price:it.price, qty:it.qty, lineTotal: it.price*it.qty})),
+    items: pharmacySaleItemsDraft.map(it=>({productId:it.productId, name:it.name, mrp:it.mrp, discount:it.discount, price:it.price, qty:it.qty, unitType: it.unitType||"unit", packSize: Number(it.packSize)||1, lineTotal: it.price*it.qty})),
     totalAmount,
     mode: document.getElementById("psMode").value,
     notes: document.getElementById("psNotes").value.trim()
@@ -27491,7 +27930,9 @@ async function savePharmacySale(cur, shouldPrint){
     for(const it of pharmacySaleItemsDraft){
       const prod = products.find(p=>p.id===it.productId);
       if(prod){
-        prod.stock = Math.max((Number(prod.stock)||0) - it.qty, 0);
+        // Tablets come off the strip count fractionally (10 of a 15-tab strip = 0.667).
+        const used = it.unitType==="tablet" ? it.qty/(Number(it.packSize)||phPackSize(prod)) : it.qty;
+        prod.stock = Math.max(Math.round(((Number(prod.stock)||0) - used)*10000)/10000, 0);
         await dbPut("pharmacyProducts", prod);
       }
     }
@@ -27510,7 +27951,7 @@ async function savePharmacySale(cur, shouldPrint){
 async function printPharmacyBill(sale, cur){
   const bodyHtml = `
     <table><thead><tr><th>Product</th><th>Qty</th><th>MRP</th><th>Price</th><th>Amount</th></tr></thead>
-    <tbody>${(sale.items||[]).map(it=>`<tr><td>${escapeHtml(it.name)}</td><td>${it.qty}</td><td>${finMoney(it.mrp,cur)}</td><td>${finMoney(it.price,cur)}</td><td>${finMoney(it.lineTotal,cur)}</td></tr>`).join("")}</tbody></table>
+    <tbody>${(sale.items||[]).map(it=>`<tr><td>${escapeHtml(it.name)}${it.unitType==="tablet"&&it.packSize>1? `<div style="font-size:10.5px;color:#666;">Loose tablets (strip of ${it.packSize})</div>`:""}</td><td>${it.qty}${phUnitLabel(it)? " "+phUnitLabel(it):""}</td><td>${finMoney(it.mrp,cur)}</td><td>${finMoney(it.price,cur)}</td><td>${finMoney(it.lineTotal,cur)}</td></tr>`).join("")}</tbody></table>
     <div style="margin-top:14px;text-align:right;font-size:13px;">
       <div style="font-size:16px;font-weight:bold;">Total: ${finMoney(sale.totalAmount||0,cur)}</div>
       ${sale.mode? `<div style="margin-top:4px;color:#666;">Paid via ${escapeHtml(sale.mode)}</div>`:""}
@@ -29698,6 +30139,108 @@ async function findConsultantById(id){
 }
 
 // ---- Split a received payment with a consultant ----
+// ---- Aligner lab split: part of a patient's payment passed on to the
+// aligner lab for their aligner case. Kept on the case (alignerLabPayments)
+// so the Aligner Cases tab and report can show paid / balance, and booked
+// as a "Lab Bills" expense in Finance.
+function alignerLabPaidTotal(c){ return (c.alignerLabPayments||[]).reduce((t,x)=>t+(Number(x.amount)||0),0); }
+async function syncAlignerLabSplitExpense(c, sp, patient){
+  await dbPut("financeTransactions", {
+    id: "fintx_alab_"+sp.id, type: "Expense", category: "Lab Bills",
+    description: "Aligner lab — "+(c.alignerLabName||"Aligner Lab")+(patient? " ("+patient.name+")":""),
+    date: toDateKey(new Date(sp.date)), clinicId: (patient&&patient.preferredClinicId)||"", paymentMode: "",
+    amount: Number(sp.amount)||0, notes: sp.notes || "Auto-synced from an aligner lab payment split",
+    autoSynced: true, sourceType: "alignerLabSplit", linkedSplitId: sp.id, patientId: c.patientId,
+    createdAt: nowIso(), updatedAt: nowIso()
+  });
+}
+async function removeAlignerLabSplitsForPayment(paymentId){
+  const cases = (await dbGetAll("alignerCases")).filter(c=> (c.alignerLabPayments||[]).some(x=>x.paymentId===paymentId));
+  for(const c of cases){
+    for(const sp of c.alignerLabPayments.filter(x=>x.paymentId===paymentId)) await dbDelete("financeTransactions", "fintx_alab_"+sp.id).catch(()=>{});
+    c.alignerLabPayments = c.alignerLabPayments.filter(x=>x.paymentId!==paymentId);
+    c.updatedAt = nowIso();
+    await dbPut("alignerCases", c);
+  }
+}
+async function openAlignerLabSplitSheet(paymentId, patient, tabBody, patientId, cur){
+  const pmt = (await dbGetAll("payments")).find(p=>p.id===paymentId);
+  if(!pmt){ showToast("Payment not found"); return; }
+  const cases = (await dbGetAll("alignerCases")).filter(c=>c.patientId===patient.id).sort((a,b)=> new Date(b.startDate||0)-new Date(a.startDate||0));
+  if(!cases.length){ showToast("No aligner case for "+patient.name+" — add one in Clinical → Orthodontic → Aligners"); return; }
+  const existing = [];
+  cases.forEach(c=> (c.alignerLabPayments||[]).filter(x=>x.paymentId===paymentId).forEach(x=> existing.push({c, x})));
+  const balanceOf = c=> Math.max(0, (Number(c.alignerLabCharge)||0) - alignerLabPaidTotal(c));
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>Split with Aligner Lab</h2>
+    <p style="margin-bottom:10px;">Payment of ${finMoney(pmt.amount,cur)} received on ${new Date(pmt.date).toLocaleDateString()}.</p>
+    ${existing.length? `
+      <div class="section-title" style="margin-top:0;">Already Split</div>
+      <div class="list-card" style="margin-bottom:14px;">${existing.map(({c,x})=>`
+        <div class="clinic-row">
+          <div><div class="name">${escapeHtml(c.alignerLabName||"Aligner Lab")}</div><div class="addr">${new Date(x.date).toLocaleDateString()}${x.notes? ' · '+escapeHtml(x.notes):''}</div></div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <b>${finMoney(x.amount,cur)}</b>
+            <button class="icon-btn" data-remove-asplit="${c.id}|${x.id}" style="background:var(--off-white);color:var(--red);width:28px;height:28px;">${icon('close',13)}</button>
+          </div>
+        </div>`).join("")}</div>` : ""}
+    <div class="field"><label>Aligner Case</label>
+      <select id="asCase">${cases.map(c=>`<option value="${c.id}">${escapeHtml(c.brand||"Clear Aligners")} — ${escapeHtml(c.alignerLabName||"No lab set")} · started ${new Date(c.startDate).toLocaleDateString()}</option>`).join("")}</select>
+    </div>
+    <div class="nt-total" id="asInfo" style="flex-direction:column;align-items:stretch;gap:3px;"></div>
+    <div class="field-row">
+      <div class="field"><label>Split %</label><input id="asPercent" type="number" min="0" max="100" step="0.01" value="0"></div>
+      <div class="field"><label>Amount to Lab</label><input id="asAmount" type="number" min="0" step="0.01" value="0"></div>
+    </div>
+    <div class="field"><label>Notes</label><input id="asNotes" placeholder="Optional"></div>
+    <button class="btn btn-primary btn-block" id="btnSaveASplit">Save Split</button>
+  `);
+  const caseSel = document.getElementById("asCase"), pctEl = document.getElementById("asPercent"), amtEl = document.getElementById("asAmount");
+  const refresh = ()=>{
+    const c = cases.find(x=>x.id===caseSel.value);
+    const bal = balanceOf(c);
+    document.getElementById("asInfo").innerHTML = c.alignerLabId ? `
+      <div style="display:flex;justify-content:space-between;"><span>Lab Charges</span><span>${finMoney(c.alignerLabCharge||0,cur)}</span></div>
+      <div style="display:flex;justify-content:space-between;"><span>Already Paid to Lab</span><span>${finMoney(alignerLabPaidTotal(c),cur)}</span></div>
+      <div style="display:flex;justify-content:space-between;"><b>Balance Due to Lab</b><b>${finMoney(bal,cur)}</b></div>`
+      : `<span style="color:var(--amber);">No aligner lab set on this case — edit the case to pick one.</span>`;
+    const amt = Math.min(Number(pmt.amount)||0, bal || (Number(pmt.amount)||0));
+    amtEl.value = amt.toFixed(2);
+    pctEl.value = pmt.amount ? ((amt/pmt.amount)*100).toFixed(2) : 0;
+  };
+  caseSel.onchange = refresh;
+  pctEl.oninput = ()=>{ amtEl.value = ((Number(pmt.amount)||0)*((parseFloat(pctEl.value)||0)/100)).toFixed(2); };
+  amtEl.oninput = ()=>{ pctEl.value = pmt.amount ? (((parseFloat(amtEl.value)||0)/pmt.amount)*100).toFixed(2) : 0; };
+  refresh();
+  document.querySelectorAll("[data-remove-asplit]").forEach(btn=> btn.onclick = async ()=>{
+    if(!confirm("Remove this split?")) return;
+    const [cid, sid] = btn.dataset.removeAsplit.split("|");
+    const c = (await dbGetAll("alignerCases")).find(x=>x.id===cid);
+    if(c){ c.alignerLabPayments = (c.alignerLabPayments||[]).filter(x=>x.id!==sid); c.updatedAt = nowIso(); await dbPut("alignerCases", c); }
+    await dbDelete("financeTransactions", "fintx_alab_"+sid).catch(()=>{});
+    showToast("Split removed");
+    openAlignerLabSplitSheet(paymentId, patient, tabBody, patientId, cur);
+  });
+  document.getElementById("btnSaveASplit").onclick = async ()=>{
+    const c = (await dbGetAll("alignerCases")).find(x=>x.id===caseSel.value);
+    if(!c){ showToast("Aligner case not found"); return; }
+    if(!c.alignerLabId){ showToast("Set the aligner lab on this case first"); return; }
+    const amount = parseFloat(amtEl.value)||0;
+    if(amount<=0){ showToast("Enter a valid amount"); return; }
+    if(amount > (Number(pmt.amount)||0)){ showToast("Split can't be more than the payment"); return; }
+    const sp = { id: uid("alsplit"), paymentId, receiptNumber: pmt.receiptNumber||"", amount, percent: parseFloat(pctEl.value)||0, notes: document.getElementById("asNotes").value.trim(), date: nowIso() };
+    c.alignerLabPayments = (c.alignerLabPayments||[]).concat(sp);
+    c.updatedAt = nowIso();
+    await dbPut("alignerCases", c);
+    await syncAlignerLabSplitExpense(c, sp, patient);
+    logActivity("Split "+finMoney(amount,cur)+" of a payment with aligner lab "+(c.alignerLabName||"")+" for "+patient.name, {patientId: patient.id});
+    showToast("Split saved");
+    closeSheetOrReturn();
+    if(tabBody && patientId) renderBillingTab(tabBody, patientId, patient);
+  };
+}
+
 async function openSplitPaymentSheet(paymentId, patient, tabBody, patientId, cur){
   const payments = await dbGetAll("payments");
   const pmt = payments.find(p=>p.id===paymentId);
