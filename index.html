@@ -630,6 +630,77 @@
   .cv-tile.active .cv-tile-label{color:#FFFFFF;}
   body.dark-mode .cv-tile:not(.active){background:var(--white);border-color:rgba(255,255,255,0.06);}
   @media (prefers-reduced-motion:reduce){ .cv-tile,.cv-tile-icon,.cv-tile::before{animation:none !important;transition:none !important;} }
+  /* ---------- Home: hero, compact rows, reveal */
+  .home-hero{display:flex;align-items:center;gap:14px;background:linear-gradient(135deg,var(--white) 0%,var(--green-mist) 140%);border-radius:18px;padding:16px 16px 14px;margin:2px 0 14px;
+    box-shadow:0 1px 3px rgba(20,23,26,0.06), 0 10px 26px -10px rgba(14,111,92,0.35);position:relative;overflow:hidden;animation:htdCardIn .5s cubic-bezier(.16,1,.3,1) both;}
+  .home-hero::after{content:"";position:absolute;width:180px;height:180px;right:-60px;top:-80px;border-radius:50%;background:radial-gradient(circle,rgba(63,168,138,.18),transparent 70%);animation:hhFloat 7s ease-in-out infinite;}
+  @keyframes hhFloat{50%{transform:translate(-14px,12px) scale(1.08);}}
+  .hh-left{flex:1;min-width:0;position:relative;z-index:1;}
+  .hh-greet{font-size:19px;font-weight:800;color:var(--charcoal);font-family:Georgia,serif;}
+  .hh-date{font-size:12.5px;color:var(--grey);margin-top:2px;}
+  .hh-next{margin-top:10px;font-size:13px;color:var(--charcoal-2);line-height:1.5;}
+  .hh-next-lbl{display:inline-block;background:var(--green);color:#fff;font-size:10.5px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;border-radius:6px;padding:1px 6px;margin-right:2px;}
+  .hh-when{display:inline-block;margin-left:4px;font-size:11.5px;font-weight:700;color:var(--green);background:var(--white);border-radius:20px;padding:1px 8px;box-shadow:var(--shadow);}
+  .hh-when.late{color:var(--red);}
+  .hh-chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px;}
+  .hh-chip{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;font-weight:600;color:var(--charcoal-2);background:var(--white);border-radius:20px;padding:3px 9px;box-shadow:var(--shadow);}
+  .hh-chip.warn{color:var(--amber);}
+  .hh-chip.live{color:var(--green);} .hh-chip.live i{width:7px;height:7px;border-radius:50%;background:var(--green);display:inline-block;animation:hhLive 1.4s ease-in-out infinite;}
+  @keyframes hhLive{50%{box-shadow:0 0 0 5px rgba(14,111,92,.18);}}
+  .hh-ring{position:relative;width:76px;height:76px;flex-shrink:0;z-index:1;}
+  .hh-ring-bar{animation:hhRing 1.1s cubic-bezier(.16,1,.3,1) .2s forwards;}
+  @keyframes hhRing{to{stroke-dashoffset:var(--to);}}
+  .hh-ring-txt{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;}
+  .hh-ring-txt b{font-size:15px;color:var(--charcoal);} .hh-ring-txt span{font-size:10px;color:var(--grey);text-transform:uppercase;letter-spacing:.4px;}
+  .compact-rows .appt-row{align-items:center;padding:10px 10px 10px 14px;cursor:pointer;animation:htdCardIn .35s cubic-bezier(.16,1,.3,1) both;transition:background .15s ease;}
+  .compact-rows .appt-row.row-open{align-items:flex-start;background:color-mix(in srgb,var(--green-mist) 45%,transparent);}
+  .compact-rows .appt-row .appt-time{padding-top:0;}
+  .compact-rows .appt-row .am{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px;}
+  .compact-rows .appt-row.row-open .am{white-space:normal;}
+  .compact-rows .appt-actions{max-height:0;opacity:0;overflow:hidden;margin-top:0;transition:max-height .3s ease, opacity .25s ease, margin-top .3s ease;}
+  .compact-rows .appt-row.row-open .appt-actions{max-height:220px;opacity:1;margin-top:8px;}
+  .row-exp{flex-shrink:0;width:30px;height:30px;border-radius:50%;border:none;background:var(--off-white);color:var(--charcoal-2);display:flex;align-items:center;justify-content:center;cursor:pointer;transform:rotate(90deg);transition:transform .25s cubic-bezier(.34,1.56,.64,1), background .2s ease;}
+  .row-open .row-exp{transform:rotate(-90deg);background:var(--green);color:#fff;}
+  .hreveal{opacity:0;transform:translateY(18px);transition:opacity .5s ease, transform .5s cubic-bezier(.16,1,.3,1);}
+  .hreveal.hshow{opacity:1;transform:none;}
+  @media (prefers-reduced-motion:reduce){ .home-hero::after,.hh-chip.live i{animation:none;} .hreveal{opacity:1;transform:none;transition:none;} }
+  /* ---------- Trash */
+  .trash-row{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--off-white);animation:htdCardIn .3s cubic-bezier(.16,1,.3,1) both;}
+  .trash-row:last-child{border-bottom:none;}
+  .trash-main{flex:1;min-width:0;} .trash-main .name{font-weight:600;font-size:13.5px;color:var(--charcoal-2);overflow:hidden;text-overflow:ellipsis;}
+  .trash-main .addr{font-size:11.5px;color:var(--grey);margin-top:3px;}
+  .trash-acts{display:flex;gap:6px;flex-shrink:0;}
+  /* ---------- AI assistant */
+  .ai-btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;border:none;border-radius:12px;padding:11px 14px;font-weight:700;font-size:14px;cursor:pointer;color:#fff;
+    background:linear-gradient(135deg,#3FA88A 0%,#0E6F5C 55%,#4B5BD6 140%);box-shadow:0 6px 16px -8px rgba(14,111,92,.7);transition:transform .15s ease, filter .2s ease;}
+  .ai-btn:active{transform:scale(.97);} .ai-btn:disabled{filter:saturate(.6) brightness(1.05);cursor:wait;}
+  .ai-btn-sm{padding:7px 11px;font-size:12.5px;border-radius:10px;margin-bottom:10px;}
+  .ai-spin{width:14px;height:14px;border-radius:50%;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;display:inline-block;animation:aiSpin .7s linear infinite;vertical-align:-2px;}
+  .ai-chip .ai-spin,.ai-loading .ai-spin{border-color:rgba(14,111,92,.25);border-top-color:var(--green);}
+  @keyframes aiSpin{to{transform:rotate(360deg);}}
+  .ai-loading{display:flex;align-items:center;gap:10px;padding:18px 4px;color:var(--grey);font-size:13.5px;}
+  .ai-note{display:flex;gap:6px;align-items:flex-start;font-size:11.5px;color:var(--grey);background:var(--off-white);border-radius:10px;padding:8px 10px;margin-top:10px;line-height:1.4;}
+  .ai-mic{position:absolute;right:8px;bottom:10px;width:36px;height:36px;border-radius:50%;border:none;background:var(--green-mist);color:var(--green);display:flex;align-items:center;justify-content:center;cursor:pointer;}
+  .ai-mic.on{background:var(--red);color:#fff;animation:aiPulse 1.2s ease-in-out infinite;}
+  @keyframes aiPulse{50%{box-shadow:0 0 0 8px rgba(180,69,58,.15);}}
+  .ai-rewrite{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:-6px 0 12px;}
+  .ai-rw-lbl{display:inline-flex;align-items:center;gap:3px;font-size:11.5px;font-weight:800;color:var(--green);letter-spacing:.3px;}
+  .ai-chip{border:1px solid color-mix(in srgb,var(--green) 35%,transparent);background:var(--green-mist);color:var(--green);border-radius:20px;padding:5px 10px;font-size:12px;font-weight:600;cursor:pointer;}
+  .ai-chip:disabled{opacity:.6;cursor:wait;}
+  .ai-headline{font-weight:700;font-size:14.5px;color:var(--charcoal);margin-bottom:10px;}
+  .ai-alerts{background:#FCEBEB;border:1px solid #F1C4C0;color:var(--red);border-radius:12px;padding:10px 12px;font-size:13px;font-weight:600;margin-bottom:10px;display:flex;flex-direction:column;gap:4px;}
+  .ai-sec{background:var(--white);border:1px solid var(--grey-light);border-radius:12px;padding:10px 12px;margin-bottom:8px;}
+  .ai-sec-t{font-size:11.5px;font-weight:800;color:var(--green);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px;}
+  .ai-sec ul{margin:0;padding-left:18px;font-size:13px;line-height:1.5;color:var(--charcoal-2);}
+  .ai-next{background:var(--green-mist);border-color:transparent;}
+  .ai-verdict{border-radius:12px;padding:10px 12px;margin-bottom:10px;font-size:13px;line-height:1.45;}
+  .ai-verdict b{display:block;font-size:14.5px;margin-bottom:2px;}
+  .ai-verdict.ok{background:var(--green-mist);color:var(--green);} .ai-verdict.caution{background:#FDF3E3;color:#8B5E14;} .ai-verdict.danger{background:#FCEBEB;color:var(--red);}
+  .ai-issue{border-left:4px solid var(--grey-light);background:var(--white);border-radius:10px;padding:9px 11px;margin-bottom:8px;font-size:13px;line-height:1.45;box-shadow:var(--shadow);}
+  .ai-issue.sev-high{border-left-color:var(--red);} .ai-issue.sev-moderate{border-left-color:var(--amber);} .ai-issue.sev-low{border-left-color:var(--grey);} .ai-issue.sev-info{border-left-color:var(--green);}
+  .ai-issue-h{font-weight:700;margin-bottom:2px;} .ai-sev{font-size:10px;font-weight:800;letter-spacing:.5px;padding:1px 6px;border-radius:6px;background:var(--off-white);margin-right:4px;}
+  .sev-high .ai-sev{background:#FCEBEB;color:var(--red);} .sev-moderate .ai-sev{background:#FDF3E3;color:#8B5E14;}
+  .ai-sugg{color:var(--grey);font-size:12.5px;margin-top:2px;}
   /* Examination card preview */
   .exam-preview{margin-top:8px;display:flex;flex-direction:column;gap:5px;}
   .exam-preview .ep-row{display:flex;gap:8px;font-size:13px;line-height:1.4;}
@@ -695,8 +766,43 @@
   .date-nav .cur-date{font-weight:700;font-size:14.5px;}
   .date-nav button{background:var(--white);border:1px solid var(--grey-light);width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;cursor:pointer;}
 
-  .queue-board{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:18px;}
+  .queue-board{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:4px;}
   @media (max-width:520px){ .queue-board{grid-template-columns:repeat(2,1fr);} }
+  /* Today's Flow panel + split layout */
+  .appt-split{display:flex;flex-direction:column;}
+  .appt-split-side{order:-1;}
+  .flow-panel{background:var(--white);border-radius:14px;box-shadow:var(--shadow);margin-bottom:14px;overflow:hidden;animation:htdCardIn .35s cubic-bezier(.16,1,.3,1) both;}
+  .ars{display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;padding:8px 12px;border-radius:12px;margin:-2px 0 10px;cursor:pointer;background:var(--off-white);color:var(--charcoal-2);}
+  .ars-dot{width:8px;height:8px;border-radius:50%;background:var(--grey);flex-shrink:0;}
+  .ars-ok{background:var(--green-mist);color:var(--green);} .ars-ok .ars-dot{background:var(--green);}
+  .ars-bad{background:#FDECEC;color:var(--red);} .ars-bad .ars-dot{background:var(--red);animation:arsPulse 1.4s infinite;}
+  .ars-busy .ars-dot{background:var(--amber);animation:arsPulse 1s infinite;}
+  @keyframes arsPulse{0%,100%{opacity:1}50%{opacity:.3}}
+  .flow-head{display:flex;align-items:center;gap:10px;padding:11px 12px;cursor:pointer;flex-wrap:wrap;}
+  .flow-title{display:flex;align-items:center;gap:6px;font-weight:800;font-size:13.5px;color:var(--charcoal);}
+  .flow-total{background:var(--green);color:#fff;border-radius:20px;padding:1px 8px;font-size:11.5px;}
+  .flow-sum{display:flex;gap:6px;flex-wrap:wrap;order:3;flex-basis:100%;min-width:0;}
+  .flow-toggle{order:2;}
+  .flow-pill{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;color:var(--charcoal-2);background:var(--off-white);border-radius:20px;padding:3px 8px;}
+  .flow-pill i{width:7px;height:7px;border-radius:50%;background:var(--pc);display:inline-block;}
+  .flow-toggle{margin-left:auto;background:var(--off-white);border:none;width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:var(--charcoal-2);cursor:pointer;transform:rotate(90deg);transition:transform .25s ease;}
+  .flow-panel.open .flow-toggle{transform:rotate(-90deg);}
+  .flow-hint{display:none;font-size:11px;color:var(--grey);padding:0 12px 8px;}
+  .flow-panel .queue-board{display:none;padding:0 10px 10px;}
+  .flow-panel.open .queue-board{display:grid;}
+  .flow-panel.open .flow-hint{display:block;}
+  .flow-panel .queue-col{box-shadow:none;background:var(--off-white);max-height:230px;overflow-y:auto;}
+  .flow-panel .queue-chip{background:var(--white);}
+  @media (min-width:1000px){
+    .appt-split{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:16px;align-items:start;}
+    .appt-split-side{order:0;position:sticky;top:10px;}
+    .flow-head{cursor:default;}
+    .flow-toggle{display:none;}
+    .flow-panel{margin-bottom:0;max-height:calc(100vh - 150px);display:flex;flex-direction:column;}
+    .flow-panel .queue-board, .flow-panel.open .queue-board{display:grid;grid-template-columns:1fr;overflow-y:auto;}
+    .flow-hint{display:block;}
+    .flow-panel .queue-col{max-height:none;min-height:0;}
+  }
   .queue-col{background:var(--white);border-radius:var(--radius);padding:10px;box-shadow:var(--shadow);min-height:64px;}
   .queue-col .qtitle{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;color:var(--grey);margin-bottom:8px;}
   .queue-chip{background:var(--off-white);border-radius:7px;padding:6px 8px;font-size:12px;margin-bottom:6px;cursor:grab;touch-action:none;user-select:none;}
@@ -1396,7 +1502,7 @@
     createUserWithEmailAndPassword, sendPasswordResetEmail
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
   import {
-    getFirestore, collection, doc, getDocs, setDoc, deleteDoc, writeBatch,
+    getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc, writeBatch,
     enableIndexedDbPersistence, query, where, orderBy, onSnapshot
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
@@ -1410,6 +1516,7 @@
   };
 
   const fbApp = initializeApp(firebaseConfig);
+  window.__fbApp = fbApp;
   const fbAuth = getAuth(fbApp);
   const fbDb = getFirestore(fbApp);
   enableIndexedDbPersistence(fbDb).catch(()=>{ /* multiple tabs open, etc — safe to ignore */ });
@@ -1428,6 +1535,7 @@
       return snap.docs.map(d=>({...d.data(), id: d.id}));
     },
     delete: async (storeName, id)=>{ await deleteDoc(doc(fbDb, storeName, String(id))); return true; },
+    get: async (storeName, id)=>{ const d = await getDoc(doc(fbDb, storeName, String(id))); return d.exists() ? Object.assign({}, d.data(), {id: d.id}) : null; },
     clear: async (storeName)=>{
       const snap = await getDocs(collection(fbDb, storeName));
       const batch = writeBatch(fbDb);
@@ -1450,6 +1558,7 @@
   };
 
   window.__fbAuth = {
+    getIdToken: async ()=> fbAuth.currentUser ? fbAuth.currentUser.getIdToken() : null,
     signIn: (email, pw)=>signInWithEmailAndPassword(fbAuth, email, pw),
     signOut: ()=>signOut(fbAuth),
     // Creates a new login (e.g. reception staff) without disturbing the
@@ -1737,13 +1846,105 @@ function openDB(){
 }
 
 // ---- generic store helpers (now backed by Firestore) ----
-function dbAdd(storeName, obj){
+async function dbAdd(storeName, obj){
   if(!obj.id) obj.id = uid(storeName);
+  await offloadFilesToStorage(storeName, obj);
   return window.__fb.add(storeName, obj);
 }
-function dbPut(storeName, obj){
+async function dbPut(storeName, obj){
   if(!obj.id) obj.id = uid(storeName);
+  await offloadFilesToStorage(storeName, obj);
   return window.__fb.put(storeName, obj);
+}
+
+// ---- Firebase Storage for X-rays, photos, documents ----
+// Every save goes through dbAdd/dbPut, so this one hook covers every module
+// (X-rays, radiographs, pre/post-op photos, documents, note images, patient
+// photos, warranty cards…): any embedded file over ~20 KB is uploaded to
+// Firebase Storage and the record keeps only its web address, in the SAME
+// field — so every screen, print and viewer keeps working unchanged.
+// If Storage isn't set up / the device is offline, the file is saved inside
+// the database exactly as before, so nothing ever fails to save.
+const OFFLOAD_MIN_CHARS = 20000;
+const OFFLOAD_SKIP_STORES = new Set(["publicReceipts","publicTreatmentPlans","publicInstructions","trash","settings"]);
+let storageOffDisabledUntil = 0, storageOffWarned = false;
+function storageModule(){
+  if(!window.__storageMod) window.__storageMod = import("https://www.gstatic.com/firebasejs/10.13.0/firebase-storage.js");
+  return window.__storageMod;
+}
+async function uploadDataUrlToStorage(path, dataUrl){
+  const m = await storageModule();
+  const st = m.getStorage(window.__fbApp);
+  st.maxUploadRetryTime = 20000; st.maxOperationRetryTime = 20000;
+  const r = m.ref(st, path);
+  await m.uploadString(r, dataUrl, "data_url");
+  return await m.getDownloadURL(r);
+}
+function isStorageUrl(v){ return typeof v==="string" && v.startsWith("https://firebasestorage.googleapis.com/"); }
+async function offloadFilesToStorage(storeName, obj){
+  if(!obj || OFFLOAD_SKIP_STORES.has(storeName) || !window.__fbApp) return 0;
+  if(Date.now() < storageOffDisabledUntil || (typeof navigator!=="undefined" && navigator.onLine===false)) return 0;
+  let moved = 0;
+  const walk = async (holder, key, depth)=>{
+    const v = holder[key];
+    if(typeof v==="string"){
+      if(v.length > OFFLOAD_MIN_CHARS && v.startsWith("data:")){
+        const mime = v.slice(5, v.indexOf(";")) || "application/octet-stream";
+        const ext = ((mime.split("/")[1]||"bin").replace(/[^a-z0-9]/gi,"").slice(0,5)) || "bin";
+        const path = `pms/${storeName}/${String(obj.id).replace(/[^\w-]/g,"_")}/${uid("f")}.${ext}`;
+        holder[key] = await uploadDataUrlToStorage(path, v);
+        moved++;
+      }
+    }else if(v && typeof v==="object" && depth<6){
+      for(const k of Object.keys(v)) await walk(v, k, depth+1);
+    }
+  };
+  try{
+    for(const k of Object.keys(obj)) await walk(obj, k, 0);
+  }catch(e){
+    console.warn("Storage upload failed — saving file inside the database instead:", e);
+    storageOffDisabledUntil = Date.now() + 10*60*1000;
+    if(!storageOffWarned){ storageOffWarned = true; try{ showToast("Cloud file storage isn't available — saved inside the database as before"); }catch(_){} }
+  }
+  return moved;
+}
+// Admin tool: moves files already stored inside the database to Storage.
+async function openMoveFilesToStorageSheet(){
+  if(!currentUserIsAdmin){ showToast("Only the admin account can do this"); return; }
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>Move Files to Cloud Storage</h2>
+    <p style="margin-bottom:10px;">X-rays, photos and documents saved before this update are stored inside the database, which makes it heavy and slow. This moves them to Firebase Storage. Records, screens and prints stay exactly the same. Safe to run more than once; take a Backup first.</p>
+    <button class="btn btn-primary btn-block" id="mvGo">${icon('backup',15)} Start Moving Files</button>
+    <div id="mvProg" style="margin-top:12px;"></div>
+  `);
+  document.getElementById("mvGo").onclick = async ()=>{
+    const btn = document.getElementById("mvGo"); btn.disabled = true;
+    const prog = document.getElementById("mvProg");
+    storageOffDisabledUntil = 0;
+    const names = STORE_DEFS.map(d=>d.name).filter(n=>!OFFLOAD_SKIP_STORES.has(n));
+    let files = 0, records = 0, failed = 0;
+    for(let i=0;i<names.length;i++){
+      let rows = [];
+      try{ rows = await window.__fb.getAll(names[i]); }catch(e){ continue; }
+      const heavy = rows.filter(r=> JSON.stringify(r).includes('"data:') );
+      for(let j=0;j<heavy.length;j++){
+        if(prog) prog.innerHTML = `<div class="ai-loading"><span class="ai-spin"></span> ${escapeHtml(names[i])}: ${j+1} of ${heavy.length} · ${files} files moved so far</div>`;
+        const r = heavy[j];
+        const n = await offloadFilesToStorage(names[i], r);
+        if(Date.now() < storageOffDisabledUntil){ failed++; break; }
+        if(n>0){ await window.__fb.put(names[i], r); files += n; records++; }
+      }
+      if(Date.now() < storageOffDisabledUntil) break;
+    }
+    if(Date.now() < storageOffDisabledUntil){
+      prog.innerHTML = `<div class="warn-banner" style="border-color:var(--red);color:var(--red);">Storage isn't reachable — ${files} file(s) moved before it stopped. Check that Firebase Storage is enabled and its rules are published (see the steps in the message from Claude), then run this again.</div>`;
+    }else{
+      prog.innerHTML = `<div class="ai-verdict ok"><b>✓ Done — ${files} file(s) from ${records} record(s) moved to Cloud Storage.</b></div>`;
+      logActivity("Moved "+files+" file(s) to Cloud Storage");
+    }
+    btn.disabled = false;
+  };
 }
 const CLINIC_FILTERED_STORES = new Set(PATIENT_DATA_STORES);
 // These specific collections had a confirmed, reported leak (an
@@ -1866,7 +2067,60 @@ async function dbGetAll(storeName){
 
   return rows;
 }
-function dbDelete(storeName, id){
+// ---- Trash: deleting an important record first copies it into "trash",
+// so it can be restored from Settings → Recycle Bin. Housekeeping records
+// (auto-synced finance rows, reminders, notifications, website requests…)
+// are deleted straight away as before.
+const TRASH_STORES = new Set([
+  "patients","appointments","treatmentPlans","prescriptions","examinations","clinicalSummaries","dentalCharts",
+  "invoices","payments","paymentsDue","refunds","insuranceClaims","pharmacySales",
+  "labCases","alignerCases","bracesCases","orthoDiagnosisRecords","endoCases","implantCases","prosthoCases","prostheticCases",
+  "perioCharts","oralSurgeryCases","oralMedRecords","pediatricRecords","aiCrsAssessments",
+  "xrays","patientDocuments","prePostOpPhotos","photos","patientNotes","clinicalNotes","voiceNotes","consents","referrals",
+  "commitments","consultants","labs","clinics","pharmacyProducts","inventoryItems","clinicalTemplates","rxTemplates","consentTemplates"
+]);
+const TRASH_TYPE_LABELS = {
+  patients:"Patient", appointments:"Appointment", treatmentPlans:"Treatment", prescriptions:"Prescription", examinations:"Examination",
+  clinicalSummaries:"Case Sheet", dentalCharts:"Dental Chart", invoices:"Invoice", payments:"Payment / Receipt", paymentsDue:"Payment Due",
+  refunds:"Refund", insuranceClaims:"Insurance Claim", pharmacySales:"Pharmacy Bill", labCases:"Lab Case", alignerCases:"Aligner Case",
+  bracesCases:"Braces Case", orthoDiagnosisRecords:"Ortho Record", endoCases:"Endo Case", implantCases:"Implant Case", prosthoCases:"Prostho Case",
+  prostheticCases:"Prosthetic Case", perioCharts:"Perio Chart", oralSurgeryCases:"Oral Surgery", oralMedRecords:"Oral Medicine",
+  pediatricRecords:"Pediatric Record", aiCrsAssessments:"Caries Risk", xrays:"X-ray", patientDocuments:"Document", prePostOpPhotos:"Photos",
+  photos:"Photo", patientNotes:"Note", clinicalNotes:"Clinical Note", voiceNotes:"Voice Note", consents:"Consent", referrals:"Referral",
+  commitments:"Follow-up", consultants:"Consultant", labs:"Lab", clinics:"Clinic", pharmacyProducts:"Pharmacy Product",
+  inventoryItems:"Inventory Item", clinicalTemplates:"Clinical Template", rxTemplates:"Rx Template", consentTemplates:"Consent Template"
+};
+function trashLabel(store, r, patientName){
+  const pn = patientName || r.patientName || "";
+  const dt = (v)=> v ? new Date(v).toLocaleDateString() : "";
+  switch(store){
+    case "patients": return (r.name||"Patient")+(r.mobile? " · "+r.mobile:"")+(r.code? " · "+r.code:"");
+    case "appointments": return pn+" · "+(r.date||"")+(r.startTime? " "+r.startTime:"")+(r.treatmentType? " · "+r.treatmentType:"");
+    case "invoices": return (r.invoiceNumber||"Invoice")+" · "+pn+" · ₹"+(Number(r.totalNet)||0).toLocaleString("en-IN");
+    case "payments": return (r.receiptNumber||"Receipt")+" · "+pn+" · ₹"+(Number(r.amount)||0).toLocaleString("en-IN");
+    case "treatmentPlans": return pn+" · "+((r.items||[]).map(i=>i.treatment).filter(Boolean).join(", ")||"Treatment")+" · "+dt(r.createdDate);
+    case "prescriptions": return pn+" · "+((r.items||[]).map(i=>i.drugName).filter(Boolean).join(", ")||"Prescription")+" · "+dt(r.date);
+    case "labCases": return pn+" · "+(r.caseType||"")+(r.tooth? " (Tooth "+r.tooth+")":"")+" · "+(r.labName||"");
+    default: return [pn, r.name||r.title||r.caseType||r.category||r.brand||r.chiefComplaint||r.treatment||"", dt(r.date||r.createdAt)].filter(Boolean).join(" · ") || "Record";
+  }
+}
+async function dbDelete(storeName, id){
+  if(TRASH_STORES.has(storeName)){
+    try{
+      const rec = await window.__fb.get(storeName, id);
+      if(rec && !(storeName==="appointments" && rec.status==="Reserved")){
+        let patientName = rec.patientName || (storeName==="patients" ? rec.name : "");
+        const patientId = storeName==="patients" ? rec.id : (rec.patientId||"");
+        if(!patientName && patientId){ try{ const p = await window.__fb.get("patients", patientId); patientName = p ? p.name : ""; }catch(e){} }
+        await window.__fb.put("trash", {
+          id: uid("trash"), store: storeName, recordId: String(id), data: rec,
+          label: trashLabel(storeName, rec, patientName), type: TRASH_TYPE_LABELS[storeName] || storeName,
+          patientId, patientName: patientName||"",
+          deletedAt: nowIso(), deletedBy: fbCurrentUserEmail || ""
+        });
+      }
+    }catch(e){ console.warn("Couldn't copy to Trash before deleting:", e); }
+  }
   return window.__fb.delete(storeName, id);
 }
 function dbClear(storeName){
@@ -2518,13 +2772,22 @@ async function renderHome(){
       <div id="searchResults"></div>
 
       <div id="dashboardBody">
-        <div class="section-title">${dateStr}</div>
+        <div class="home-hero" id="homeHero">
+          <div class="hh-left">
+            <div class="hh-greet" id="hhGreet"></div>
+            <div class="hh-date">${dateStr} · <span id="hhClock"></span></div>
+            <div class="hh-next" id="hhNext"><span class="ai-spin" style="border-color:rgba(14,111,92,.25);border-top-color:var(--green);"></span></div>
+            <div class="hh-chips" id="hhChips"></div>
+          </div>
+          <div class="hh-ring" id="hhRing"></div>
+        </div>
         <div class="stat-grid" id="statGrid"></div>
 
         <div class="section-title">Shortcuts</div>
         <div class="shortcut-grid" id="shortcutGrid"></div>
 
         <div class="section-title">Today <span class="section-link" id="btnReminderToday">Reminder Today</span></div>
+        <div id="autoRemStatus"></div>
         <div id="todayList"></div>
 
         <div class="section-title">Birthdays Today</div>
@@ -2809,6 +3072,10 @@ async function renderHome(){
   wireApptRowActions(main);
   wireCommitmentActions(main);
   wireReminderRowActions(main);
+  makeRowsCollapsible(document.getElementById("promiseList"));
+  makeRowsCollapsible(document.getElementById("biannualFollowUpList"));
+  startHomeHero(counts.todayAppts, settings);
+  revealHomeSections(document.getElementById("dashboardBody"));
 
   // ---- Global search (debounced) ----
   const searchInput = document.getElementById("globalSearch");
@@ -4263,6 +4530,7 @@ async function renderPatientProfileSheet(id){
       <div class="quick-icon-row profile-shortcuts" id="profileShortcuts">
         <button class="qbtn sc-edit" id="qEdit" style="animation-delay:0ms"><span class="qi-ico">${icon('edit',20)}</span><span class="qi-lbl">Edit</span></button>
         <button class="qbtn sc-clinical" id="qClinical" style="animation-delay:40ms"><span class="qi-ico">${icon('tooth',20)}</span><span class="qi-lbl">Clinical</span></button>
+        <button class="qbtn sc-ai" id="qAiSummary" style="animation-delay:60ms"><span class="qi-ico">${icon('sparkle',20)}</span><span class="qi-lbl">AI Summary</span></button>
         <button class="qbtn sc-appt" id="qAppt" style="animation-delay:80ms"><span class="qi-ico">${icon('calendar',20)}</span><span class="qi-lbl">New Appt</span></button>
         <button class="qbtn sc-call" id="qCall" style="animation-delay:120ms"><span class="qi-ico">${icon('phone',20)}</span><span class="qi-lbl">Call</span></button>
         <button class="qbtn sc-wa" id="qWhatsapp" style="animation-delay:160ms"><span class="qi-ico">${icon('message',20)}</span><span class="qi-lbl">WhatsApp</span></button>
@@ -4291,6 +4559,7 @@ async function renderPatientProfileSheet(id){
   document.getElementById("qEdit").onclick = ()=>openPatientForm(id);
   document.getElementById("qClinical").onclick = ()=> openClinicalForPatient(id);
   document.getElementById("qAppt").onclick = ()=>{ openAppointmentForm(null, {patientId:p.id, patientName:p.name}); };
+  document.getElementById("qAiSummary").onclick = ()=> openAiPatientSummary(p);
   document.getElementById("qCall").onclick = ()=> callNumber(p.mobile, p.name);
   document.getElementById("qWhatsapp").onclick = ()=> openWhatsAppComposer({
     toName: p.name, toNumber: p.whatsappNumber||p.mobile, patientId: p.id,
@@ -4482,6 +4751,7 @@ async function renderApptBody(){
   if(apptView==="Day") await renderDayView(body);
   else if(apptView==="Week") await renderWeekView(body);
   else await renderMonthView(body);
+  arrangeApptSplit(body);
 }
 
 // ---- Time-grid calendar helpers (days on top, time down the left) ----
@@ -4979,8 +5249,18 @@ function buildQueueBoardHtml(todaysAppts){
     else if(a.status==="InChair") buckets["In Chair"].push(a);
     else if(a.status==="Completed") buckets.Completed.push(a);
   });
+  const flowOpen = (()=>{ try{ return localStorage.getItem("htdFlowOpen")!=="0"; }catch(e){ return true; } })();
+  const total = todaysAppts.filter(a=> !["Cancelled","NoShow","Reserved","Rescheduled"].includes(a.status)).length;
   return `
-    <div class="section-title">Today's Flow <span style="text-transform:none;font-weight:400;color:var(--grey);">· drag a patient to move them</span></div>
+    <div class="flow-panel ${flowOpen?'open':''}" id="flowPanel">
+    <div class="flow-head" id="flowHead">
+      <div class="flow-title">${icon('user',15)} Today's Flow <span class="flow-total">${total}</span></div>
+      <div class="flow-sum">
+        ${Object.entries(buckets).map(([label,list])=>`<span class="flow-pill" style="--pc:${QUEUE_COL_COLOR[label]};"><i></i>${label==="Completed"?"Done":label} <b>${list.length}</b></span>`).join("")}
+      </div>
+      <button class="flow-toggle" id="flowToggle" title="Show / hide">${icon('chevron',16)}</button>
+    </div>
+    <div class="flow-hint">Drag a patient to move them between columns</div>
     <div class="queue-board">
       ${Object.entries(buckets).map(([label,list])=>`
         <div class="queue-col" data-col="${label}" style="border-top:3px solid ${QUEUE_COL_COLOR[label]};">
@@ -4994,7 +5274,26 @@ function buildQueueBoardHtml(todaysAppts){
         </div>
       `).join("")}
     </div>
+    </div>
   `;
+}
+
+// Today's Flow + calendar side by side. Each view still renders exactly as
+// before; this then moves the Flow panel into a right-hand column (wide
+// screens: always visible, sticky, scrolls on its own) — on phones it sits
+// above the calendar as a slim summary bar that expands on tap, so a busy
+// day never pushes the calendar out of sight.
+function arrangeApptSplit(body){
+  const flow = body.querySelector("#flowPanel");
+  if(!flow) return;
+  const split = document.createElement("div"); split.className = "appt-split";
+  const main = document.createElement("div"); main.className = "appt-split-main";
+  const side = document.createElement("aside"); side.className = "appt-split-side";
+  while(body.firstChild){ const n = body.firstChild; (n===flow ? side : main).appendChild(n); }
+  split.appendChild(main); split.appendChild(side); body.appendChild(split);
+  const tog = ()=>{ flow.classList.toggle("open"); try{ localStorage.setItem("htdFlowOpen", flow.classList.contains("open")?"1":"0"); }catch(e){} };
+  const head = flow.querySelector("#flowHead");
+  if(head) head.addEventListener("click", (e)=>{ if(window.matchMedia("(min-width:1000px)").matches) return; tog(); });
 }
 
 // Mobile-only 7-day mini picker shown above the Day view (hidden on
@@ -5340,8 +5639,10 @@ async function openPatientEmailSheet(patient){
     <div class="field"><label>To</label><input id="peTo" type="email" inputmode="email" value="${escapeAttr(patient.email||"")}" placeholder="patient@email.com"></div>
     <div class="field"><label>Subject</label><input id="peSubject" value="Healing Touch Dental"></div>
     <div class="field"><label>Message</label><textarea id="peBody" rows="8">${escapeHtml(`Dear ${patient.name},\n\n`+sign)}</textarea></div>
+    ${aiRewriteRowHtml("peAiRow")}
     <button class="btn btn-primary btn-block" id="btnPeSend">${icon('mail',15)} Open Email</button>
   `);
+  wireAiRewrite("peAiRow", document.getElementById("peBody"));
   document.getElementById("btnPeSend").onclick = async ()=>{
     const to = document.getElementById("peTo").value.trim();
     const subject = document.getElementById("peSubject").value.trim();
@@ -5366,8 +5667,8 @@ function whatsappInstructionsParam(text){
     .map(l=> l.replace(/\t/g," ").replace(/^\s*[-*•●▪]\s*/,"").replace(/\s{2,}/g," ").trim())
     .filter(Boolean);
   let out = lines.join(" • ");
-  const MAX = 850;
-  if(out.length > MAX){ out = out.slice(0, MAX).replace(/\s+\S*$/,"") + "… (full instructions available at the clinic)"; }
+  const MAX = 560;
+  if(out.length > MAX){ out = out.slice(0, MAX).replace(/\s+\S*$/,"") + "… (please ask us for the full list)"; }
   return out || "-";
 }
 
@@ -5384,7 +5685,13 @@ async function openSendInstructionsSheet(patient){
     <div class="field"><label>Procedure</label><select id="siProcedure"></select></div>
     <button class="btn btn-primary btn-block" id="btnPrintInstructions" style="margin-bottom:8px;">${icon('print',15)} Print</button>
     <button class="btn btn-outline btn-block" id="btnSendInstructions">Send via WhatsApp</button>
+    ${aiBtnHtml("btnSiAi","Write Instructions with AI","width:100%;margin-top:12px;")}
   `);
+  document.getElementById("btnSiAi").onclick = ()=>{
+    const sel = document.getElementById("siProcedure");
+    const opt = sel && sel.value ? sel.options[sel.selectedIndex] : null;
+    openAiInstructionsSheet(patient, { type: document.getElementById("siType").value, procedure: opt? opt.textContent : "" });
+  };
   async function refreshProcedureOptions(){
     const type = document.getElementById("siType").value;
     const storeName = type==="post" ? "postOpTemplates" : "preOpTemplates";
@@ -5420,15 +5727,7 @@ async function openSendInstructionsSheet(patient){
   document.getElementById("btnSendInstructions").onclick = async ()=>{
     const found = await getSelectedTemplate();
     if(!found) return;
-    const message = `Hi ${patient.name},\n\n${found.t.body}\n\nCall us if you have any questions.\n— Healing Touch Dental`;
-    // Approved templates: "pre_operative" / "post_operative" — {{1}} patient
-    // name, {{2}} the instructions. WhatsApp doesn't allow line breaks inside
-    // a template variable, so the instruction lines are joined with " • ".
-    const instr = whatsappInstructionsParam(found.t.body);
-    openWhatsAppComposer({ toName: patient.name, toNumber: patient.whatsappNumber||patient.mobile, patientId: patient.id, title:(found.type==="post"?"Post-Op":"Pre-Op")+" Instructions", message,
-      templateName: found.type==="post" ? "post_operative" : "pre_operative",
-      templateParams: [patient.name||"Patient", instr],
-      onSent: ()=> logActivity("Sent "+(found.type==="post"?"post-op":"pre-op")+" instructions on WhatsApp to "+patient.name, {patientId: patient.id}) });
+    await sendInstructionsWhatsApp(patient, found.type, found.t.name, found.t.body);
   };
 }
 
@@ -6063,7 +6362,7 @@ async function openPatientRowMenu(patientId){
   bind("directions", async ()=>{ closeSheet(); await shareDirectionsForPatient(patient); });
   bind("review", async ()=>{ closeSheet(); await sendReviewLinkForPatient(patient); });
   bind("delete", async ()=>{
-    if(!confirm(`Permanently delete ${patient.name}'s profile? This cannot be undone. Their appointments, treatment records, invoices and other history will remain in the system but will no longer show a linked patient name.`)) return;
+    if(!confirm(`Delete ${patient.name}'s profile? It will be moved to Trash (Settings → Recycle Bin) and can be restored for ${TRASH_KEEP_DAYS} days. Their appointments, treatment records and invoices stay in the system.`)) return;
     await dbDelete("patients", patient.id);
     logActivity("Deleted patient profile: "+patient.name);
     showToast("Patient profile deleted");
@@ -7872,7 +8171,7 @@ async function openLabCaseActionMenu(caseId){
       toName: lc.labName, toNumber: lc.labContact,
       message: labCaseSummaryText(lc),
       templateName: "lab_case",
-      templateParams: [lc.patientName||"Patient", labCasePatientPromisedDateText(lc)]
+      templateParams: [lc.patientName||"Patient", labCasePatientPromisedDateText(lc), lc.shade||"Not specified", lc.caseType||"Lab work"]
     });
   };
   document.getElementById("lcmEmail").onclick = async ()=>{
@@ -7895,7 +8194,7 @@ async function openLabCaseActionMenu(caseId){
     }
   };
   document.getElementById("lcmDelete").onclick = async ()=>{
-    if(!confirm("Delete this lab case? This cannot be undone.")) return;
+    if(!confirm("Delete this lab case? It will be moved to Trash and can be restored.")) return;
     await dbDelete("labCases", lc.id);
     logActivity("Deleted lab case for "+lc.patientName);
     showToast("Deleted");
@@ -8250,7 +8549,7 @@ function sendNewLabCaseWhatsApp(lc){
     message: lines.join("\n"),
     patientId: lc.patientId, recipientType: "Lab",
     templateName: "lab_case",
-    templateParams: [lc.patientName||"Patient", labCasePatientPromisedDateText(lc)]
+    templateParams: [lc.patientName||"Patient", labCasePatientPromisedDateText(lc), lc.shade||"Not specified", lc.caseType||"Lab work"]
   });
   if(currentPage==="assist") renderAssistBody();
   else if(currentPage==="labcases") renderLabCases();
@@ -9905,7 +10204,7 @@ async function openInteraktConfigSheet(){
     <div class="field"><label>Treatment Plan Template Name (Interakt code name)</label><input id="interaktPlanTemplate" value="${escapeAttr(s.interaktPlanTemplate||'treatment_estimate')}" placeholder="e.g. treatment_estimate"></div>
     <p style="margin-top:-8px;">Approved template with 4 body values: 1 Patient name, 2 Amount (number only, the template already has the ₹), 3 Date, 4 Receipt link.</p>
     <div class="field"><label>Receipt Page Address (optional)</label><input id="receiptPageUrl" value="${escapeAttr(s.receiptPageUrl||'')}" placeholder="Leave blank to use this site's /receipt.html"></div>
-    <p style="margin-top:-8px;">Firestore rule needed once: <code>match /publicReceipts/{token} { allow get: if true; allow list: if false; allow create, update, delete: if request.auth != null; }</code> — and the same for <code>/publicTreatmentPlans/{token}</code> (treatment plan links).</p>
+    <p style="margin-top:-8px;">Firestore rule needed once: <code>match /publicReceipts/{token} { allow get: if true; allow list: if false; allow create, update, delete: if request.auth != null; }</code> — and the same for <code>/publicTreatmentPlans/{token}</code> (treatment plan links) and <code>/publicInstructions/{token}</code> (pre/post-op instruction links).</p>
     <button class="btn btn-primary btn-block" id="btnSaveInteraktConfig" style="margin-bottom:8px;">Save</button>
     <button class="btn btn-outline btn-block" id="btnTestInteraktConnection" style="margin-bottom:8px;">Test Connection</button>
     <div id="interaktTestResult" style="margin-bottom:10px;"></div>
@@ -10028,8 +10327,10 @@ function openWhatsAppComposer(opts){
     <h2>${opts.title||"Send WhatsApp"}</h2>
     <p>To: ${escapeHtml(opts.toName||"")} · ${escapeHtml(opts.toNumber)}</p>
     <div class="field"><label>Message</label><textarea id="waComposerMsg" rows="4">${escapeHtml(opts.message||"")}</textarea></div>
+    ${opts.templateName? "" : aiRewriteRowHtml("waAiRow")}
     <button class="btn btn-primary btn-block" id="btnWaComposerSend">Open WhatsApp</button>
   `);
+  if(!opts.templateName) wireAiRewrite("waAiRow", document.getElementById("waComposerMsg"));
   document.getElementById("btnWaComposerSend").onclick = async ()=>{
     const msg = document.getElementById("waComposerMsg").value.trim();
     const btn = document.getElementById("btnWaComposerSend");
@@ -10708,6 +11009,7 @@ async function renderCommComposer(){
         <div style="font-weight:600;font-size:14px;">${escapeHtml(r.name)}</div>
         <div style="font-size:12px;color:var(--grey);margin-bottom:10px;">${escapeHtml(r.phone||"No phone")}${r.email? " · "+escapeHtml(r.email):""}</div>
         <div class="field"><label>Message</label><textarea id="commMsg" rows="4" placeholder="Type your message, or use a quick option below...">${escapeHtml(r.prefillMessage||"")}</textarea></div>
+        ${aiRewriteRowHtml("commAiRow")}
         ${showPrePostOp? `
         <div class="field-row">
           <div class="field">
@@ -10742,8 +11044,27 @@ async function renderCommComposer(){
     </div>
   `;
   const getMsg = ()=> document.getElementById("commMsg").value.trim() || `Hi ${r.name},`;
+  wireAiRewrite("commAiRow", document.getElementById("commMsg"));
+  // When pre/post-op instructions were picked above, WhatsApp goes out as the
+  // approved "pre_operative" / "post_operative" template ({{1}} name,
+  // {{2}} instructions). Interakt rejects plain-text messages, which is why
+  // these weren't being delivered from here before.
+  let commInstr = null; // {type, prefix, suffix}
   const waBtn = document.getElementById("commSendWa");
-  if(waBtn) waBtn.onclick = ()=>{ if(r.phone) openWhatsAppComposer({toName:r.name, toNumber:r.phone, message:getMsg(), patientId: r.type==="Patient"?r.id:null, recipientType:r.type}); };
+  if(waBtn) waBtn.onclick = async ()=>{
+    if(!r.phone) return;
+    const opts = {toName:r.name, toNumber:r.phone, message:getMsg(), patientId: r.type==="Patient"?r.id:null, recipientType:r.type};
+    if(commInstr){
+      let body = document.getElementById("commMsg").value.trim();
+      if(body.startsWith(commInstr.prefix.trim())) body = body.slice(commInstr.prefix.trim().length);
+      if(body.endsWith(commInstr.suffix.trim())) body = body.slice(0, body.length-commInstr.suffix.trim().length);
+      const pat = { id: r.id, name: r.name, mobile: r.phone, whatsappNumber: r.phone, preferredClinicId: r.preferredClinicId };
+      if(r.type==="Patient"){ const full = (await dbGetAll("patients")).find(x=>x.id===r.id); if(full) Object.assign(pat, {preferredClinicId: full.preferredClinicId}); }
+      await sendInstructionsWhatsApp(pat, commInstr.type, commInstr.title||"", body.trim());
+      return;
+    }
+    openWhatsAppComposer(opts);
+  };
   const smsBtn = document.getElementById("commSendSms");
   if(smsBtn) smsBtn.onclick = ()=>{ if(r.phone) openSmsComposer({toName:r.name, toNumber:r.phone, message:getMsg(), patientId: r.type==="Patient"?r.id:null, recipientType:r.type}); };
   const mailBtn = document.getElementById("commSendMail");
@@ -10754,14 +11075,20 @@ async function renderCommComposer(){
       const id = ev.target.value;
       if(!id) return;
       const t = postOpTemplates.find(x=>x.id===id);
-      if(t) document.getElementById("commMsg").value = `Hi ${r.name},\n\n${t.body}\n\nCall us if you have any concerns.\n— Healing Touch Dental`;
+      if(t){
+        commInstr = { type:"post", title: t.name, prefix:`Hi ${r.name},\n\n`, suffix:`\n\nCall us if you have any concerns.\n— Healing Touch Dental` };
+        document.getElementById("commMsg").value = commInstr.prefix + t.body + commInstr.suffix;
+      }
       ev.target.value = "";
     };
     document.getElementById("commPreOpSelect").onchange = (ev)=>{
       const id = ev.target.value;
       if(!id) return;
       const t = preOpTemplates.find(x=>x.id===id);
-      if(t) document.getElementById("commMsg").value = `Hi ${r.name},\n\n${t.body}\n\nCall us if you have any questions.\n— Healing Touch Dental`;
+      if(t){
+        commInstr = { type:"pre", title: t.name, prefix:`Hi ${r.name},\n\n`, suffix:`\n\nCall us if you have any questions.\n— Healing Touch Dental` };
+        document.getElementById("commMsg").value = commInstr.prefix + t.body + commInstr.suffix;
+      }
       ev.target.value = "";
     };
   }
@@ -10771,6 +11098,7 @@ async function renderCommComposer(){
     if(!clinic){ showToast("No clinic set up yet"); return; }
     const mapsUrl = "https://www.google.com/maps/search/?api=1&query="+encodeURIComponent(clinic.address||clinic.name);
     const ta = document.getElementById("commMsg");
+    commInstr = null;
     ta.value = (ta.value.trim()? ta.value.trim()+"\n\n" : `Hi ${r.name},\n\n`) + `Here are directions to ${clinic.name}${clinic.address? " ("+clinic.address+")":""}: ${mapsUrl}`;
   };
   document.getElementById("commAttachFile").onclick = ()=> document.getElementById("commFileInput").click();
@@ -16031,6 +16359,7 @@ async function openTreatmentPlanActionMenu(planId, patient, onRefresh){
   const summary = `Treatment Plan (${new Date(plan.createdDate).toLocaleDateString()})\nDoctor: ${plan.doctor||"—"}\nItems: ${names}`;
   openEntryActionMenu("Treatment Plan Options", [
     { key:"edit", icon:"edit", text:"Edit Treatment Plan", onClick: ()=>{ closeSheet(); openTreatmentPlanForm(planId, patient); } },
+    { key:"aiExplain", icon:"sparkle", text:"AI: Explain Plan to Patient", onClick: ()=>{ closeSheet(); openAiPlanExplainer(plan, patient); } },
     { key:"print", icon:"print", text:"Print Treatment Plan", onClick: ()=>{ closeSheet(); printTreatmentPlanStandalone(plan, patient); } },
     { key:"waPdf", icon:"message", text:"Send PDF on WhatsApp", onClick: ()=>{ closeSheet(); sendPdfOnWhatsApp(patient, ()=>printTreatmentPlanStandalone(plan, patient), "Treatment Plan"); } },
     { key:"share", icon:"share", text:"Share Treatment Plan", onClick: ()=>{ closeSheet(); shareEntityText("Treatment Plan", summary); } },
@@ -16094,6 +16423,7 @@ async function printTreatmentPlanStandalone(plan, patient, clinic){
       ${totals.overallAmt>0? `<div>Overall Discount: ${totals.overallAmtStr}</div>`:""}
       <div style="font-size:16px;font-weight:bold;margin-top:6px;">Final Total: ${totals.finalTotalStr}</div>
     </div>
+    ${plan.patientExplanation? `<div style="margin-top:18px;"><b style="font-size:13.5px;">About Your Treatment</b><div style="font-size:13px;line-height:1.65;white-space:pre-wrap;margin-top:4px;">${escapeHtml(plan.patientExplanation)}</div></div>` : ""}
   `;
   const signHtml = await buildSignBlock(plan.doctor);
   printDocument({ title:"Treatment Plan Estimate", patient, clinic, docDate: new Date(plan.createdDate).toLocaleDateString(), bodyHtml, signHtml });
@@ -17199,7 +17529,7 @@ async function openImplantCaseDetail(caseId, patient){
     ]);
   });
   document.getElementById("btnDeleteImplantCase").onclick = async ()=>{
-    if(!confirm("Delete this implant case? This cannot be undone.")) return;
+    if(!confirm("Delete this implant case? It will be moved to Trash and can be restored.")) return;
     await dbDelete("implantCases", caseId);
     logActivity("Deleted implant case for "+patient.name, {patientId:patient.id});
     showToast("Implant case deleted");
@@ -17386,7 +17716,7 @@ async function openProstheticCaseDetail(id, patient){
   document.getElementById("btnPrintProsthCase").onclick = ()=> printProstheticCase(c, patient);
   document.getElementById("btnEditProsthCase").onclick = ()=>{ closeSheet(); openProstheticForm(patient, id); };
   document.getElementById("btnDeleteProsthCase").onclick = async ()=>{
-    if(!confirm("Delete this case? This cannot be undone.")) return;
+    if(!confirm("Delete this case? It will be moved to Trash and can be restored.")) return;
     await dbDelete("prostheticCases", id);
     logActivity("Deleted "+(c.type||"crown")+" case for "+patient.name, {patientId:patient.id});
     showToast("Case deleted");
@@ -17803,7 +18133,7 @@ async function openAlignerCaseDetail(caseId, patient){
   document.getElementById("btnPrintAlignerCase").onclick = ()=> printAlignerCase(c, patient);
   document.getElementById("btnEditAlignerCase").onclick = ()=>{ closeSheet(); openAlignerCaseForm(patient, caseId); };
   document.getElementById("btnDeleteAlignerCase").onclick = async ()=>{
-    if(!confirm("Delete this aligner case? This cannot be undone.")) return;
+    if(!confirm("Delete this aligner case? It will be moved to Trash and can be restored.")) return;
     await dbDelete("alignerCases", caseId);
     logActivity("Deleted aligner case for "+patient.name, {patientId:patient.id});
     showToast("Aligner case deleted");
@@ -18053,7 +18383,7 @@ async function openBracesCaseDetail(caseId, patient){
   document.getElementById("btnPrintBracesCase").onclick = ()=> printBracesCase(c, patient);
   document.getElementById("btnEditBracesCase").onclick = ()=>{ closeSheet(); openBracesCaseForm(patient, caseId); };
   document.getElementById("btnDeleteBracesCase").onclick = async ()=>{
-    if(!confirm("Delete this braces case? This cannot be undone.")) return;
+    if(!confirm("Delete this braces case? It will be moved to Trash and can be restored.")) return;
     await dbDelete("bracesCases", caseId);
     logActivity("Deleted braces case for "+patient.name, {patientId:patient.id});
     showToast("Braces case deleted");
@@ -18429,7 +18759,7 @@ async function openPrePostOpViewer(patient, setId){
   `);
   document.getElementById("btnEditPhotoSet").onclick = ()=> openPrePostOpForm(patient, s.id);
   document.getElementById("btnDeletePhotoSet").onclick = async ()=>{
-    if(!confirm("Delete this photo set? This cannot be undone.")) return;
+    if(!confirm("Delete this photo set? It will be moved to Trash and can be restored.")) return;
     await dbDelete("prePostOpPhotos", s.id);
     showToast("Deleted");
     closeSheet();
@@ -19792,7 +20122,7 @@ function renderAiCrsHistoryList(patient, history, activeDate, tabBody){
   el.querySelectorAll("[data-deldate]").forEach(btn=>{
     btn.addEventListener("click", async (e)=>{
       e.stopPropagation();
-      if(!confirm("Delete the assessment for "+new Date(btn.dataset.deldate).toLocaleDateString()+"? This cannot be undone.")) return;
+      if(!confirm("Delete the assessment for "+new Date(btn.dataset.deldate).toLocaleDateString()+"? It will be moved to Trash and can be restored.")) return;
       const rec = history.find(r=>r.date===btn.dataset.deldate);
       if(rec){
         if(rec.followupReminderId) await dbDelete("reminders", rec.followupReminderId).catch(()=>{});
@@ -20400,7 +20730,7 @@ async function renderEndoTab(body, patient){
     openEntryActionMenu("Endodontic Case Options", [
       { key:"edit", icon:"edit", text:"Edit", onClick: ()=>{ closeSheet(); openEndoDiagnosisForm(caseId, patient, body); } },
       { key:"delete", icon:"trash", text:"Delete", onClick: async ()=>{
-        if(!confirm("Delete this endodontic case? This cannot be undone.")) return;
+        if(!confirm("Delete this endodontic case? It will be moved to Trash and can be restored.")) return;
         await dbDelete("endoCases", caseId);
         logActivity("Deleted endodontic case for "+patient.name, {patientId: patient.id});
         showToast("Case deleted");
@@ -20627,7 +20957,7 @@ function renderEndoVisitsSubTab(subBody, c, patient, body){
     openEntryActionMenu("Visit Options", [
       { key:"edit", icon:"edit", text:"Edit", onClick: ()=>{ closeSheet(); openEndoVisitForm(c, patient, body, visitId); } },
       { key:"delete", icon:"trash", text:"Delete", onClick: async ()=>{
-        if(!confirm("Delete this visit? This cannot be undone.")) return;
+        if(!confirm("Delete this visit? It will be moved to Trash and can be restored.")) return;
         c.visits = (c.visits||[]).filter(x=>x.id!==visitId);
         c.updatedAt = nowIso();
         await dbPut("endoCases", c);
@@ -20660,7 +20990,7 @@ function renderEndoRadiographsSubTab(subBody, c, patient, body){
     const radId = el.dataset.endoradmenu;
     openEntryActionMenu("Radiograph Options", [
       { key:"delete", icon:"trash", text:"Delete", onClick: async ()=>{
-        if(!confirm("Delete this radiograph? This cannot be undone.")) return;
+        if(!confirm("Delete this radiograph? It will be moved to Trash and can be restored.")) return;
         c.radiographs = (c.radiographs||[]).filter(x=>x.id!==radId);
         c.updatedAt = nowIso();
         await dbPut("endoCases", c);
@@ -21085,7 +21415,7 @@ async function renderPerioTab(body, patient){
     openEntryActionMenu("Periodontal Chart Options", [
       { key:"edit", icon:"edit", text:"Edit", onClick: ()=>{ closeSheet(); openPerioChartDetail(chartId, patient, body); } },
       { key:"delete", icon:"trash", text:"Delete", onClick: async ()=>{
-        if(!confirm("Delete this periodontal chart? This cannot be undone.")) return;
+        if(!confirm("Delete this periodontal chart? It will be moved to Trash and can be restored.")) return;
         await dbDelete("perioCharts", chartId);
         logActivity("Deleted periodontal chart for "+patient.name, {patientId: patient.id});
         showToast("Chart deleted");
@@ -21128,7 +21458,7 @@ async function openPerioChartDetail(chartId, patient, body){
     openEntryActionMenu("Tooth "+tooth+" Options", [
       { key:"edit", icon:"edit", text:"Edit", onClick: ()=>{ closeSheet(); openPerioToothForm(c, patient, body, tooth); } },
       { key:"delete", icon:"trash", text:"Delete", onClick: async ()=>{
-        if(!confirm("Delete charting for tooth "+tooth+"? This cannot be undone.")) return;
+        if(!confirm("Delete charting for tooth "+tooth+"? It will be moved to Trash and can be restored.")) return;
         delete c.teeth[tooth];
         c.updatedAt = nowIso();
         await dbPut("perioCharts", c);
@@ -21753,6 +22083,534 @@ async function openExamActionMenu(examId, patient, tabBody, patientId){
   ]);
 }
 
+// =========================================================
+// AI ASSISTANT (Claude) — all requests go through /api/ai, which checks the
+// signed-in staff member and holds the API key. Every AI result is shown
+// for the doctor to review/edit before anything is saved or sent.
+// =========================================================
+async function aiRequest(task, input){
+  let token = null;
+  try{ token = window.__fbAuth && window.__fbAuth.getIdToken ? await window.__fbAuth.getIdToken() : null; }catch(e){}
+  if(!token) throw new Error("Please sign in to use AI features");
+  let res, data;
+  try{
+    res = await fetch("/api/ai", { method:"POST", headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+token }, body: JSON.stringify({task, input}) });
+    data = await res.json().catch(()=>({}));
+  }catch(e){ throw new Error("Couldn't reach the AI service — check your internet connection"); }
+  if(!res.ok || !data.success) throw new Error((data && data.error) || ("AI request failed (HTTP "+res.status+")"));
+  return data.result;
+}
+function aiBtnHtml(id, label, extraStyle){
+  return `<button type="button" class="ai-btn" id="${id}" style="${extraStyle||''}">${icon('sparkle',15)} ${escapeHtml(label)}</button>`;
+}
+function aiSetBusy(btn, busy, label){
+  if(!btn) return;
+  if(busy){ btn.dataset.label = btn.innerHTML; btn.disabled = true; btn.classList.add("ai-busy"); btn.innerHTML = `<span class="ai-spin"></span> ${escapeHtml(label||"Thinking…")}`; }
+  else{ btn.disabled = false; btn.classList.remove("ai-busy"); if(btn.dataset.label) btn.innerHTML = btn.dataset.label; }
+}
+const AI_REVIEW_NOTE = `<div class="ai-note">✦ AI suggestion — please review before using. Final clinical decisions rest with the treating dentist.</div>`;
+
+function patientAgeYears(p){
+  if(!p) return null;
+  if(p.dob){ const a = computeAgeFromDob(p.dob); return a===""? null : Number(a); }
+  return (p.age!==undefined && p.age!=="" && p.age!=null) ? Number(p.age) : null;
+}
+// Basic clinical context about a patient (for notes, Rx check, instructions).
+async function aiPatientBasics(p, extra){
+  if(!p) return {};
+  let cs = null;
+  try{ cs = (await dbGetAll("clinicalSummaries")).filter(x=>x.patientId===p.id).sort((a,b)=> new Date(b.date||b.createdAt||0)-new Date(a.date||a.createdAt||0))[0] || null; }catch(e){}
+  const o = {
+    age: patientAgeYears(p), gender: p.gender||"",
+    weightKg: p.weight ? Number(p.weight) : undefined,
+    medicalAlerts: p.medicalAlerts||"", allergies: p.allergies||"", currentMedications: p.currentMedications||""
+  };
+  if(cs){ o.medicalHistory = cs.medicalHistory||""; o.drugHistory = cs.drugHistory||""; o.allergyHistory = cs.allergyHistory||""; }
+  return Object.assign(o, extra||{});
+}
+function aiFillField(el, val){
+  if(!el || !val) return;
+  const cur = el.value.trim();
+  el.value = cur ? cur + (el.tagName==="TEXTAREA" ? "\n" : ", ") + val : val;
+  el.dispatchEvent(new Event("input", {bubbles:true}));
+  const sec = el.closest(".qopd-section"); if(sec) sec.classList.add("qopd-open");
+}
+
+// ---- 1. AI clinical notes (Examination + Quick OPD) ----
+// map: field -> element id (missing ones fall back to `fallback`).
+async function openAiNotesSheet(patient, map, fallbackId){
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheet()">${icon('close',18)}</button>
+    <h2>${icon('sparkle',18)} Write Notes with AI</h2>
+    <p style="margin-bottom:8px;">Type or dictate your findings in shorthand — e.g. <i>"pain lower left 2 days, 36 deep occlusal caries, TOP+, cold test lingering, IOPA PA widening"</i>.</p>
+    <div class="field" style="position:relative;">
+      <textarea id="aiNotesIn" rows="5" placeholder="Your shorthand notes…"></textarea>
+      <button type="button" class="ai-mic" id="aiNotesMic" title="Dictate">${icon('mic',18)}</button>
+    </div>
+    ${aiBtnHtml("aiNotesGo","Write Clinical Notes","width:100%;")}
+    <div id="aiNotesOut" style="margin-top:12px;"></div>
+  `);
+  wireDictation(document.getElementById("aiNotesMic"), document.getElementById("aiNotesIn"));
+  const labels = {chiefComplaint:"Chief Complaint", observations:"Observations", diagnosis:"Diagnosis", investigations:"Investigations", treatmentAdvised:"Treatment Advised", notes:"Notes"};
+  document.getElementById("aiNotesGo").onclick = async ()=>{
+    const text = document.getElementById("aiNotesIn").value.trim();
+    if(!text){ showToast("Type or dictate your notes first"); return; }
+    const btn = document.getElementById("aiNotesGo");
+    aiSetBusy(btn, true, "Writing notes…");
+    try{
+      const r = await aiRequest("clinical_notes", { text, patient: await aiPatientBasics(patient) });
+      const keys = Object.keys(labels).filter(k=> r[k] && String(r[k]).trim());
+      document.getElementById("aiNotesOut").innerHTML = keys.length ? `
+        ${keys.map(k=>`<div class="field"><label>${labels[k]}</label><textarea class="ai-notes-field" data-k="${k}" rows="2">${escapeHtml(String(r[k]))}</textarea></div>`).join("")}
+        ${AI_REVIEW_NOTE}
+        <button class="btn btn-primary btn-block" id="aiNotesApply" style="margin-top:10px;">${icon('check',15)} Fill the Form</button>
+      ` : `<div class="empty-card">The AI couldn't find clinical details in that text — try adding more detail.</div>`;
+      const ap = document.getElementById("aiNotesApply");
+      if(ap) ap.onclick = ()=>{
+        document.querySelectorAll(".ai-notes-field").forEach(ta=>{
+          const k = ta.dataset.k, v = ta.value.trim();
+          if(!v) return;
+          const target = map[k] ? document.getElementById(map[k]) : null;
+          if(target) aiFillField(target, v);
+          else if(fallbackId) aiFillField(document.getElementById(fallbackId), labels[k]+": "+v);
+        });
+        closeSheet();
+        showToast("Notes filled in — review and save");
+      };
+    }catch(e){ showToast(e.message); }
+    aiSetBusy(btn, false);
+  };
+}
+// Voice dictation (Chrome / Android / Edge). Hidden where unsupported.
+function wireDictation(btn, ta){
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if(!btn) return;
+  if(!SR){ btn.style.display = "none"; return; }
+  let rec = null, base = "";
+  btn.onclick = ()=>{
+    if(rec){ rec.stop(); return; }
+    rec = new SR(); rec.lang = "en-IN"; rec.continuous = true; rec.interimResults = true;
+    base = ta.value ? ta.value.trim()+" " : "";
+    rec.onresult = (ev)=>{ let t = ""; for(let i=0;i<ev.results.length;i++) t += ev.results[i][0].transcript; ta.value = base + t; };
+    rec.onend = ()=>{ rec = null; btn.classList.remove("on"); };
+    rec.onerror = ()=>{ showToast("Dictation stopped — check microphone permission"); };
+    rec.start(); btn.classList.add("on"); showToast("Listening… tap the mic again to stop");
+  };
+}
+
+// ---- 2. AI patient summary ----
+async function aiPatientRecord(p){
+  const cur = await finCurrency();
+  const by = (store)=> dbGetAll(store).then(rows=> rows.filter(r=>r.patientId===p.id)).catch(()=>[]);
+  const [exams, plans, rxs, appts, invoices, labs, aligners, commits, cs] = await Promise.all([
+    by("examinations"), by("treatmentPlans"), by("prescriptions"), by("appointments"), by("invoices"), by("labCases"), by("alignerCases"), by("commitments"), by("clinicalSummaries")
+  ]);
+  const d = v=> v ? toDateKey(new Date(v)) : "";
+  const today = toDateKey(new Date());
+  const items = [];
+  plans.forEach(pl=> (pl.items||[]).forEach(it=> items.push({date: d(it.treatmentDate||pl.createdDate), treatment: it.treatment, tooth: it.tooth, status: it.status, fee: (Number(it.fee)||0)*(Number(it.qty)||1), notes: (it.notes||"").slice(0,160), sittings: (it.sittings||[]).length || undefined})));
+  items.sort((a,b)=> (b.date||"").localeCompare(a.date||""));
+  return {
+    patient: Object.assign(await aiPatientBasics(p), { name: p.name, registered: d(p.createdAt), membership: p.membershipTier||"", notes: (p.generalNotes||"").slice(0,300) }),
+    currency: cur,
+    clinicalHistory: cs.slice(-1).map(c=>({chiefComplaint:c.chiefComplaint, medicalHistory:c.medicalHistory, drugHistory:c.drugHistory})),
+    examinations: exams.sort((a,b)=> new Date(b.date)-new Date(a.date)).slice(0,6).map(e=>({date: d(e.date), chiefComplaint: e.chiefComplaint, observations: e.observations, diagnosis: e.diagnosis, treatmentAdvised: e.treatmentAdvised})),
+    treatments: items.slice(0,40),
+    prescriptions: rxs.sort((a,b)=> new Date(b.date)-new Date(a.date)).slice(0,4).map(r=>({date: d(r.date), medicines: (r.items||[]).map(m=> [m.drugName, m.strength].filter(Boolean).join(" ")).join(", ")})),
+    upcomingAppointments: appts.filter(a=> a.date>=today && !["Cancelled","NoShow"].includes(a.status)).sort((a,b)=> (a.date||"").localeCompare(b.date||"")).slice(0,5).map(a=>({date:a.date, time:a.startTime, type:a.treatmentType||"", doctor:a.doctor||""})),
+    lastVisits: appts.filter(a=> a.date<today).sort((a,b)=> (b.date||"").localeCompare(a.date||"")).slice(0,4).map(a=>({date:a.date, status:a.status})),
+    outstandingBalance: invoices.reduce((t,i)=> t + Math.max(0,(Number(i.totalNet)||0)-(Number(i.amountPaid)||0)), 0),
+    activeLabCases: labs.filter(l=> l.status!=="Delivered to Patient").map(l=>({work:l.caseType, tooth:l.tooth, lab:l.labName, status:l.status, promised:l.patientPromisedDate})),
+    alignerCases: aligners.map(a=>({brand:a.brand, status:a.status, aligners:(a.alignersDelivered||0)+" of "+(a.totalAligners||0)})),
+    pendingFollowUps: commits.filter(c=> c.status==="Pending").map(c=>({task:c.category, due:c.dueDate, note:(c.notes||"").slice(0,100)}))
+  };
+}
+async function openAiPatientSummary(p){
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>${icon('sparkle',18)} AI Summary — ${escapeHtml(p.name)}</h2>
+    <div id="aiSumBody"><div class="ai-loading"><span class="ai-spin"></span> Reading ${escapeHtml(p.name)}'s record…</div></div>
+  `);
+  const body = document.getElementById("aiSumBody");
+  try{
+    const r = await aiRequest("patient_summary", { data: await aiPatientRecord(p) });
+    if(!document.getElementById("aiSumBody")) return;
+    const asText = [r.headline, ...(r.alerts||[]).map(a=>"⚠ "+a), ...(r.sections||[]).flatMap(s=> ["", s.title, ...(s.points||[]).map(x=>"• "+x)]), ...((r.nextSteps||[]).length? ["", "Next steps", ...r.nextSteps.map(x=>"• "+x)] : [])].filter(x=>x!==undefined).join("\n");
+    body.innerHTML = `
+      ${r.headline? `<div class="ai-headline">${escapeHtml(r.headline)}</div>`:""}
+      ${(r.alerts||[]).length? `<div class="ai-alerts">${r.alerts.map(a=>`<div>⚠ ${escapeHtml(a)}</div>`).join("")}</div>`:""}
+      ${(r.sections||[]).map(s=>`<div class="ai-sec"><div class="ai-sec-t">${escapeHtml(s.title||"")}</div><ul>${(s.points||[]).map(x=>`<li>${escapeHtml(x)}</li>`).join("")}</ul></div>`).join("")}
+      ${(r.nextSteps||[]).length? `<div class="ai-sec ai-next"><div class="ai-sec-t">Suggested Next Steps</div><ul>${r.nextSteps.map(x=>`<li>${escapeHtml(x)}</li>`).join("")}</ul></div>`:""}
+      ${AI_REVIEW_NOTE}
+      <div style="display:flex;gap:8px;margin-top:10px;">
+        <button class="btn btn-outline" style="flex:1;" id="aiSumCopy">${icon('file',15)} Copy</button>
+        <button class="btn btn-outline" style="flex:1;" id="aiSumRedo">${icon('refresh',15)} Refresh</button>
+      </div>`;
+    document.getElementById("aiSumCopy").onclick = async ()=>{ try{ await navigator.clipboard.writeText(asText); showToast("Summary copied"); }catch(e){ showToast("Couldn't copy"); } };
+    document.getElementById("aiSumRedo").onclick = ()=> openAiPatientSummary(p);
+    logActivity("Viewed AI summary for "+p.name, {patientId: p.id});
+  }catch(e){
+    body.innerHTML = `<div class="empty-card"><b>Couldn't create the summary</b>${escapeHtml(e.message)}</div>`;
+  }
+}
+
+// ---- 3. AI message writer (WhatsApp / Communication / Email) ----
+function aiRewriteRowHtml(id){
+  return `<div class="ai-rewrite" id="${id}">
+    <span class="ai-rw-lbl">${icon('sparkle',13)} AI</span>
+    ${[["friendly","Friendlier"],["short","Shorter"],["formal","Formal"],["hindi","Hindi"],["hinglish","Hinglish"],["fix","Fix Grammar"]].map(([k,l])=>`<button type="button" class="ai-chip" data-aistyle="${k}">${l}</button>`).join("")}
+    <button type="button" class="ai-chip ai-undo" data-aiundo="1" style="display:none;">↶ Undo</button>
+  </div>`;
+}
+function wireAiRewrite(rowId, textarea){
+  const row = document.getElementById(rowId);
+  if(!row || !textarea) return;
+  let before = null;
+  const undo = row.querySelector("[data-aiundo]");
+  row.querySelectorAll("[data-aistyle]").forEach(chip=> chip.onclick = async ()=>{
+    const text = textarea.value.trim();
+    if(!text){ showToast("Type a message first"); return; }
+    row.querySelectorAll("button").forEach(b=> b.disabled = true);
+    chip.classList.add("ai-busy"); const orig = chip.textContent; chip.innerHTML = `<span class="ai-spin"></span>`;
+    try{
+      const r = await aiRequest("rewrite_message", { text, style: chip.dataset.aistyle });
+      if(r && r.text){ before = textarea.value; textarea.value = r.text; textarea.dispatchEvent(new Event("input",{bubbles:true})); undo.style.display = ""; }
+    }catch(e){ showToast(e.message); }
+    chip.textContent = orig; chip.classList.remove("ai-busy");
+    row.querySelectorAll("button").forEach(b=> b.disabled = false);
+  });
+  undo.onclick = ()=>{ if(before!=null){ textarea.value = before; before = null; undo.style.display = "none"; } };
+}
+
+// ---- 4. AI treatment plan explanation for the patient ----
+async function openAiPlanExplainer(plan, patient){
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>${icon('sparkle',18)} Explain Plan to Patient</h2>
+    <p style="margin-bottom:10px;">A simple, reassuring explanation of each treatment in this plan. It's added to the plan link the patient receives on WhatsApp${plan.patientExplanation? " (a saved explanation already exists — you can edit or regenerate it)":""}.</p>
+    <div class="field"><label>Language</label><select id="aipLang"><option value="english">English</option><option value="hindi">Hindi</option><option value="hinglish">Hinglish</option></select></div>
+    ${aiBtnHtml("aipGo", plan.patientExplanation? "Regenerate Explanation" : "Write Explanation", "width:100%;")}
+    <div class="field" style="margin-top:12px;"><label>Explanation</label><textarea id="aipText" rows="10" placeholder="Tap the button above, or write your own…">${escapeHtml(plan.patientExplanation||"")}</textarea></div>
+    ${AI_REVIEW_NOTE}
+    <button class="btn btn-primary btn-block" id="aipSave" style="margin-top:10px;">${icon('check',15)} Save to Plan</button>
+    <button class="btn btn-outline btn-block" id="aipSaveSend" style="margin-top:8px;">${icon('message',15)} Save &amp; WhatsApp Plan Link</button>
+  `);
+  document.getElementById("aipGo").onclick = async ()=>{
+    const btn = document.getElementById("aipGo");
+    aiSetBusy(btn, true, "Writing…");
+    try{
+      const r = await aiRequest("plan_explainer", {
+        language: document.getElementById("aipLang").value,
+        patient: { age: patientAgeYears(patient), gender: patient.gender||"" },
+        items: (plan.items||[]).map(it=>({treatment: it.treatment, tooth: it.tooth, diagnosis: it.diagnosis, qty: it.qty, notes: (it.notes||"").slice(0,200)}))
+      });
+      if(r && r.text) document.getElementById("aipText").value = r.text;
+    }catch(e){ showToast(e.message); }
+    aiSetBusy(btn, false);
+  };
+  const save = async ()=>{
+    const fresh = (await dbGetAll("treatmentPlans")).find(x=>x.id===plan.id) || plan;
+    fresh.patientExplanation = document.getElementById("aipText").value.trim();
+    fresh.updatedAt = nowIso();
+    await dbPut("treatmentPlans", fresh);
+    Object.assign(plan, fresh);
+    return fresh;
+  };
+  document.getElementById("aipSave").onclick = async ()=>{ await save(); showToast("Explanation saved — it will show on the plan link"); closeSheetOrReturn(); };
+  document.getElementById("aipSaveSend").onclick = async ()=>{ const f = await save(); closeSheet(); await openTreatmentPlanLinkComposer(f, patient); };
+}
+
+// ---- 5a. AI prescription safety check + pediatric dosing ----
+let rxFormRerender = null;
+async function openAiRxCheck(patient){
+  const meds = rxItemsDraft.map((m,i)=>({index:i, drugName:m.drugName, generic:m.generic||"", strength:m.strength, form:m.form, dose:m.dose, frequency:m.frequency, duration:m.duration})).filter(m=> (m.drugName||"").trim());
+  if(!meds.length){ showToast("Add at least one medicine first"); return; }
+  const wEl = document.getElementById("rxWeight");
+  const weight = wEl && wEl.value ? Number(wEl.value) : (patient.weight? Number(patient.weight) : undefined);
+  const age = patientAgeYears(patient);
+  if(age!=null && age<14 && !weight && !confirm("This is a child — adding the weight (kg) gives exact weight-based doses. Continue without weight?")) return;
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheet()">${icon('close',18)}</button>
+    <h2>${icon('sparkle',18)} AI Prescription Check</h2>
+    <div id="aiRxBody"><div class="ai-loading"><span class="ai-spin"></span> Checking ${meds.length} medicine${meds.length>1?'s':''} against allergies, medical history and current medications…</div></div>
+  `);
+  const body = document.getElementById("aiRxBody");
+  try{
+    const r = await aiRequest("rx_check", { patient: await aiPatientBasics(patient, { weightKg: weight }), medicines: meds });
+    if(!document.getElementById("aiRxBody")) return;
+    const ov = r.overall==="danger" ? ["danger","⛔ Problems found"] : r.overall==="caution" ? ["caution","⚠ Please review"] : ["ok","✓ No problems found"];
+    const sevOrder = {high:0, moderate:1, low:2};
+    const issues = (r.issues||[]).slice().sort((a,b)=> (sevOrder[a.severity]??3)-(sevOrder[b.severity]??3));
+    body.innerHTML = `
+      <div class="ai-verdict ${ov[0]}"><b>${ov[1]}</b>${r.summary? `<div>${escapeHtml(r.summary)}</div>`:""}</div>
+      ${issues.length? issues.map(x=>`
+        <div class="ai-issue sev-${escapeAttr(x.severity||'low')}">
+          <div class="ai-issue-h"><span class="ai-sev">${escapeHtml((x.severity||"").toUpperCase())}</span> ${escapeHtml(x.medicine||"")}</div>
+          <div>${escapeHtml(x.problem||"")}</div>
+          ${x.suggestion? `<div class="ai-sugg">→ ${escapeHtml(x.suggestion)}</div>`:""}
+        </div>`).join("") : ""}
+      ${(r.pediatric||[]).length? `
+        <div class="section-title" style="margin-top:14px;">Pediatric Doses${weight? ` (${weight} kg)` : ""}</div>
+        ${r.pediatric.map((x,k)=>`
+          <div class="ai-issue sev-info">
+            <div class="ai-issue-h">${escapeHtml(x.medicine||"")}</div>
+            <div><b>${escapeHtml(x.recommendedDose||"")}</b></div>
+            ${x.calculation? `<div class="ai-sugg">${escapeHtml(x.calculation)}</div>`:""}
+            ${x.maxDaily? `<div class="ai-sugg">Max daily: ${escapeHtml(x.maxDaily)}</div>`:""}
+            ${(x.index!=null && rxItemsDraft[x.index])? `<button class="btn btn-outline btn-sm" data-aiapply="${k}" style="margin-top:6px;">Use this dose</button>`:""}
+          </div>`).join("")}` : ""}
+      ${AI_REVIEW_NOTE}
+      <button class="btn btn-primary btn-block" style="margin-top:10px;" onclick="closeSheet()">Done</button>`;
+    body.querySelectorAll("[data-aiapply]").forEach(b=> b.onclick = ()=>{
+      const x = r.pediatric[+b.dataset.aiapply];
+      const it = rxItemsDraft[x.index];
+      if(!it) return;
+      it.dose = x.recommendedDose;
+      if(rxFormRerender) rxFormRerender();
+      b.textContent = "✓ Applied"; b.disabled = true;
+    });
+    logActivity("Ran AI prescription check for "+patient.name+" ("+(r.overall||"")+")", {patientId: patient.id});
+  }catch(e){
+    body.innerHTML = `<div class="empty-card"><b>Couldn't run the check</b>${escapeHtml(e.message)}</div>`;
+  }
+}
+
+// ---- 5b. AI pre / post-operative instructions ----
+async function openAiInstructionsSheet(patient, opts){
+  opts = opts || {};
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>${icon('sparkle',18)} AI Instructions — ${escapeHtml(patient.name)}</h2>
+    <div class="field-row">
+      <div class="field"><label>Type</label><select id="aiiType"><option value="post" ${opts.type!=="pre"?'selected':''}>Post-Operative</option><option value="pre" ${opts.type==="pre"?'selected':''}>Pre-Operative</option></select></div>
+      <div class="field"><label>Language</label><select id="aiiLang"><option value="english">English</option><option value="hindi">Hindi</option><option value="hinglish">Hinglish</option></select></div>
+    </div>
+    <div class="field"><label>Procedure</label><input id="aiiProc" value="${escapeAttr(opts.procedure||'')}" placeholder="e.g. Root canal treatment 36, Extraction 48, Implant 46, Sedation"></div>
+    <div class="chip-wrap" style="margin:-4px 0 10px;">${["Root Canal Treatment","Tooth Extraction","Wisdom Tooth Surgery","Dental Implant","Scaling & Polishing","Crown / Bridge","Pulpotomy (Child)","Sedation / Laughing Gas (Child)","Braces / Aligners"].map(x=>`<span class="filter-chip" data-aiiproc="${escapeAttr(x)}">${escapeHtml(x)}</span>`).join("")}</div>
+    ${aiBtnHtml("aiiGo","Write Instructions","width:100%;")}
+    <div class="field" style="margin-top:12px;"><label>Instructions</label><textarea id="aiiText" rows="11" placeholder="Tap Write Instructions…"></textarea></div>
+    ${AI_REVIEW_NOTE}
+    <button class="btn btn-primary btn-block" id="aiiSend" style="margin-top:10px;">${icon('message',15)} Send via WhatsApp</button>
+    <div style="display:flex;gap:8px;margin-top:8px;">
+      <button class="btn btn-outline" style="flex:1;" id="aiiPrint">${icon('print',15)} Print</button>
+      <button class="btn btn-outline" style="flex:1;" id="aiiSave">${icon('file',15)} Save as Template</button>
+    </div>
+  `);
+  document.querySelectorAll("[data-aiiproc]").forEach(ch=> ch.onclick = ()=>{ document.getElementById("aiiProc").value = ch.dataset.aiiproc; });
+  const typeOf = ()=> document.getElementById("aiiType").value;
+  const procOf = ()=> document.getElementById("aiiProc").value.trim();
+  const textOf = ()=> document.getElementById("aiiText").value.trim();
+  const generate = async ()=>{
+    if(!procOf()){ showToast("Enter the procedure"); return; }
+    const btn = document.getElementById("aiiGo");
+    aiSetBusy(btn, true, "Writing…");
+    try{
+      const r = await aiRequest("op_instructions", { type: typeOf(), procedure: procOf(), language: document.getElementById("aiiLang").value, patient: await aiPatientBasics(patient) });
+      const lines = (r.instructions||[]).map(x=> String(x).replace(/^\s*[-•*\d.)]+\s*/,"").trim()).filter(Boolean);
+      document.getElementById("aiiText").value = lines.map(x=>"• "+x).join("\n");
+    }catch(e){ showToast(e.message); }
+    aiSetBusy(btn, false);
+  };
+  document.getElementById("aiiGo").onclick = generate;
+  document.getElementById("aiiSend").onclick = async ()=>{
+    const text = textOf(); if(!text){ showToast("Write the instructions first"); return; }
+    await sendInstructionsWhatsApp(patient, typeOf(), procOf(), text);
+  };
+  document.getElementById("aiiPrint").onclick = async ()=>{
+    const text = textOf(); if(!text){ showToast("Write the instructions first"); return; }
+    const type = typeOf();
+    const clinics = await dbGetAll("clinics");
+    const clinic = clinics.find(c=>c.id===patient.preferredClinicId);
+    const bodyHtml = `<h2 style="margin:0 0 10px;">${type==="post"?"Post-Operative":"Pre-Operative"} Instructions — ${escapeHtml(procOf())}</h2>
+      <div style="font-size:13.5px;line-height:1.8;white-space:pre-wrap;">${escapeHtml(text)}</div>`;
+    printDocument({ title:(type==="post"?"Post-Op":"Pre-Op")+" Instructions", patient, clinic, docDate: new Date().toLocaleDateString(), bodyHtml, signHtml: await buildSignBlock(patient.treatingDoctor) });
+  };
+  document.getElementById("aiiSave").onclick = async ()=>{
+    const text = textOf(); if(!text || !procOf()){ showToast("Write the instructions first"); return; }
+    const store = typeOf()==="post" ? "postOpTemplates" : "preOpTemplates";
+    await dbAdd(store, { id: uid(typeOf()==="post"?"postop":"preop"), name: procOf(), body: text, createdAt: nowIso(), aiGenerated: true });
+    showToast("Saved as a "+(typeOf()==="post"?"post-op":"pre-op")+" template");
+  };
+  if(opts.autoGenerate && opts.procedure) generate();
+}
+
+// ---- Home: compact rows. Each reminder / follow-up shows just the patient,
+// what it's about and the date; its action buttons slide open from the
+// arrow on the right (or by tapping the row).
+function makeRowsCollapsible(root){
+  if(!root) return;
+  root.classList.add("compact-rows");
+  root.querySelectorAll(".appt-row").forEach((row, i)=>{
+    if(row.dataset.collapsible==="1") return;
+    const actions = row.querySelector(".appt-actions");
+    if(!actions || !actions.children.length) return;
+    row.dataset.collapsible = "1";
+    row.style.animationDelay = Math.min(i*45, 400)+"ms";
+    const btn = document.createElement("button");
+    btn.className = "row-exp"; btn.type = "button"; btn.title = "Show actions";
+    btn.innerHTML = icon('chevron',16);
+    row.appendChild(btn);
+    const toggle = ()=>{
+      const open = !row.classList.contains("row-open");
+      root.querySelectorAll(".appt-row.row-open").forEach(r=>{ if(r!==row) r.classList.remove("row-open"); });
+      row.classList.toggle("row-open", open);
+    };
+    btn.addEventListener("click", (e)=>{ e.stopPropagation(); toggle(); });
+    row.addEventListener("click", (e)=>{ if(e.target.closest("button, a, input, select")) return; toggle(); });
+  });
+}
+// ---- Home: live header (greeting, clock, next patient, today's progress)
+// ---- Automatic 9 AM reminders: status + back-up trigger ----
+// Vercel runs api/cron-daily at 9 AM IST and records each day's run in
+// Firestore (cronRuns/<YYYY-MM-DD>). If that run didn't happen (or failed),
+// the PMS itself asks the server to run it as soon as any staff member has
+// it open — the server claims each appointment before sending, so a patient
+// never gets the same reminder twice.
+function istNowParts(){
+  const f = new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Kolkata",year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hour12:false});
+  const o = {}; f.formatToParts(new Date()).forEach(x=>{ o[x.type]=x.value; });
+  return { key: `${o.year}-${o.month}-${o.day}`, mins: (Number(o.hour)%24)*60 + Number(o.minute) };
+}
+let autoRemRunning = false, autoRemTimer = null;
+async function getTodayCronRun(){
+  try{ return window.__fb && window.__fb.get ? await window.__fb.get("cronRuns", istNowParts().key) : null; }catch(e){ return null; }
+}
+function autoRemNeedsRun(run){
+  if(!run) return true;
+  if(run.status==="error") return true;
+  if(run.remindersDoneAt) return false;
+  const age = Date.now() - new Date(run.updatedAt||run.startedAt||0).getTime();
+  return age > 10*60*1000; // stuck/crashed mid-run
+}
+async function triggerAutoReminders(manual){
+  if(autoRemRunning) return null;
+  if(!navigator.onLine) { if(manual) showToast("You're offline — connect to the internet first"); return null; }
+  let token = null;
+  try{ token = window.__fbAuth && window.__fbAuth.getIdToken ? await window.__fbAuth.getIdToken() : null; }catch(e){}
+  if(!token) return null;
+  autoRemRunning = true; renderAutoRemStatus("sending");
+  try{
+    const res = await fetch("/api/cron-daily", { method:"POST", headers:{ "Authorization":"Bearer "+token, "Content-Type":"application/json" }, body:"{}" });
+    const data = await res.json().catch(()=>({}));
+    if(!res.ok) throw new Error(data.error || ("HTTP "+res.status));
+    const ar = (data.summary && data.summary.appointmentReminders) || {};
+    if(manual || ar.sent) showToast(ar.sent ? "Today's appointment reminders have been sent on WhatsApp" : "All of today's reminders were already sent");
+    return data;
+  }catch(e){
+    if(manual) showToast("Couldn't send reminders: "+e.message);
+    return null;
+  }finally{
+    autoRemRunning = false; renderAutoRemStatus();
+  }
+}
+async function ensureDailyAutoReminders(){
+  try{
+    const {key, mins} = istNowParts();
+    if(mins < 9*60+20 || mins > 21*60) return; // give the 9 AM run time to finish first
+    const run = await getTodayCronRun();
+    if(!autoRemNeedsRun(run)) return;
+    let tries = {};
+    try{ tries = JSON.parse(localStorage.getItem("htdAutoRemTry")||"{}"); }catch(e){}
+    if(tries.key===key && (tries.n>=3 || Date.now()-tries.at < 10*60*1000)) return;
+    try{ localStorage.setItem("htdAutoRemTry", JSON.stringify({key, n:(tries.key===key? tries.n:0)+1, at:Date.now()})); }catch(e){}
+    await triggerAutoReminders(false);
+  }catch(e){ console.warn("ensureDailyAutoReminders:", e); }
+}
+function startAutoReminderWatch(){
+  if(autoRemTimer) clearInterval(autoRemTimer);
+  setTimeout(ensureDailyAutoReminders, 8000);
+  autoRemTimer = setInterval(ensureDailyAutoReminders, 15*60*1000);
+}
+async function renderAutoRemStatus(state){
+  const el = document.getElementById("autoRemStatus");
+  if(!el) return;
+  let cls = "ars-wait", text = "", run = null;
+  const {mins} = istNowParts();
+  if(state==="sending"){ cls="ars-busy"; text = "Sending today's WhatsApp reminders…"; }
+  else{
+    run = await getTodayCronRun();
+    if(run && run.remindersDoneAt){
+      const t = new Date(run.remindersDoneAt).toLocaleTimeString("en-IN",{timeZone:"Asia/Kolkata",hour:"numeric",minute:"2-digit"});
+      const ar = (run.summary && run.summary.appointmentReminders) || {};
+      if(ar.failed){ cls="ars-bad"; text = `Auto reminders sent at ${t}, but some didn't go — tap to see`; }
+      else { cls="ars-ok"; text = `Auto WhatsApp reminders sent at ${t}${run.trigger==="app"?" (back-up)":""}`; }
+    }else if(run && run.status==="error"){ cls="ars-bad"; text = "Auto reminders didn't run: "+(run.error||"server error")+" — tap to send now"; }
+    else if(mins < 9*60){ cls="ars-wait"; text = "Auto WhatsApp reminders will go at 9 AM"; }
+    else if(run && run.status==="running"){ cls="ars-busy"; text = "Sending today's WhatsApp reminders…"; }
+    else { cls="ars-bad"; text = "Auto reminders haven't gone yet today — tap to send now"; }
+  }
+  el.innerHTML = `<div class="ars ${cls}"><span class="ars-dot"></span><span>${escapeHtml(text)}</span></div>`;
+  el.firstChild.onclick = ()=> openAutoRemSheet(run);
+}
+function openAutoRemSheet(run){
+  const errs = (run && run.summary && run.summary.errors) || [];
+  const ok = run && run.remindersDoneAt && !errs.length;
+  openSheet(`
+    <h2>Automatic 9 AM Reminders</h2>
+    <p>Every morning at 9 AM the server sends the "appointment_reminder" WhatsApp to every patient booked for today. If that doesn't happen, the PMS sends them itself as soon as anyone opens it after 9:20 AM.</p>
+    ${run && run.status==="error" ? `<p style="color:var(--red);"><b>Problem:</b> ${escapeHtml(run.error||"")}</p>`:""}
+    ${errs.length ? `<p><b>These didn't go:</b></p><ul style="font-size:13px;color:var(--red);padding-left:18px;">${errs.map(e=>`<li>${escapeHtml(e)}</li>`).join("")}</ul>`:""}
+    ${ok ? `<p style="color:var(--green);"><b>Today's reminders have gone.</b></p>`:""}
+    <button class="btn btn-primary btn-block" id="arsSendNow">${ok?"Check again for anyone missed":"Send today's reminders now"}</button>
+    <p class="hint" style="margin-top:8px;">Safe to press any time — patients who already got today's reminder are never sent a second one.</p>
+  `);
+  document.getElementById("arsSendNow").onclick = async ()=>{ closeSheet(); await triggerAutoReminders(true); };
+}
+
+let homeHeroTimer = null;
+function startHomeHero(todayAppts, settings){
+  if(homeHeroTimer){ clearInterval(homeHeroTimer); homeHeroTimer = null; }
+  renderAutoRemStatus().catch(()=>{});
+  const appts = (todayAppts||[]).filter(a=> !["Cancelled","NoShow","Reserved","Rescheduled"].includes(a.status)).slice().sort((a,b)=> (a.startTime||"").localeCompare(b.startTime||""));
+  const done = appts.filter(a=>a.status==="Completed").length;
+  const arrived = appts.filter(a=>a.status==="Arrived").length, inChair = appts.filter(a=>a.status==="InChair").length;
+  const docName = (settings && settings.doctorName) ? settings.doctorName.replace(/^dr\.?\s*/i,"") : "";
+  const ring = document.getElementById("hhRing");
+  if(ring){
+    const pct = appts.length ? done/appts.length : 0, C = 2*Math.PI*30;
+    ring.innerHTML = `<svg viewBox="0 0 76 76" width="76" height="76"><circle cx="38" cy="38" r="30" fill="none" stroke="var(--green-mist)" stroke-width="7"/>
+      <circle class="hh-ring-bar" cx="38" cy="38" r="30" fill="none" stroke="var(--green)" stroke-width="7" stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="${C}" style="--to:${C*(1-pct)};" transform="rotate(-90 38 38)"/></svg>
+      <div class="hh-ring-txt"><b>${done}/${appts.length}</b><span>done</span></div>`;
+  }
+  const chips = document.getElementById("hhChips");
+  if(chips) chips.innerHTML = [
+    appts.length? `<span class="hh-chip">${icon('calendar',13)} ${appts.length} today</span>`:"",
+    arrived? `<span class="hh-chip warn">${icon('user',13)} ${arrived} waiting</span>`:"",
+    inChair? `<span class="hh-chip live"><i></i> ${inChair} in chair</span>`:""
+  ].join("");
+  const tick = ()=>{
+    const g = document.getElementById("hhGreet");
+    if(!g){ clearInterval(homeHeroTimer); homeHeroTimer = null; return; }
+    const now = new Date(), h = now.getHours();
+    const part = h<12 ? "Good morning" : h<17 ? "Good afternoon" : "Good evening";
+    g.textContent = part + (docName? ", Dr. "+docName : "") + " 👋";
+    const ck = document.getElementById("hhClock"); if(ck) ck.textContent = now.toLocaleTimeString(undefined,{hour:'2-digit', minute:'2-digit'});
+    const nowHM = String(h).padStart(2,"0")+":"+String(now.getMinutes()).padStart(2,"0");
+    const next = appts.find(a=> ["Scheduled","Confirmed"].includes(a.status) && (a.startTime||"")>=nowHM) || appts.find(a=> ["Scheduled","Confirmed"].includes(a.status));
+    const nx = document.getElementById("hhNext");
+    if(nx){
+      if(next){
+        const [hh,mm] = (next.startTime||"00:00").split(":").map(Number);
+        const mins = Math.round(((hh*60+mm) - (h*60+now.getMinutes())));
+        const when = mins>0 ? (mins>=60? "in "+Math.floor(mins/60)+"h "+(mins%60)+"m" : "in "+mins+" min") : mins===0 ? "now" : Math.abs(mins)+" min late";
+        nx.innerHTML = `<span class="hh-next-lbl">Next</span> <b>${escapeHtml(next.patientName||"")}</b> · ${formatTime(next.startTime)}${next.treatmentType? " · "+escapeHtml(next.treatmentType):""} <span class="hh-when ${mins<0?'late':''}">${when}</span>`;
+      }else nx.innerHTML = appts.length ? `<span class="hh-next-lbl">✓</span> All of today's patients have been seen or checked in` : `<span class="hh-next-lbl">—</span> No appointments booked for today`;
+    }
+  };
+  tick();
+  homeHeroTimer = setInterval(tick, 30000);
+}
+// Sections glide in as they scroll into view.
+function revealHomeSections(root){
+  if(!root || !("IntersectionObserver" in window)) return;
+  const els = [...root.querySelectorAll(":scope > .section-title, :scope > .list-card, :scope > div[id]:not(#homeHero):not(#statGrid)")];
+  els.forEach(el=> el.classList.add("hreveal"));
+  const io = new IntersectionObserver((entries)=>{
+    entries.forEach(en=>{ if(en.isIntersecting){ en.target.classList.add("hshow"); io.unobserve(en.target); } });
+  }, {rootMargin:"0px 0px -6% 0px"});
+  els.forEach(el=> io.observe(el));
+}
+
 // Chief complaint chips: the built-in list plus the clinic's own saved
 // presets (kept in Settings, so they're shared by every device and both the
 // Examination and Quick OPD forms). "+ Add Preset" saves a new one and puts
@@ -21824,6 +22682,7 @@ async function openExaminationForm(examId, patient){
       <div class="field"><label>Date</label><input id="exDate" type="date" value="${toDateKey(new Date(exam.date))}"></div>
       <div class="field"><label>Doctor</label>${doctorSelectHtml("exDoctor", exam.doctor, doctors)}</div>
     </div>
+    ${aiBtnHtml("btnExAiNotes","Write Notes with AI","width:100%;margin-bottom:12px;")}
     <div class="field">
       <label>Chief Complaint</label>
       <div class="chip-wrap" id="ccChips"></div>
@@ -21865,6 +22724,7 @@ async function openExaminationForm(examId, patient){
     };
   });
   await wireChiefComplaintChips("ccChips", "exChiefComplaint");
+  document.getElementById("btnExAiNotes").onclick = ()=> openAiNotesSheet(patient, {chiefComplaint:"exChiefComplaint", observations:"exObservations", diagnosis:"exDiagnosis", investigations:"exInvestigations", notes:"exNotes"}, "exNotes");
   const obsPresets = (await dbGetAll("observationPresets")).map(o=>o.text);
   const diagPresets = (await dbGetAll("diagnosisPresets")).map(d=>d.text);
   wireCommaAutosuggest(document.getElementById("exObservations"), obsPresets);
@@ -22104,6 +22964,7 @@ async function openTreatmentItemActionMenu(planId, itemId, patient, tabBody, pat
   openEntryActionMenu("Treatment Options", [
     { key:"edit", icon:"edit", text:"Edit Treatment", onClick: ()=>{ closeSheet(); openEditTreatmentItemSheet(planId, itemId, patient, tabBody, patientId); } },
     { key:"notes", icon:"edit", text:"Add Treatment Notes", onClick: ()=>{ closeSheet(); openAddTreatmentNoteSheet(planId, itemId, patient, tabBody, patientId); } },
+    { key:"aiPostOp", icon:"sparkle", text:"AI: Post-op Instructions", onClick: ()=>{ closeSheet(); openAiInstructionsSheet(patient, { type:"post", procedure: (item.treatment||"")+(item.tooth? " (tooth "+item.tooth+")" : ""), autoGenerate: true }); } },
     { key:"print", icon:"print", text:"Print Treatment", onClick: ()=>{ closeSheet(); printTreatmentFn(); } },
     { key:"waPdf", icon:"message", text:"Send PDF on WhatsApp", onClick: ()=>{ closeSheet(); sendPdfOnWhatsApp(patient, ()=>printSingleTreatmentDone(item, patient, plan, (item.sittings||[]).map(s=>s.id)), "Treatment Record"); } },
     { key:"share", icon:"share", text:"Share Treatment", onClick: ()=>{ closeSheet(); shareEntityText("Treatment", summary); } },
@@ -23227,6 +24088,10 @@ function renderRxFormSheet(rx, clinics, isEdit, patient, doctors, rxTemplates){
     </div>
     <div class="field"><label>Doctor</label>${doctorSelectHtml("rxDoctor", rx.doctor, doctors)}</div>
     <div class="field"><label>Diagnosis</label><input id="rxDiagnosis" value="${escapeAttr(rx.diagnosis)}"></div>
+    <div class="field-row">
+      <div class="field"><label>Patient Weight (kg)</label><input id="rxWeight" type="number" min="0" step="0.1" inputmode="decimal" value="${escapeAttr(rx.patientWeight||patient.weight||'')}" placeholder="Needed for child doses"></div>
+      <div class="field"><label>Age</label><input value="${(()=>{ const a = patientAgeYears(patient); return a==null? "—" : (a===0? "Under 1 yr" : a+" yrs"); })()}" disabled></div>
+    </div>
     <div class="section-title" style="margin-top:6px;">Medicines</div>
     <div class="field"><label>Use a Treatment Template</label>
       <select id="rxTemplateSelect">
@@ -23235,7 +24100,8 @@ function renderRxFormSheet(rx, clinics, isEdit, patient, doctors, rxTemplates){
       </select>
     </div>
     <div id="rxItemsWrap"></div>
-    <button class="btn btn-outline btn-block" id="btnAddRxItem" style="margin-bottom:14px;">+ Add Medicine</button>
+    <button class="btn btn-outline btn-block" id="btnAddRxItem" style="margin-bottom:10px;">+ Add Medicine</button>
+    ${aiBtnHtml("btnAiRxCheck","AI Check: Interactions, Allergies & Child Dose","width:100%;margin-bottom:14px;")}
     <div class="field"><label>Advice</label><textarea id="rxAdvice" rows="2">${escapeHtml(rx.advice)}</textarea></div>
     <div class="field"><label>Follow-up Date</label><input id="rxFollowUp" type="date" value="${rx.followUpDate||''}"></div>
     <button class="btn btn-outline btn-block" id="btnScheduleFollowUp" style="margin-bottom:8px;">${icon('calendar',15)} Schedule Follow-up on Calendar</button>
@@ -23247,6 +24113,8 @@ function renderRxFormSheet(rx, clinics, isEdit, patient, doctors, rxTemplates){
   `);
   wireFormBack(goBack);
   wireDoctorSelect("rxDoctor");
+  rxFormRerender = renderRxItems;
+  document.getElementById("btnAiRxCheck").onclick = ()=> openAiRxCheck(patient);
   renderRxItems();
   document.getElementById("rxTemplateSelect").onchange = (ev)=>{
     const idx = ev.target.value;
@@ -23347,10 +24215,15 @@ async function saveRx(rx, patient){
     diagnosis: document.getElementById("rxDiagnosis").value.trim(),
     advice: document.getElementById("rxAdvice").value.trim(),
     followUpDate: document.getElementById("rxFollowUp").value,
+    patientWeight: (document.getElementById("rxWeight")||{}).value || rx.patientWeight || "",
     items: rxItemsDraft,
     updatedAt: nowIso()
   });
   await dbPut("prescriptions", updated);
+  if(updated.patientWeight && String(updated.patientWeight)!==String(patient.weight||"")){
+    const fresh = (await dbGetAll("patients")).find(x=>x.id===patient.id);
+    if(fresh){ fresh.weight = updated.patientWeight; fresh.weightUpdatedAt = nowIso(); await dbPut("patients", fresh); patient.weight = updated.patientWeight; }
+  }
   logActivity("Saved prescription for "+patient.name+" ("+rxItemsDraft.length+" medicines)", {patientId:patient.id});
   showToast("Prescription saved");
   closeSheetOrReturn();
@@ -24742,6 +25615,7 @@ async function openQuickOpdForm(patient){
         <div class="qopd-chevron">${icon('chevron',18)}</div>
       </div>
       <div class="qopd-section-body">
+        ${aiBtnHtml("btnQopdAiNotes","Write Notes with AI","width:100%;margin-bottom:12px;")}
         <div class="field">
           <label>Chief Complaint</label>
           <div class="chip-wrap" id="qopdCcChips"></div>
@@ -24870,6 +25744,7 @@ async function openQuickOpdForm(patient){
   wireCommaAutosuggest(document.getElementById("qopdDiagnosis"), diagPresets);
 
   await wireChiefComplaintChips("qopdCcChips", "qopdChiefComplaint");
+  document.getElementById("btnQopdAiNotes").onclick = ()=> openAiNotesSheet(patient, {chiefComplaint:"qopdChiefComplaint", observations:"qopdObservations", diagnosis:"qopdDiagnosis", investigations:"qopdInvestigations", treatmentAdvised:"qopdTreatmentAdvised"}, "qopdObservations");
   document.querySelectorAll("#qopdCcChips [data-cc-none]").forEach(chip=>{
     chip.onclick = ()=>{
       const ta = document.getElementById("qopdChiefComplaint");
@@ -26075,6 +26950,7 @@ async function publishTreatmentPlanLink(plan, patient){
       }),
       gross: totals.gross, discount: totals.discount, total: totals.final,
       notes: plan.notes||"",
+      explanation: plan.patientExplanation||"",
       createdAt: nowIso(), updatedAt: nowIso()
     };
     await window.__fb.put("publicTreatmentPlans", snapshot);
@@ -26102,6 +26978,54 @@ async function openTreatmentPlanLinkComposer(plan, patient){
     toName: patient.name, toNumber: number, patientId: patient.id, title:"Treatment Plan On WhatsApp",
     message, templateName, templateParams:[patient.name, link],
     onSent: ()=> logActivity("Treatment plan link sent to "+patient.name, {patientId: patient.id})
+  });
+}
+
+// ---- Pre/post-op instructions link. WhatsApp caps a template message at
+// 1024 characters, so full instructions don't fit inside {{2}}. Instead the
+// full text is published to "publicInstructions" under an unguessable token
+// and {{2}} carries a short line + the link; instructions.html shows it as a
+// clean page the patient can read, save or print.
+async function publishInstructionsLink(patient, type, title, body){
+  try{
+    const st = (await dbGetAll("settings"))[0] || {};
+    const custom = (st.instructionsPageUrl||"").trim();
+    const base = custom || (/^https?:/i.test(location.origin) ? location.origin + "/instructions.html" : "");
+    if(!base){ showToast("Open the PMS from its website address to create instruction links"); return null; }
+    const clinics = await dbGetAll("clinics");
+    const clinic = clinics.find(c=>c.id===patient.preferredClinicId) || clinics[0] || {};
+    const token = newReceiptToken();
+    await window.__fb.put("publicInstructions", {
+      id: token, type: type==="pre"?"pre":"post", title: title||"", body: body||"",
+      patientName: patient.name||"",
+      clinicName: (clinic.name||"Healing Touch Dental").replace("Healing Touch Dental – ","Healing Touch Dental — "),
+      clinicAddress: clinic.address||"", clinicPhone: clinic.phone||"",
+      clinicLogo: (clinic.logo && clinic.logo.length<150000) ? clinic.logo : "",
+      createdAt: nowIso()
+    });
+    return base + (base.includes("?")?"&":"?") + "t=" + token;
+  }catch(err){
+    console.error("publishInstructionsLink failed:", err);
+    showToast("Couldn't create the instructions link: "+((err&&err.message)||"error")+" (check the Firestore rule for publicInstructions)");
+    return null;
+  }
+}
+// One place every pre/post-op WhatsApp goes through (Send Instructions,
+// Communication, AI instructions). {{1}} name, {{2}} short line + link.
+async function sendInstructionsWhatsApp(patient, type, title, body){
+  const number = patient.whatsappNumber||patient.mobile;
+  if(!number){ showToast("No WhatsApp/mobile number on file for "+patient.name); return; }
+  const link = await publishInstructionsLink(patient, type, title, body);
+  if(!link) return;
+  const kind = type==="pre" ? "pre-operative" : "post-operative";
+  const param2 = `Your ${kind} instructions${title? " for "+title : ""} are here: ${link}`;
+  openWhatsAppComposer({
+    toName: patient.name, toNumber: number, patientId: patient.id,
+    title: (type==="pre"?"Pre-Op":"Post-Op")+" Instructions",
+    message: `Hi ${patient.name},\n\nPlease read your ${kind} instructions${title? " for "+title : ""} here: ${link}\n\n— Healing Touch Dental`,
+    templateName: type==="pre" ? "pre_operative" : "post_operative",
+    templateParams: [patient.name||"Patient", param2],
+    onSent: ()=> logActivity("Sent "+kind+" instructions"+(title? " ("+title+")":"")+" link to "+patient.name, {patientId: patient.id})
   });
 }
 
@@ -27284,6 +28208,7 @@ async function renderAdminPanel(){
       { label:"Print Setting", icon:"print", action: openPrintSettingsSheet },
       { label:"Personalize Setting", icon:"settings", action: openSettingsSheet },
       { label:"Recycle Bin", icon:"trash", action: openTrashSheet },
+      { label:"Move Files to Cloud Storage", icon:"backup", action: openMoveFilesToStorageSheet },
       { label:"Dynamic Consent Form", icon:"file", action: openConsentTemplatesSheet },
       { label:"Users Activity Log", icon:"reports", action: openActivityLogSheet },
       { label:"Repair Clinic Tags", icon:"clinic", action: openRepairClinicTagsSheet },
@@ -27752,7 +28677,7 @@ function openPharmacyBillActionMenu(sale, cur){
     else showToast("Add this sale to a registered patient to email their bill");
   };
   document.getElementById("pbmDelete").onclick = async ()=>{
-    if(!confirm("Delete this pharmacy bill? This cannot be undone.")) return;
+    if(!confirm("Delete this pharmacy bill? It will be moved to Trash and can be restored.")) return;
     await dbDelete("pharmacySales", sale.id);
     logActivity("Deleted pharmacy bill "+(sale.billNumber||sale.id));
     showToast("Deleted");
@@ -30638,64 +31563,220 @@ async function openSettingsSheet(){
   };
 }
 
-// ---- Trash (placeholder view, real deletes come with later modules) ----
+// ---- Trash / Recycle Bin ----
+// Everything important that gets deleted lands here (see dbDelete). Admin
+// can restore it exactly as it was, or delete it forever. Items older than
+// 60 days are cleared automatically when Trash is opened.
+const TRASH_KEEP_DAYS = 60;
+let trashFilter = "All", trashSearch = "";
+const TRASH_GROUPS = {
+  "Patients": ["patients"],
+  "Appointments": ["appointments","commitments"],
+  "Clinical": ["treatmentPlans","prescriptions","examinations","clinicalSummaries","dentalCharts","endoCases","implantCases","prosthoCases","prostheticCases","perioCharts","oralSurgeryCases","oralMedRecords","pediatricRecords","aiCrsAssessments","alignerCases","bracesCases","orthoDiagnosisRecords","patientNotes","clinicalNotes","voiceNotes","consents","referrals"],
+  "Billing": ["invoices","payments","paymentsDue","refunds","insuranceClaims","pharmacySales"],
+  "Files": ["xrays","patientDocuments","prePostOpPhotos","photos"],
+  "Lab": ["labCases","labs"],
+};
+function trashGroupOf(store){ for(const g in TRASH_GROUPS) if(TRASH_GROUPS[g].includes(store)) return g; return "Other"; }
 async function openTrashSheet(){
-  if(!currentUserIsAdmin){
-    showToast("Only the admin account can open Trash");
-    return;
-  }
-  const items = await dbGetAll("trash");
-  openSheet(`
-    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
-    <h2>Trash</h2>
-    <p>Deleted clinical records will be moved here for recovery once those modules exist. Nothing to show yet.</p>
-    <div class="list-card">
-      ${items.length? items.map(i=>`<div class="list-row"><span class="txt">${escapeHtml(i.label||i.id)}</span></div>`).join("")
-        : '<div class="list-row"><span class="txt" style="color:var(--grey);">Trash is empty.</span></div>'}
+  if(!currentUserIsAdmin){ showToast("Only the admin account can open Trash"); return; }
+  let items = [];
+  try{ items = await window.__fb.getAll("trash"); }catch(e){ showToast("Couldn't open Trash: "+e.message); return; }
+  // auto-clean
+  const cutoff = Date.now() - TRASH_KEEP_DAYS*86400000;
+  const old = items.filter(t=> t.deletedAt && new Date(t.deletedAt).getTime() < cutoff);
+  for(const t of old){ await window.__fb.delete("trash", t.id).catch(()=>{}); }
+  items = items.filter(t=> !old.includes(t)).sort((a,b)=> new Date(b.deletedAt||0)-new Date(a.deletedAt||0));
+  const groups = ["All","Patients","Appointments","Clinical","Billing","Files","Lab","Other"];
+  const counts = {All: items.length}; items.forEach(t=>{ const g = trashGroupOf(t.store); counts[g] = (counts[g]||0)+1; });
+  let shown = trashFilter==="All" ? items : items.filter(t=> trashGroupOf(t.store)===trashFilter);
+  const nq = normalizeStr(trashSearch);
+  if(nq) shown = shown.filter(t=> normalizeStr(t.label).includes(nq) || normalizeStr(t.patientName).includes(nq) || normalizeStr(t.type).includes(nq));
+  renderFormAsPage(`
+    <h2>${icon('trash',20)} Recycle Bin</h2>
+    <p style="margin-bottom:10px;">Deleted records stay here for ${TRASH_KEEP_DAYS} days — restore them exactly as they were, or delete forever.</p>
+    <div class="search-bar" style="margin-bottom:8px;">
+      <span class="icon-btn" style="background:none;color:var(--grey);">${icon('search',18)}</span>
+      <input id="trashSearch" placeholder="Search patient, invoice, treatment…" value="${escapeAttr(trashSearch)}">
     </div>
+    <div class="filter-row" style="flex-wrap:wrap;overflow-x:visible;margin-bottom:10px;">
+      ${groups.filter(g=> g==="All" || counts[g]).map(g=>`<div class="filter-chip ${trashFilter===g?'active':''}" data-tg="${g}">${g}${counts[g]? " ("+counts[g]+")":""}</div>`).join("")}
+    </div>
+    ${shown.length? `<div class="list-card">${shown.map(t=>`
+      <div class="trash-row">
+        <div class="trash-main">
+          <div class="name">${escapeHtml(t.label||"Record")}</div>
+          <div class="addr"><span class="status-pill" style="margin-right:6px;">${escapeHtml(t.type||t.store)}</span>Deleted ${t.deletedAt? new Date(t.deletedAt).toLocaleString():""}${t.deletedBy? " · by "+escapeHtml(t.deletedBy):""}</div>
+        </div>
+        <div class="trash-acts">
+          <button class="btn btn-primary btn-sm" data-trestore="${t.id}">${icon('refresh',13)} Restore</button>
+          <button class="btn btn-outline btn-sm" data-tdel="${t.id}" style="color:var(--red);border-color:var(--red);">${icon('trash',13)}</button>
+        </div>
+      </div>`).join("")}</div>` : `<div class="empty-card"><b>Trash is empty</b>${items.length? "Nothing matches this filter." : "Deleted patients, appointments, treatments, invoices, payments, X-rays and other records will appear here."}</div>`}
+    ${items.length? `<button class="btn btn-outline btn-block" id="btnEmptyTrash" style="margin-top:14px;color:var(--red);border-color:var(--red);">${icon('trash',15)} Empty Trash (${items.length})</button>`:""}
   `);
+  wireFormBack(()=> goTo("more"));
+  document.getElementById("trashSearch").oninput = (e)=>{ trashSearch = e.target.value; clearTimeout(window.__trashT); window.__trashT = setTimeout(()=>{ openTrashSheet().then(()=>{ const el = document.getElementById("trashSearch"); if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); } }); }, 250); };
+  document.querySelectorAll("[data-tg]").forEach(el=> el.onclick = ()=>{ trashFilter = el.dataset.tg; openTrashSheet(); });
+  document.querySelectorAll("[data-trestore]").forEach(b=> b.onclick = ()=> restoreTrashItem(items.find(t=>t.id===b.dataset.trestore), items));
+  document.querySelectorAll("[data-tdel]").forEach(b=> b.onclick = async ()=>{
+    const t = items.find(x=>x.id===b.dataset.tdel);
+    if(!confirm(`Delete "${t.label}" forever? This cannot be undone.`)) return;
+    await window.__fb.delete("trash", t.id);
+    logActivity("Permanently deleted from Trash: "+t.type+" — "+t.label);
+    showToast("Deleted forever"); openTrashSheet();
+  });
+  const emptyBtn = document.getElementById("btnEmptyTrash");
+  if(emptyBtn) emptyBtn.onclick = async ()=>{
+    if(!confirm(`Permanently delete all ${items.length} item(s) in Trash? This cannot be undone.`)) return;
+    emptyBtn.disabled = true;
+    for(const t of items) await window.__fb.delete("trash", t.id).catch(()=>{});
+    logActivity("Emptied Trash ("+items.length+" items)");
+    showToast("Trash emptied"); openTrashSheet();
+  };
+}
+async function restoreTrashItem(t, allItems){
+  if(!t) return;
+  // A patient deleted together with their records: offer to bring all back.
+  let related = [];
+  if(t.store==="patients"){
+    const at = new Date(t.deletedAt).getTime();
+    related = allItems.filter(x=> x.id!==t.id && x.patientId===t.recordId && Math.abs(new Date(x.deletedAt).getTime()-at) < 5*60000);
+  }
+  let restoreList = [t];
+  if(related.length && confirm(`Also restore ${related.length} record(s) deleted along with ${t.patientName||"this patient"}?`)) restoreList = restoreList.concat(related);
+  for(const item of restoreList){
+    try{
+      const existing = await window.__fb.get(item.store, item.recordId);
+      if(existing && !confirm(`A ${item.type} with the same ID already exists ("${item.label}"). Replace it with the deleted copy?`)) continue;
+      const data = Object.assign({}, item.data, {id: item.recordId, restoredAt: nowIso()});
+      await window.__fb.put(item.store, data);
+      // Payments: put the amount back on the invoice and in Finance.
+      if(item.store==="payments" && data.invoiceId){
+        const inv = await window.__fb.get("invoices", data.invoiceId);
+        if(inv){ inv.amountPaid = (Number(inv.amountPaid)||0) + (Number(data.amount)||0); inv.balance = Math.max(0,(Number(inv.totalNet)||0) - inv.amountPaid); await window.__fb.put("invoices", inv); }
+      }
+      if(item.store==="payments"){ try{ const pt = data.patientId? await window.__fb.get("patients", data.patientId) : null; await syncPaymentToIncomeTransaction(data, pt); }catch(e){} }
+      await window.__fb.delete("trash", item.id);
+      logActivity("Restored from Trash: "+item.type+" — "+item.label, item.patientId? {patientId:item.patientId} : {});
+    }catch(e){ showToast("Couldn't restore "+item.label+": "+e.message); }
+  }
+  showToast(restoreList.length>1? restoreList.length+" records restored" : "Restored");
+  openTrashSheet();
 }
 
 // ---------------------------------------------------------
 // Backup / Restore
 // ---------------------------------------------------------
-async function doBackup(){
-  if(!currentUserIsAdmin){
-    showToast("Only the admin account can create a backup");
-    return;
+// Backup — rebuilt so it can't silently fail:
+//  • each store is read separately (one failing store no longer aborts the
+//    whole backup — it's listed at the end instead), with live progress;
+//  • two sizes: "Data only" leaves out the heavy X-ray / photo / document
+//    images (small, quick file — safe to take daily), "Full" includes them;
+//  • compact JSON (the old pretty-printed file was several times larger);
+//  • saving works on desktop (Save dialog / download) and on phones
+//    (share sheet → Save to Files / Drive / WhatsApp), with a manual
+//    "tap to save" link if the browser blocks the automatic download.
+const BACKUP_EXTRA_STORES = ["biannualFollowUpActions", "onlineBookings", "financeTransactions", "consultants", "consultantPayments", "labCases", "settings", "activityLog"];
+const BACKUP_OMIT = "__HTD_FILE_OMITTED__";
+function backupStoreNames(){
+  const names = STORE_DEFS.map(d=>d.name).concat(BACKUP_EXTRA_STORES);
+  return [...new Set(names)];
+}
+// Replace big embedded files (data: URLs over ~20 KB) with a marker.
+function stripBackupFiles(v){
+  if(typeof v==="string") return (v.startsWith("data:") && v.length>20000) ? BACKUP_OMIT : v;
+  if(Array.isArray(v)) return v.map(stripBackupFiles);
+  if(v && typeof v==="object"){ const o = {}; for(const k in v) o[k] = stripBackupFiles(v[k]); return o; }
+  return v;
+}
+// On restore of a data-only backup, put the existing files back where the marker is.
+function mergeOmittedFiles(row, existing){
+  if(row===BACKUP_OMIT) return existing!==undefined ? existing : null;
+  if(Array.isArray(row)) return row.map((x,i)=> mergeOmittedFiles(x, Array.isArray(existing)? existing[i] : undefined));
+  if(row && typeof row==="object"){ const o = {}; for(const k in row) o[k] = mergeOmittedFiles(row[k], existing && typeof existing==="object" ? existing[k] : undefined); return o; }
+  return row;
+}
+async function saveBackupBlob(blob, fileName){
+  // 1. Desktop Chrome/Edge: real "Save as" dialog.
+  if(window.showSaveFilePicker && !/Android|iPhone|iPad/i.test(navigator.userAgent)){
+    try{
+      const h = await window.showSaveFilePicker({ suggestedName: fileName, types:[{description:"Backup", accept:{"application/json":[".json"]}}] });
+      const w = await h.createWritable(); await w.write(blob); await w.close();
+      return "saved";
+    }catch(e){ if(e && e.name==="AbortError") return "cancelled"; }
+  }
+  // 2. Phones: share sheet (Save to Files / Google Drive / WhatsApp to self).
+  try{
+    const file = new File([blob], fileName, {type:"application/json"});
+    if(/Android|iPhone|iPad/i.test(navigator.userAgent) && navigator.canShare && navigator.canShare({files:[file]})){
+      await navigator.share({ files:[file], title: fileName });
+      return "saved";
+    }
+  }catch(e){ if(e && e.name==="AbortError") return "cancelled"; }
+  // 3. Ordinary download.
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = fileName; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 120000);
+  return {url};
+}
+function doBackup(){
+  if(!currentUserIsAdmin){ showToast("Only the admin account can create a backup"); return; }
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>Backup Now</h2>
+    <p style="margin-bottom:12px;">Downloads a copy of the PMS data to this device. Keep it somewhere safe (Google Drive / pen drive).</p>
+    <button class="btn btn-primary btn-block" id="bkData">${icon('backup',15)} Data Backup <span style="font-weight:400;">(quick — without X-ray/photo files)</span></button>
+    <button class="btn btn-outline btn-block" id="bkFull" style="margin-top:8px;">${icon('image',15)} Full Backup <span style="font-weight:400;">(includes X-rays, photos, documents — large)</span></button>
+    <div id="bkProgress" style="margin-top:14px;"></div>
+  `);
+  document.getElementById("bkData").onclick = ()=> runBackup(false);
+  document.getElementById("bkFull").onclick = ()=> runBackup(true);
+}
+async function runBackup(includeFiles){
+  const prog = document.getElementById("bkProgress");
+  const btns = [document.getElementById("bkData"), document.getElementById("bkFull")];
+  btns.forEach(b=> b && (b.disabled = true));
+  const say = (h)=>{ if(prog) prog.innerHTML = h; };
+  const names = backupStoreNames();
+  const data = {}, failed = [];
+  let total = 0, omitted = 0;
+  for(let i=0;i<names.length;i++){
+    say(`<div class="ai-loading"><span class="ai-spin"></span> Reading ${escapeHtml(names[i])}… (${i+1} of ${names.length})</div>`);
+    try{
+      let rows = await window.__fb.getAll(names[i]);   // unfiltered, whatever clinic is selected
+      if(!includeFiles){
+        rows = rows.map(r=>{ const x = stripBackupFiles(r); if(JSON.stringify(x).includes(BACKUP_OMIT)) omitted++; return x; });
+      }
+      data[names[i]] = rows; total += rows.length;
+    }catch(e){ failed.push(names[i]+" ("+((e&&e.message)||"error")+")"); }
   }
   try{
-    const data = {};
-    for(const def of STORE_DEFS){
-      data[def.name] = await dbGetAll(def.name);
-    }
-    const payload = {
-      app:"Healing Touch Dental PMS",
-      exportedAt: nowIso(),
-      dbVersion: DB_VERSION,
-      note:"This is a data-only backup (Phase 1). Media/attachment blobs will be included once those modules are built.",
-      data
-    };
-    const blob = new Blob([JSON.stringify(payload,null,2)], {type:"application/json"});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    const stamp = new Date().toISOString().slice(0,19).replace(/[:T]/g,"-");
-    a.href = url;
-    a.download = `HealingTouchDental-Backup-${stamp}.json`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(()=>URL.revokeObjectURL(url), 4000);
-
-    const s = (await dbGetAll("settings"))[0];
-    if(s){ s.lastBackupAt = nowIso(); await dbPut("settings", s); }
-    logActivity("Backup exported");
-    showToast("Backup downloaded");
-    if(currentPage==="home") renderHome();
+    say(`<div class="ai-loading"><span class="ai-spin"></span> Creating file…</div>`);
+    const payload = { app:"Healing Touch Dental PMS", exportedAt: nowIso(), dbVersion: DB_VERSION, dataOnly: !includeFiles, recordCount: total, failedStores: failed, data };
+    const blob = new Blob([JSON.stringify(payload)], {type:"application/json"});
+    const stamp = new Date().toISOString().slice(0,16).replace(/[:T]/g,"-");
+    const fileName = `HTD-${includeFiles?"Full":"Data"}-Backup-${stamp}.json`;
+    const mb = (blob.size/1048576).toFixed(1);
+    const result = await saveBackupBlob(blob, fileName);
+    if(result==="cancelled"){ say(`<div class="warn-banner">Backup cancelled — nothing was saved.</div>`); btns.forEach(b=> b && (b.disabled=false)); return; }
+    const rows = await dbGetAll("settings");
+    const st = rows[0];
+    if(st){ st.lastBackupAt = nowIso(); st.lastBackupType = includeFiles? "Full":"Data"; await dbPut("settings", st); }
+    logActivity((includeFiles?"Full":"Data")+" backup exported ("+total+" records, "+mb+" MB)");
+    say(`
+      <div class="ai-verdict ok"><b>✓ Backup ready — ${total.toLocaleString()} records, ${mb} MB</b>
+        ${!includeFiles && omitted? `<div>${omitted} record(s) had X-ray/photo files left out — use Full Backup for those.</div>`:""}
+        ${result && result.url? `<div style="margin-top:6px;">If it didn't download automatically, <a href="${result.url}" download="${fileName}" style="color:var(--green);font-weight:700;">tap here to save ${fileName}</a>.</div>`:""}
+      </div>
+      ${failed.length? `<div class="warn-banner" style="margin-top:8px;">Couldn't read: ${escapeHtml(failed.join(", "))}. Everything else is in the file.</div>`:""}`);
+    if(currentPage==="home"){ const l = document.getElementById("backupStatusLine"); if(l) l.textContent = "Last backup: "+new Date().toLocaleString(); }
   }catch(err){
     console.error(err);
-    showToast("Backup failed — see console for details");
+    say(`<div class="warn-banner" style="border-color:var(--red);color:var(--red);">Backup failed: ${escapeHtml((err&&err.message)||String(err))}${includeFiles? " — the Full Backup may be too large for this device; try Data Backup.":""}</div>`);
   }
+  btns.forEach(b=> b && (b.disabled = false));
 }
 
 function openRestoreSheet(){
@@ -30706,7 +31787,7 @@ function openRestoreSheet(){
   openSheet(`
     <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
     <h2>Restore from Backup</h2>
-    <p><b style="color:var(--red);">This will overwrite your current data</b> for every store present in the backup file, after you confirm. Choose the JSON file exported by Backup Now.</p>
+    <p><b style="color:var(--red);">This will overwrite your current data</b> for every store present in the backup file, after you confirm. Choose the JSON file exported by Backup Now. (Restoring a Data Backup keeps the X-ray/photo files already in the PMS.)</p>
     <div class="field"><input type="file" id="restoreFile" accept="application/json"></div>
     <div id="restoreSummary"></div>
     <button class="btn btn-primary btn-block" id="btnConfirmRestore" disabled>Confirm Restore</button>
@@ -30737,11 +31818,16 @@ function openRestoreSheet(){
   document.getElementById("btnConfirmRestore").onclick = async ()=>{
     if(!parsed) return;
     if(!confirm("This overwrites current data for the stores included in this backup. Continue?")) return;
+    const allowed = new Set(backupStoreNames());
     for(const [storeName, rows] of Object.entries(parsed.data)){
-      if(!STORE_DEFS.find(d=>d.name===storeName)) continue;
+      if(!allowed.has(storeName) || !Array.isArray(rows)) continue;
+      // A data-only backup has X-ray/photo files left out: keep the files
+      // already in the PMS rather than wiping them.
+      let existingById = {};
+      if(parsed.dataOnly){ try{ (await window.__fb.getAll(storeName)).forEach(r=> existingById[r.id] = r); }catch(e){} }
       await dbClear(storeName);
       for(const row of rows){
-        await dbPut(storeName, row);
+        await dbPut(storeName, parsed.dataOnly ? mergeOmittedFiles(row, existingById[row.id]) : row);
       }
     }
     logActivity("Backup restored from file");
@@ -31471,6 +32557,7 @@ const ICON_PATHS = {
   image: `<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="8.5" cy="9.5" r="1.6"/><path d="M4 17l5.5-5.5 3 3L18 9.5l2 2"/>`,
   camera: `<path d="M4 8.5h3.2L8.6 6h6.8l1.4 2.5H20a1 1 0 0 1 1 1V18a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9.5a1 1 0 0 1 1-1Z"/><circle cx="12" cy="13.2" r="3.3"/>`,
   shield: `<path d="M12 3.2 19 6v6c0 4.6-3 8.2-7 9.3-4-1.1-7-4.7-7-9.3V6l7-2.8Z"/><path d="M8.7 12.1l2.2 2.2 4.4-4.6"/>`,
+  sparkle: `<path d="M12 3.5l1.7 4.6 4.6 1.7-4.6 1.7L12 16.1l-1.7-4.6-4.6-1.7 4.6-1.7L12 3.5Z"/><path d="M18.5 15l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7.7-1.8Z"/><path d="M5.5 15.5l.5 1.3 1.3.5-1.3.5-.5 1.3-.5-1.3-1.3-.5 1.3-.5.5-1.3Z"/>`,
   pin: `<path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11Z"/><circle cx="12" cy="10" r="2.4"/>`,
   note: `<path d="M6 3.5h9l3.5 3.5V20a.5.5 0 0 1-.5.5H6a.5.5 0 0 1-.5-.5V4a.5.5 0 0 1 .5-.5Z"/><path d="M14.5 3.5V7.5h4"/><path d="M8.5 12h7M8.5 15.5h5"/>`,
   cake: `<path d="M4 20h16v-7a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7Z"/><path d="M4 15.5c1.3 1 2.7 1 4 0s2.7-1 4 0 2.7 1 4 0 2.7-1 4 0"/><path d="M12 11V8"/><path d="M12 5.2c.8.8.8 1.8 0 2.4-.8-.6-.8-1.6 0-2.4Z"/>`,
@@ -31554,6 +32641,7 @@ async function refreshAccessForCurrentUser(){
   sessionPoppedBookingNotifIds = new Set();
   await checkForNewOnlineBookings().catch(()=>{});
   goTo("home");
+  startAutoReminderWatch();
 }
 
 setupLogin(async function boot(){
@@ -31586,6 +32674,7 @@ setupLogin(async function boot(){
     await refreshMedicinePresetsDatalist();
     await refreshRxFieldDatalists();
     goTo("home");
+    startAutoReminderWatch();
 
     // periodic overdue/backup check while app stays open
     setInterval(async ()=>{
