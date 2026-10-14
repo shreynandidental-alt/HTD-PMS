@@ -8750,7 +8750,7 @@ async function openReminderTodaySheet(todayAppts){
     <h2>Reminder Today</h2>
     <p style="margin-bottom:12px;">Sends the "appointment_reminder" WhatsApp template via <b>${escapeHtml(provider.label)}</b> to patients scheduled today. Cancelled, no-show and completed appointments are left out.</p>
     ${sorted.length? `
-      ${isWaWeb? `<div class="warn-banner" style="margin-bottom:10px;">WhatsApp Mobile/Web is the active provider, so each reminder opens a chat for you to send — tap Send on each row. Switch to Interakt in Communication Settings for automatic sending.</div>`
+      ${isWaWeb? `<div class="warn-banner" style="margin-bottom:10px;">WhatsApp Mobile/Web is the active provider, so each reminder opens a chat for you to send — tap Send on each row. Switch to WhatsApp Business API (Direct) in Communication Settings for automatic sending.</div>`
         : `<button class="btn btn-primary btn-block" id="btnRemindAllToday" style="margin-bottom:10px;">${icon('message',15)} Send to All (<span id="remindAllCount">${pendingCount()}</span>)</button>`}
       <div class="list-card">${sorted.map(a=>{
         const {name, number} = rowInfo(a);
@@ -8875,7 +8875,7 @@ class WhatsAppWebProvider extends CommunicationProvider {
 // Access Token and Phone Number ID are saved there, every call returns
 // "Not Configured" — the exact same safe no-op as before.
 class MetaCloudProvider extends CommunicationProvider {
-  constructor(){ super("meta_cloud", "Meta Cloud API"); }
+  constructor(){ super("meta_cloud", "Meta Cloud API (old browser method)"); }
   async _getConfig(){
     const s = (await dbGetAll("settings"))[0] || {};
     return {
@@ -8991,7 +8991,7 @@ function labCasePatientPromisedDateText(lc){
 }
 
 class InteraktProvider extends CommunicationProvider {
-  constructor(){ super("interakt", "Interakt"); }
+  constructor(){ super("interakt", "WhatsApp Business API (Direct)"); }
   async _getConfig(){
     const s = (await dbGetAll("settings"))[0] || {};
     return { defaultCountryCode: (s.interaktDefaultCountryCode||"+91").trim() };
@@ -9012,7 +9012,7 @@ class InteraktProvider extends CommunicationProvider {
   }
   async sendTemplate(opts){
     if(!opts.toNumber) return {success:false, error:"No WhatsApp/mobile number on file"};
-    if(!opts.templateName) return {success:false, error:"No approved Interakt template name given for this message"};
+    if(!opts.templateName) return {success:false, error:"No approved WhatsApp template name given for this message"};
     const cfg = await this._getConfig();
     return this._post({
       countryCode: cfg.defaultCountryCode, phoneNumber: sanitizePhone(opts.toNumber),
@@ -9035,9 +9035,9 @@ class InteraktProvider extends CommunicationProvider {
     try{
       const res = await fetch("/api/test-whatsapp", { method:"POST" });
       const data = await res.json().catch(()=>({}));
-      if(!data.configured) return {success:false, error: data.error || "INTERAKT_API_KEY isn't set on the server yet."};
+      if(!data.configured) return {success:false, error: data.error || "WhatsApp isn't configured on the server yet."};
       if(!data.success) return {success:false, error: data.error || "Connection failed"};
-      return {success:true, error:null};
+      return {success:true, error:null, backend: data.backend||null, number: data.number||null, name: data.name||null, quality: data.quality||null};
     }catch(err){
       return {success:false, error:(err&&err.message)||"Couldn't reach the app's own backend (api/test-whatsapp) — is it deployed?"};
     }
@@ -10171,7 +10171,7 @@ async function openCommunicationSettingsSheet(){
       </select>
     </div>
     <button class="btn btn-primary btn-block" id="btnSaveCommProvider" style="margin-bottom:8px;">Save</button>
-    <button class="btn btn-outline btn-block" id="btnConfigureInterakt" style="margin-bottom:8px;">${icon('settings',15)} Configure Interakt</button>
+    <button class="btn btn-outline btn-block" id="btnConfigureInterakt" style="margin-bottom:8px;">${icon('settings',15)} Configure WhatsApp Business API</button>
     <button class="btn btn-outline btn-block" id="btnConfigureMeta">${icon('settings',15)} Configure Meta Cloud API ${metaConfigured? '(Configured)' : '(Not Configured)'}</button>
     <p style="margin-top:8px;">This is where you register your WhatsApp Business API credentials whenever you're ready — you can add or change these any time after the app is live, right from here, with nothing else needing to change.</p>
   `);
@@ -10191,17 +10191,25 @@ async function openCommunicationSettingsSheet(){
 // in Settings/Firestore instead would put it within reach of anyone who
 // can read this app's data or open browser dev tools, which is exactly
 // what a Secret Key must never be exposed to.
+function waConnectedText(r){
+  if(r && r.backend==="meta"){
+    const bits = [r.number, r.name].filter(Boolean).join(" · ");
+    return "Connected directly to Meta WhatsApp API" + (bits? " — "+bits : "") + (r.quality? " (quality: "+r.quality+")" : "") + ".";
+  }
+  if(r && r.backend==="interakt") return "Connected — but still sending through Interakt. Add WA_ACCESS_TOKEN and WA_PHONE_NUMBER_ID in Vercel to switch to direct.";
+  return "WhatsApp connection successful.";
+}
 async function openInteraktConfigSheet(){
   const s = (await dbGetAll("settings"))[0] || {id:"main"};
   openSheet(`
     <button class="sheet-close" onclick="openCommunicationSettingsSheet()">${icon('close',18)}</button>
-    <h2>Configure Interakt</h2>
-    <p style="margin-bottom:12px;">Your Interakt Secret Key is kept on the server, not here — add it once in your Vercel project's Environment Variables as <b>INTERAKT_API_KEY</b> (find the key itself in Interakt: Settings → Developer Settings → Secret Key), then redeploy. Nothing below ever touches or stores that key.</p>
+    <h2>Configure WhatsApp Business API</h2>
+    <p style="margin-bottom:12px;">Messages go directly through Meta's WhatsApp Cloud API — no Interakt or other middleman. Your access token is kept on the server, not here: add <b>WA_ACCESS_TOKEN</b> and <b>WA_PHONE_NUMBER_ID</b> once in your Vercel project's Environment Variables, then redeploy. Your existing approved templates keep working under the same names. Nothing below ever touches or stores the token.</p>
     <div id="interaktStatusLine" style="margin-bottom:12px;color:var(--grey);">Checking status…</div>
     <div class="field"><label>Default Country Code</label><input id="interaktCountryCode" value="${escapeAttr(s.interaktDefaultCountryCode||'+91')}" placeholder="e.g. +91"></div>
     <p style="margin-top:-8px;">Used whenever a patient's number is stored without one.</p>
-    <div class="field"><label>Receipt Template Name (Interakt code name)</label><input id="interaktReceiptTemplate" value="${escapeAttr(s.interaktReceiptTemplate||'payment_receipt')}" placeholder="e.g. payment_receipt"></div>
-    <div class="field"><label>Treatment Plan Template Name (Interakt code name)</label><input id="interaktPlanTemplate" value="${escapeAttr(s.interaktPlanTemplate||'treatment_estimate')}" placeholder="e.g. treatment_estimate"></div>
+    <div class="field"><label>Receipt Template Name</label><input id="interaktReceiptTemplate" value="${escapeAttr(s.interaktReceiptTemplate||'payment_receipt')}" placeholder="e.g. payment_receipt"></div>
+    <div class="field"><label>Treatment Plan Template Name</label><input id="interaktPlanTemplate" value="${escapeAttr(s.interaktPlanTemplate||'treatment_estimate')}" placeholder="e.g. treatment_estimate"></div>
     <p style="margin-top:-8px;">Approved template with 4 body values: 1 Patient name, 2 Amount (number only, the template already has the ₹), 3 Date, 4 Receipt link.</p>
     <div class="field"><label>Receipt Page Address (optional)</label><input id="receiptPageUrl" value="${escapeAttr(s.receiptPageUrl||'')}" placeholder="Leave blank to use this site's /receipt.html"></div>
     <p style="margin-top:-8px;">Firestore rule needed once: <code>match /publicReceipts/{token} { allow get: if true; allow list: if false; allow create, update, delete: if request.auth != null; }</code> — and the same for <code>/publicTreatmentPlans/{token}</code> (treatment plan links) and <code>/publicInstructions/{token}</code> (pre/post-op instruction links).</p>
@@ -10216,7 +10224,7 @@ async function openInteraktConfigSheet(){
   (async ()=>{
     const result = await provider.testConnection();
     statusLine.innerHTML = result.success
-      ? `<span style="color:var(--green);">✓ Interakt WhatsApp connection successful.</span>`
+      ? `<span style="color:var(--green);">✓ ${escapeHtml(waConnectedText(result))}</span>`
       : `<span style="color:var(--red);">${escapeHtml(result.error||"Not connected yet")}</span>`;
   })();
   document.getElementById("btnSaveInteraktConfig").onclick = async ()=>{
@@ -10232,16 +10240,16 @@ async function openInteraktConfigSheet(){
     resultEl.innerHTML = `<p style="color:var(--grey);">Testing…</p>`;
     const result = await provider.testConnection();
     resultEl.innerHTML = result.success
-      ? `<div class="warn-banner" style="border-color:var(--green);color:var(--green);">Interakt WhatsApp connection successful.</div>`
+      ? `<div class="warn-banner" style="border-color:var(--green);color:var(--green);">${escapeHtml(waConnectedText(result))}</div>`
       : `<div class="warn-banner" style="border-color:var(--red);color:var(--red);">${escapeHtml(result.error||"Connection failed")}</div>`;
   };
   document.getElementById("btnSendTestInterakt").onclick = ()=>{
     openSheet(`
       <button class="sheet-close" onclick="openInteraktConfigSheet()">${icon('close',18)}</button>
       <h2>Send Test WhatsApp</h2>
-      <p style="margin-bottom:12px;">Sends one message through Interakt using an approved template, so you can confirm real delivery. Plain text isn't reliably supported by Interakt's API — pick one of your existing templates from Admin Panel → WhatsApp Templates.</p>
+      <p style="margin-bottom:12px;">Sends one message using an approved template, so you can confirm real delivery. Pick one of your existing templates from Admin Panel → WhatsApp Templates and enter exactly as many values as it has variables.</p>
       <div class="field"><label>Phone Number</label><input id="interaktTestPhone" placeholder="e.g. 9876543210" inputmode="tel"></div>
-      <div class="field"><label>Template Name (Interakt code name)</label><input id="interaktTestTemplate" placeholder="e.g. appointment_reminder"></div>
+      <div class="field"><label>Template Name</label><input id="interaktTestTemplate" placeholder="e.g. appointment_reminder"></div>
       <div class="field"><label>Body Values (comma-separated, matching the template's variables)</label><input id="interaktTestBodyValues" placeholder="e.g. Priya, 10:30 AM"></div>
       <button class="btn btn-primary btn-block" id="btnSendInteraktTestNow">Send</button>
       <div id="interaktSendNowResult" style="margin-top:10px;"></div>
@@ -26879,7 +26887,7 @@ async function receiptPageBaseUrl(){
 async function publishReceiptLink(payments, patient, cur){
   try{
     const base = await receiptPageBaseUrl();
-    if(!base){ showToast("Open the app from its hosted address (or set the Receipt page address in Configure Interakt) to create receipt links"); return null; }
+    if(!base){ showToast("Open the app from its hosted address (or set the Receipt page address in Configure WhatsApp Business API) to create receipt links"); return null; }
     const invoices = await dbGetAll("invoices");
     const clinics = await dbGetAll("clinics");
     const first = payments[0];
