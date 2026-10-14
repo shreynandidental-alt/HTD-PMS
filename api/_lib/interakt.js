@@ -10,9 +10,12 @@ export function sanitizeInteraktPhone(raw) {
   // no leading "0". Patients' numbers in the PMS are sometimes entered with
   // a leading 0, a +91, spaces, or dashes - strip all of that down to the
   // bare national number Interakt expects.
+  // Leading zeros are stripped FIRST, then a "91" prefix - in the other
+  // order a number saved as "091 98765 43210" came out as "919876543210"
+  // and was sent to Interakt with +91 prepended a second time.
   let digits = String(raw || "").replace(/[^\d]/g, "");
-  if (digits.length === 12 && digits.startsWith("91")) digits = digits.slice(2);
   digits = digits.replace(/^0+/, "");
+  if (digits.length === 12 && digits.startsWith("91")) digits = digits.slice(2);
   return digits;
 }
 
