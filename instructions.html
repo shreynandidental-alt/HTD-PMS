@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Instructions — Healing Touch Dental</title><meta name="robots" content="noindex">
+<style>
+  :root{--green:#0E6F5C;--green-light:#3FA88A;--mist:#E4F2ED;--ink:#1F2326;--grey:#6B7378;--line:#E3E6E8;}
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;background:#F3F5F4;color:var(--ink);}
+  .wrap{max-width:760px;margin:0 auto;padding:16px;}
+  .doc{background:#fff;border-radius:16px;box-shadow:0 2px 6px rgba(0,0,0,.05),0 12px 30px -12px rgba(14,111,92,.25);overflow:hidden;}
+  .head{display:flex;gap:14px;align-items:center;padding:20px;background:#fff;color:var(--ink);border-bottom:3px solid var(--green);}
+  .head img{width:60px;height:60px;border-radius:12px;background:#fff;object-fit:contain;}
+  .head h1{margin:0;font-size:18px;color:var(--green);} .head .sub{font-size:12.5px;color:var(--grey);margin-top:3px;line-height:1.4;}
+  .body{padding:20px;}
+  .title{font-size:20px;font-weight:800;color:var(--green);margin:0 0 12px;}
+  .meta{display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;font-size:13.5px;margin-bottom:16px;}
+  .meta b{display:block;font-size:11px;color:var(--grey);text-transform:uppercase;letter-spacing:.4px;font-weight:700;}
+  .tbl-wrap{overflow-x:auto;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th{background:var(--mist);color:var(--green);text-align:left;padding:9px 8px;font-size:11.5px;text-transform:uppercase;letter-spacing:.3px;}
+  td{padding:9px 8px;border-bottom:1px solid var(--line);vertical-align:top;}
+  .num{text-align:right;white-space:nowrap;}
+  .totals{margin-top:14px;margin-left:auto;max-width:300px;font-size:14px;}
+  .totals div{display:flex;justify-content:space-between;padding:4px 0;}
+  .totals .final{border-top:2px solid var(--green);margin-top:6px;padding-top:8px;font-size:17px;font-weight:800;color:var(--green);}
+  .notes{margin-top:16px;font-size:13px;color:var(--grey);}
+  .explain{margin-top:18px;background:var(--mist);border-radius:12px;padding:14px 16px;}
+  .explain-t{font-weight:800;color:var(--green);font-size:14px;margin-bottom:6px;}
+  .explain-b{font-size:13.5px;line-height:1.65;white-space:pre-wrap;color:var(--ink);}
+  .ins{margin:6px 0 0;padding:0;list-style:none;}
+  .ins li{position:relative;padding:10px 12px 10px 38px;border-bottom:1px solid var(--line);font-size:15px;line-height:1.5;}
+  .ins li::before{content:"✓";position:absolute;left:10px;top:9px;width:20px;height:20px;border-radius:50%;background:var(--mist);color:var(--green);font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center;}
+  .ins-p{font-size:15px;line-height:1.7;white-space:pre-wrap;}
+  .warn{margin-top:16px;background:#FCEBEB;color:#B4453A;border-radius:12px;padding:12px 14px;font-size:13.5px;font-weight:600;line-height:1.5;}
+  .actions{display:flex;gap:10px;margin:16px 0;}
+  .btn{flex:1;border:none;border-radius:12px;padding:13px;font-size:15px;font-weight:700;cursor:pointer;text-decoration:none;text-align:center;}
+  .btn-primary{background:var(--green);color:#fff;} .btn-outline{background:#fff;color:var(--green);border:1.5px solid var(--green);}
+  .foot{text-align:center;font-size:11.5px;color:var(--grey);padding:6px 0 20px;}
+  .msg{padding:60px 20px;text-align:center;color:var(--grey);}
+  @media (max-width:520px){ .hide-sm{display:none;} }
+  @media print{ .hide-sm{display:table-cell !important;}  body{background:#fff;} .wrap{padding:0;max-width:none;} .doc{box-shadow:none;border-radius:0;} .actions,.foot{display:none;}
+    .head,th{-webkit-print-color-adjust:exact;print-color-adjust:exact;} }
+</style></head>
+<body><div class="wrap"><div id="app"><div class="msg">Loading…</div></div></div>
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
+  import { getFirestore, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+  const firebaseConfig = {
+    apiKey: "AIzaSyAGoza4ETqjMJug-7royY0pZfpzBgNAPFU",
+    authDomain: "htd-pms.firebaseapp.com",
+    projectId: "htd-pms",
+    storageBucket: "htd-pms.firebasestorage.app",
+    messagingSenderId: "500213236550",
+    appId: "1:500213236550:web:86b6e6c0fb4defa38d1b47"
+  };
+  const db = getFirestore(initializeApp(firebaseConfig));
+  const esc = v => String(v==null?"":v).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const app = document.getElementById("app");
+  const token = new URLSearchParams(location.search).get("t");
+  const fail = m => app.innerHTML = `<div class="doc"><div class="msg">${m}</div></div>`;
+  (async ()=>{
+    if(!token) return fail("This link is incomplete.");
+    try{
+      const snap = await getDoc(doc(db, "publicInstructions", token));
+      if(!snap.exists()) return fail("This link has expired or is no longer available. Please contact the clinic.");
+      const d = snap.data();
+      const money = n => (d.currency||"₹") + Number(n||0).toLocaleString("en-IN",{maximumFractionDigits:2});
+      const fmtDate = v => v ? new Date(v).toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"}) : "";
+      const header = `<div class="head">${d.clinicLogo? `<img src="${d.clinicLogo}" alt="">` : ""}<div><h1>${esc(d.clinicName)}</h1><div class="sub">${esc(d.clinicAddress)}${d.clinicPhone? "<br>📞 "+esc(d.clinicPhone):""}</div></div></div>`;
+      
+      const kind = d.type==="pre" ? "Pre-Operative" : "Post-Operative";
+      const lines = String(d.body||"").split("\n").map(l=>l.trim()).filter(Boolean);
+      const isList = lines.length>1;
+      app.innerHTML = `<div class="doc">${header}<div class="body">
+        <div class="title">${kind} Instructions${d.title? `<div style="font-size:15px;color:var(--ink);font-weight:700;margin-top:4px;">${esc(d.title)}</div>`:""}</div>
+        <div class="meta"><div><b>Patient</b>${esc(d.patientName)}</div><div><b>Date</b>${fmtDate(d.createdAt)}</div></div>
+        ${isList? `<ul class="ins">${lines.map(l=>`<li>${esc(l.replace(/^[-•*●▪\d.)\s]+/,""))}</li>`).join("")}</ul>` : `<div class="ins-p">${esc(d.body)}</div>`}
+        <div class="warn">If you have severe pain, swelling, bleeding that won't stop, fever or any concern, please call the clinic immediately.</div>
+      </div></div>
+      <div class="actions"><button class="btn btn-primary" onclick="window.print()">⬇ Save / Print</button>${d.clinicPhone? `<a class="btn btn-outline" href="tel:${esc(String(d.clinicPhone).replace(/[^\d+]/g,""))}">📞 Call Clinic</a>`:""}</div>
+      <div class="foot">${esc(d.clinicName)}</div>`;
+      document.title = "Instructions — " + (d.patientName||"");
+    }catch(e){ console.error(e); fail("Couldn't load this page. Please check your connection and try again."); }
+  })();
+</script></body></html>

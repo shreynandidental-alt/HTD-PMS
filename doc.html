@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Healing Touch Dental</title>
+<style>
+  *{box-sizing:border-box;}
+  body{margin:0;background:#e9eceb;font-family:Arial,Helvetica,sans-serif;color:#14171A;}
+  .bar{position:sticky;top:0;z-index:5;background:#0E6F5C;color:#fff;display:flex;align-items:center;gap:10px;padding:10px 14px;box-shadow:0 2px 8px rgba(0,0,0,.15);}
+  .bar .t{flex:1;min-width:0;font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .bar button{background:#fff;color:#0E6F5C;border:0;border-radius:8px;padding:9px 14px;font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap;}
+  .bar button.ghost{background:transparent;color:#fff;border:1px solid rgba(255,255,255,.6);}
+  .bar button:disabled{opacity:.6;}
+  .stage{padding:16px 0 30px;display:flex;justify-content:center;}
+  .paper{background:#fff;box-shadow:0 4px 18px rgba(0,0,0,.12);transform-origin:top left;}
+  .paper iframe{display:block;border:0;width:820px;height:1100px;background:#fff;}
+  .msg{text-align:center;padding:60px 20px;color:#555;font-size:15px;line-height:1.6;}
+  .foot{text-align:center;font-size:11px;color:#888;padding:0 12px 24px;}
+  @media print{ .bar,.foot{display:none;} body{background:#fff;} .stage{padding:0;} .paper{box-shadow:none;transform:none!important;} }
+</style>
+</head>
+<body>
+<div class="bar"><div class="t" id="docTitle">Loading…</div>
+  <button class="ghost" id="btnPrint" style="display:none;">Print</button>
+  <button id="btnPdf" style="display:none;">Download PDF</button>
+</div>
+<div class="stage" id="stage"><div class="msg">Loading your document…</div></div>
+<div class="foot">A view-only copy shared by Healing Touch Dental.</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
+  import { getFirestore, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyAGoza4ETqjMJug-7royY0pZfpzBgNAPFU",
+    authDomain: "htd-pms.firebaseapp.com",
+    projectId: "htd-pms",
+    storageBucket: "htd-pms.firebasestorage.app",
+    messagingSenderId: "500213236550",
+    appId: "1:500213236550:web:86b6e6c0fb4defa38d1b47"
+  };
+
+  const stage = document.getElementById("stage");
+  const titleEl = document.getElementById("docTitle");
+  const showMsg = (t)=>{ stage.innerHTML = ""; const d = document.createElement("div"); d.className = "msg"; d.textContent = t; stage.append(d); titleEl.textContent = "Healing Touch Dental"; };
+
+  const token = new URLSearchParams(location.search).get("t") || "";
+  if(!/^[a-zA-Z0-9_-]{16,}$/.test(token)){ showMsg("This link isn't valid. Please contact the clinic."); }
+  else{
+    try{
+      const db = getFirestore(initializeApp(firebaseConfig));
+      const snap = await getDoc(doc(db, "publicReceipts", token));
+      const d = snap.exists() ? snap.data() : null;
+      if(!d || d.docType!=="html" || !d.html){ showMsg("We couldn't find this document. Please contact the clinic."); }
+      else render(d);
+    }catch(err){
+      console.error(err);
+      showMsg("We couldn't load this document right now. Please try again in a moment or contact the clinic.");
+    }
+  }
+
+  function render(d){
+    const title = (d.title||"Document") + (d.patientName? " — "+d.patientName : "");
+    document.title = title;
+    titleEl.textContent = title;
+    stage.innerHTML = "";
+    const paper = document.createElement("div"); paper.className = "paper";
+    const frame = document.createElement("iframe");
+    frame.setAttribute("sandbox", "allow-same-origin allow-modals");
+    frame.setAttribute("title", d.title||"Document");
+    frame.srcdoc = d.html;
+    paper.append(frame); stage.append(paper);
+
+    const fit = ()=>{
+      const doc = frame.contentDocument;
+      if(!doc || !doc.documentElement) return;
+      const h = Math.max(doc.documentElement.scrollHeight, doc.body ? doc.body.scrollHeight : 0, 600);
+      frame.style.height = h + "px";
+      const avail = Math.min(window.innerWidth - 16, 820);
+      const scale = avail / 820;
+      paper.style.transform = scale < 1 ? `scale(${scale})` : "";
+      paper.style.width = "820px";
+      paper.style.height = h + "px";
+      // Keep the scaled page from leaving empty space below it.
+      stage.style.height = (h * Math.min(1, scale) + 46) + "px";
+      stage.style.justifyContent = scale < 1 ? "flex-start" : "center";
+      stage.style.paddingLeft = scale < 1 ? "8px" : "0";
+    };
+    frame.addEventListener("load", ()=>{ fit(); setTimeout(fit, 400); setTimeout(fit, 1500); });
+    window.addEventListener("resize", fit);
+
+    const fileName = (d.title||"Document").replace(/[^\w\- ]+/g,"").trim() + (d.patientName? " - "+String(d.patientName).replace(/[^\w\- ]+/g,"").trim() : "") + ".pdf";
+    const pdfBtn = document.getElementById("btnPdf");
+    const printBtn = document.getElementById("btnPrint");
+    pdfBtn.style.display = ""; printBtn.style.display = "";
+    printBtn.onclick = ()=>{ try{ frame.contentWindow.focus(); frame.contentWindow.print(); }catch(e){ window.print(); } };
+    pdfBtn.onclick = async ()=>{
+      if(typeof html2pdf === "undefined"){ printBtn.click(); return; }
+      pdfBtn.disabled = true; const old = pdfBtn.textContent; pdfBtn.textContent = "Preparing…";
+      try{
+        await html2pdf().set({
+          margin: [6, 6, 8, 6], filename: fileName,
+          image: { type: "jpeg", quality: 0.95 },
+          html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff", windowWidth: 820 },
+          jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
+          pagebreak: { mode: ["css", "legacy"] }
+        }).from(frame.contentDocument.body).save();
+      }catch(e){
+        console.error(e);
+        alert("Couldn't create the PDF here — opening Print instead. Choose \"Save as PDF\" there.");
+        printBtn.click();
+      }
+      pdfBtn.disabled = false; pdfBtn.textContent = old;
+    };
+  }
+</script>
+</body>
+</html>

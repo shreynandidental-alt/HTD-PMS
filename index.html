@@ -815,6 +815,15 @@
   .cal-slot-row.drag-target-over{background:var(--green-mist);}
   .cal-appt-drag-ghost{box-shadow:0 8px 20px rgba(0,0,0,0.3);border-radius:6px;}
   .queue-chip .qn{font-weight:600;}
+  .qc-main{flex:1;min-width:0;display:flex;align-items:baseline;gap:6px;overflow:hidden;}
+  .qc-main .qn{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
+  .qc-main .qt{white-space:nowrap;flex-shrink:0;}
+  .qc-exp{background:none;border:none;padding:3px;display:flex;color:var(--grey);cursor:pointer;transform:rotate(90deg);transition:transform .2s ease;flex-shrink:0;}
+  .queue-chip.qc-open .qc-exp{transform:rotate(-90deg);color:var(--green);}
+  .qmenu-btn.qc-opt{transform:none;}
+  .qc-details{display:none;font-size:11px;color:var(--charcoal-2);line-height:1.5;margin-top:5px;padding-top:5px;border-top:1px dashed var(--grey-light);cursor:default;}
+  .queue-chip.qc-open .qc-details{display:block;}
+  .qc-links span{color:var(--green);font-weight:600;cursor:pointer;}
   .queue-chip .qt{color:var(--grey);font-size:10.5px;}
 
   .appt-row{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;border-bottom:1px solid var(--off-white);}
@@ -1651,6 +1660,7 @@
       <div class="nav-item" data-page="communication"><span class="ico" data-icon="sms"></span><span class="lbl"> Communication</span></div>
       <div class="nav-item" data-page="pharmacy"><span class="ico" data-icon="pill"></span><span class="lbl"> Pharmacy</span></div>
       <div class="nav-item" data-page="labcases"><span class="ico" data-icon="flask"></span><span class="lbl"> Lab Cases</span></div>
+      <div class="nav-item" data-page="maintenance"><span class="ico" data-icon="wrench"></span><span class="lbl"> Maintenance</span></div>
       <div class="sidebar-divider"></div>
       <div class="nav-item" data-page="more"><span class="ico" data-icon="more"></span><span class="lbl"> More</span></div>
       <button class="btn btn-primary btn-block side-fab" id="btnFabDesktop"><span class="ico" data-icon="plus" data-icon-size="16"></span><span class="lbl"> New</span></button>
@@ -1813,7 +1823,9 @@ const STORE_DEFS = [
   {name:"settings", keyPath:"id"},
   {name:"activityLog", keyPath:"id", indexes:[["patientId","patientId"],["date","date"]]},
   {name:"trash", keyPath:"id"},
-  {name:"drafts", keyPath:"id"}
+  {name:"drafts", keyPath:"id"},
+  {name:"maintenanceRecords", keyPath:"id", indexes:[["date","date"],["clinicId","clinicId"]]},
+  {name:"rechargeableDevices", keyPath:"id"}
 ];
 
 // Every store that holds patient-specific clinical, financial, or document
@@ -1849,12 +1861,31 @@ function openDB(){
 async function dbAdd(storeName, obj){
   if(!obj.id) obj.id = uid(storeName);
   await offloadFilesToStorage(storeName, obj);
+  await ensureFitsInDatabase(storeName, obj);
   return window.__fb.add(storeName, obj);
 }
 async function dbPut(storeName, obj){
   if(!obj.id) obj.id = uid(storeName);
   await offloadFilesToStorage(storeName, obj);
+  await ensureFitsInDatabase(storeName, obj);
   return window.__fb.put(storeName, obj);
+}
+// Firestore refuses any single record over 1 MB. If files are still
+// embedded (Storage was skipped after a recent failure), try Storage once
+// more; if the record is still too big, stop with a clear message instead
+// of a confusing save error.
+const FIRESTORE_SAFE_BYTES = 1000000;
+async function ensureFitsInDatabase(storeName, obj){
+  let size = 0;
+  try{ size = new Blob([JSON.stringify(obj)]).size; }catch(e){ return; }
+  if(size <= FIRESTORE_SAFE_BYTES || OFFLOAD_SKIP_STORES.has(storeName)) return;
+  storageOffDisabledUntil = 0;
+  await offloadFilesToStorage(storeName, obj);
+  try{ size = new Blob([JSON.stringify(obj)]).size; }catch(e){ return; }
+  if(size <= FIRESTORE_SAFE_BYTES) return;
+  const msg = "This record is too large to save ("+(size/1048576).toFixed(1)+" MB; the database limit is 1 MB). Turn on Firebase Cloud Storage so files are stored there — Admin Panel → Move Files to Cloud Storage → Check Cloud Storage.";
+  try{ showToast("Too large to save — Cloud Storage needs to be turned on"); }catch(_){}
+  throw new Error(msg);
 }
 
 // ---- Firebase Storage for X-rays, photos, documents ----
@@ -1908,37 +1939,112 @@ async function offloadFilesToStorage(storeName, obj){
   }
   return moved;
 }
+// Uploads and deletes a tiny test file to confirm Storage is switched on
+// and its rules allow this login to write.
+async function checkCloudStorage(){
+  if(!window.__fbApp) return {ok:false, code:"no-app", message:"The app isn't connected to Firebase yet."};
+  try{
+    const m = await storageModule();
+    const st = m.getStorage(window.__fbApp);
+    st.maxUploadRetryTime = 15000; st.maxOperationRetryTime = 15000;
+    const r = m.ref(st, "pms/_check/"+uid("chk")+".txt");
+    await m.uploadString(r, "ok");
+    await m.getDownloadURL(r);
+    try{ await m.deleteObject(r); }catch(_){}
+    return {ok:true};
+  }catch(e){
+    return {ok:false, code: (e&&e.code)||"", message: (e&&e.message)||String(e)};
+  }
+}
+function cloudStorageAdviceHtml(res){
+  if(res.ok) return `<div class="ai-verdict ok"><b>✓ Cloud Storage is working.</b> New X-rays, photos and documents are saved to Storage automatically, not inside the database.</div>`;
+  const code = res.code||"";
+  let advice;
+  if(code==="storage/unauthorized" || code==="storage/unauthenticated"){
+    advice = `Storage is on, but its rules block uploads. In the Firebase Console → Storage → Rules, publish:<pre style="background:#1a1a1a;color:#e8e8e8;padding:10px;border-radius:8px;font-size:11px;white-space:pre;overflow-x:auto;margin:8px 0;">rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /pms/{allPaths=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}</pre>`;
+  }else{
+    advice = `Storage doesn't seem to be switched on for this Firebase project. Since February 2026, Firebase Storage needs the <b>Blaze (pay-as-you-go)</b> plan — it includes a free allowance (about 5 GB stored), so a clinic's X-rays usually cost little or nothing. Firebase Console → Upgrade to Blaze, then Build → Storage → Get started. Then run this check again.`;
+  }
+  return `<div class="warn-banner" style="border-color:var(--red);color:var(--charcoal-2);"><b style="color:var(--red);">Cloud Storage isn't working yet</b>${code? ` <span style="color:var(--grey);font-size:11.5px;">(${escapeHtml(code)})</span>`:""} — until it is, files are saved inside the database (heavier, and large documents can fail to save).<div style="margin-top:6px;">${advice}</div></div>`;
+}
+// Moves files embedded in older records to Storage. Returns a summary.
+async function moveEmbeddedFilesToStorage(onProgress){
+  storageOffDisabledUntil = 0;
+  const names = STORE_DEFS.map(d=>d.name).filter(n=>!OFFLOAD_SKIP_STORES.has(n));
+  let files = 0, records = 0, stopped = false;
+  for(let i=0;i<names.length;i++){
+    let rows = [];
+    try{ rows = await window.__fb.getAll(names[i]); }catch(e){ continue; }
+    const heavy = rows.filter(r=> JSON.stringify(r).includes('"data:') );
+    for(let j=0;j<heavy.length;j++){
+      if(onProgress) onProgress(names[i], j+1, heavy.length, files);
+      const r = heavy[j];
+      const n = await offloadFilesToStorage(names[i], r);
+      if(Date.now() < storageOffDisabledUntil){ stopped = true; break; }
+      if(n>0){ await window.__fb.put(names[i], r); files += n; records++; }
+    }
+    if(stopped) break;
+  }
+  return {files, records, stopped};
+}
+// Runs once per practice, quietly in the background for the admin, as
+// soon as Storage is confirmed working.
+async function autoMoveFilesToStorageOnce(){
+  if(!currentUserIsAdmin) return;
+  const s = (await dbGetAll("settings"))[0];
+  if(!s || s.filesMovedToStorageAt) return;
+  const chk = await checkCloudStorage();
+  if(!chk.ok) return;
+  const res = await moveEmbeddedFilesToStorage();
+  if(res.stopped) return;
+  const s2 = (await dbGetAll("settings"))[0] || s;
+  s2.filesMovedToStorageAt = nowIso();
+  await window.__fb.put("settings", s2);
+  if(res.files){
+    logActivity("Moved "+res.files+" file(s) to Cloud Storage (automatic)");
+    showToast("Moved "+res.files+" X-ray/photo file(s) to Cloud Storage");
+  }
+}
+
 // Admin tool: moves files already stored inside the database to Storage.
 async function openMoveFilesToStorageSheet(){
   if(!currentUserIsAdmin){ showToast("Only the admin account can do this"); return; }
   openSheet(`
     <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
     <h2>Move Files to Cloud Storage</h2>
-    <p style="margin-bottom:10px;">X-rays, photos and documents saved before this update are stored inside the database, which makes it heavy and slow. This moves them to Firebase Storage. Records, screens and prints stay exactly the same. Safe to run more than once; take a Backup first.</p>
+    <div id="mvCheck" style="margin-bottom:12px;"><div class="ai-loading"><span class="ai-spin"></span> Checking Cloud Storage…</div></div>
+    <button class="btn btn-outline btn-block" id="mvRecheck" style="margin-bottom:12px;">${icon('refresh',15)} Check Cloud Storage Again</button>
+    <p style="margin-bottom:10px;">X-rays, photos and documents saved while Storage wasn't working are stored inside the database, which makes it heavy and slow. This moves them to Firebase Storage. Records, screens and prints stay exactly the same. Safe to run more than once; take a Backup first.</p>
     <button class="btn btn-primary btn-block" id="mvGo">${icon('backup',15)} Start Moving Files</button>
     <div id="mvProg" style="margin-top:12px;"></div>
   `);
+  const runCheck = async ()=>{
+    const box = document.getElementById("mvCheck");
+    if(box) box.innerHTML = `<div class="ai-loading"><span class="ai-spin"></span> Checking Cloud Storage…</div>`;
+    const res = await checkCloudStorage();
+    const b2 = document.getElementById("mvCheck");
+    if(b2) b2.innerHTML = cloudStorageAdviceHtml(res);
+    return res;
+  };
+  runCheck();
+  document.getElementById("mvRecheck").onclick = runCheck;
   document.getElementById("mvGo").onclick = async ()=>{
     const btn = document.getElementById("mvGo"); btn.disabled = true;
     const prog = document.getElementById("mvProg");
-    storageOffDisabledUntil = 0;
-    const names = STORE_DEFS.map(d=>d.name).filter(n=>!OFFLOAD_SKIP_STORES.has(n));
-    let files = 0, records = 0, failed = 0;
-    for(let i=0;i<names.length;i++){
-      let rows = [];
-      try{ rows = await window.__fb.getAll(names[i]); }catch(e){ continue; }
-      const heavy = rows.filter(r=> JSON.stringify(r).includes('"data:') );
-      for(let j=0;j<heavy.length;j++){
-        if(prog) prog.innerHTML = `<div class="ai-loading"><span class="ai-spin"></span> ${escapeHtml(names[i])}: ${j+1} of ${heavy.length} · ${files} files moved so far</div>`;
-        const r = heavy[j];
-        const n = await offloadFilesToStorage(names[i], r);
-        if(Date.now() < storageOffDisabledUntil){ failed++; break; }
-        if(n>0){ await window.__fb.put(names[i], r); files += n; records++; }
-      }
-      if(Date.now() < storageOffDisabledUntil) break;
-    }
-    if(Date.now() < storageOffDisabledUntil){
-      prog.innerHTML = `<div class="warn-banner" style="border-color:var(--red);color:var(--red);">Storage isn't reachable — ${files} file(s) moved before it stopped. Check that Firebase Storage is enabled and its rules are published (see the steps in the message from Claude), then run this again.</div>`;
+    const res = await moveEmbeddedFilesToStorage((store, j, total, soFar)=>{
+      if(prog) prog.innerHTML = `<div class="ai-loading"><span class="ai-spin"></span> ${escapeHtml(store)}: ${j} of ${total} · ${soFar} files moved so far</div>`;
+    });
+    const files = res.files, records = res.records;
+    if(!res.stopped){ const st = (await dbGetAll("settings"))[0]; if(st){ st.filesMovedToStorageAt = nowIso(); await window.__fb.put("settings", st); } }
+    if(res.stopped){
+      prog.innerHTML = `<div class="warn-banner" style="border-color:var(--red);color:var(--red);">Storage isn't reachable — ${files} file(s) moved before it stopped. See the Cloud Storage check above for what to fix, then run this again.</div>`;
     }else{
       prog.innerHTML = `<div class="ai-verdict ok"><b>✓ Done — ${files} file(s) from ${records} record(s) moved to Cloud Storage.</b></div>`;
       logActivity("Moved "+files+" file(s) to Cloud Storage");
@@ -1947,6 +2053,8 @@ async function openMoveFilesToStorageSheet(){
   };
 }
 const CLINIC_FILTERED_STORES = new Set(PATIENT_DATA_STORES);
+CLINIC_FILTERED_STORES.add("maintenanceRecords");
+CLINIC_FILTERED_STORES.add("rechargeableDevices");
 // These specific collections had a confirmed, reported leak (an
 // unassigned/missing clinicId making a record visible to every
 // restricted clinic instead of none) and were deliberately tightened to
@@ -2077,7 +2185,7 @@ const TRASH_STORES = new Set([
   "labCases","alignerCases","bracesCases","orthoDiagnosisRecords","endoCases","implantCases","prosthoCases","prostheticCases",
   "perioCharts","oralSurgeryCases","oralMedRecords","pediatricRecords","aiCrsAssessments",
   "xrays","patientDocuments","prePostOpPhotos","photos","patientNotes","clinicalNotes","voiceNotes","consents","referrals",
-  "commitments","consultants","labs","clinics","pharmacyProducts","inventoryItems","clinicalTemplates","rxTemplates","consentTemplates"
+  "commitments","consultants","labs","clinics","pharmacyProducts","inventoryItems","clinicalTemplates","rxTemplates","consentTemplates","maintenanceRecords","rechargeableDevices"
 ]);
 const TRASH_TYPE_LABELS = {
   patients:"Patient", appointments:"Appointment", treatmentPlans:"Treatment", prescriptions:"Prescription", examinations:"Examination",
@@ -2088,7 +2196,8 @@ const TRASH_TYPE_LABELS = {
   pediatricRecords:"Pediatric Record", aiCrsAssessments:"Caries Risk", xrays:"X-ray", patientDocuments:"Document", prePostOpPhotos:"Photos",
   photos:"Photo", patientNotes:"Note", clinicalNotes:"Clinical Note", voiceNotes:"Voice Note", consents:"Consent", referrals:"Referral",
   commitments:"Follow-up", consultants:"Consultant", labs:"Lab", clinics:"Clinic", pharmacyProducts:"Pharmacy Product",
-  inventoryItems:"Inventory Item", clinicalTemplates:"Clinical Template", rxTemplates:"Rx Template", consentTemplates:"Consent Template"
+  inventoryItems:"Inventory Item", clinicalTemplates:"Clinical Template", rxTemplates:"Rx Template", consentTemplates:"Consent Template",
+  maintenanceRecords:"Maintenance Entry", rechargeableDevices:"Rechargeable Equipment"
 };
 function trashLabel(store, r, patientName){
   const pn = patientName || r.patientName || "";
@@ -2100,6 +2209,8 @@ function trashLabel(store, r, patientName){
     case "payments": return (r.receiptNumber||"Receipt")+" · "+pn+" · ₹"+(Number(r.amount)||0).toLocaleString("en-IN");
     case "treatmentPlans": return pn+" · "+((r.items||[]).map(i=>i.treatment).filter(Boolean).join(", ")||"Treatment")+" · "+dt(r.createdDate);
     case "prescriptions": return pn+" · "+((r.items||[]).map(i=>i.drugName).filter(Boolean).join(", ")||"Prescription")+" · "+dt(r.date);
+    case "rechargeableDevices": return [r.name, r.brand].filter(Boolean).join(" – ") || "Rechargeable Equipment";
+    case "maintenanceRecords": return [r.category, r.item, dt(r.date)].filter(Boolean).join(" · ") || "Maintenance Entry";
     case "labCases": return pn+" · "+(r.caseType||"")+(r.tooth? " (Tooth "+r.tooth+")":"")+" · "+(r.labName||"");
     default: return [pn, r.name||r.title||r.caseType||r.category||r.brand||r.chiefComplaint||r.treatment||"", dt(r.date||r.createdAt)].filter(Boolean).join(" · ") || "Record";
   }
@@ -2511,8 +2622,17 @@ const PERMISSION_MODULES = [
   {key:"communication", label:"Communication"},
   {key:"pharmacy", label:"Pharmacy"},
   {key:"labcases", label:"Lab Cases"},
-  {key:"dataImport", label:"Import Patient Data (Excel/CSV)"}
+  {key:"dataImport", label:"Import Patient Data (Excel/CSV)"},
+  // On by default for every staff login (incl. existing ones); admin can
+  // still switch it off per login in Manage Users.
+  {key:"maintenance", label:"Maintenance Register", defaultOn:true}
 ];
+// A staff login's effective access to a module, honouring defaultOn for
+// modules added after that login was created.
+function staffPermOn(perms, m){
+  const v = perms ? perms[m.key] : undefined;
+  return v===undefined ? !!m.defaultOn : !!v;
+}
 
 async function loadCurrentUserAccess(){
   const s = (await dbGetAll("settings"))[0] || {};
@@ -2527,6 +2647,10 @@ async function loadCurrentUserAccess(){
   const match = staffUsers.find(u=> (u.email||"").toLowerCase()===email);
   currentUserIsAdmin = false;
   currentUserPermissions = match ? (match.permissions||{}) : {};
+  if(match){
+    currentUserPermissions = Object.assign({}, currentUserPermissions);
+    PERMISSION_MODULES.forEach(m=>{ if(m.defaultOn && currentUserPermissions[m.key]===undefined) currentUserPermissions[m.key] = true; });
+  }
   const restrictedId = match ? (match.restrictedClinicId||"") : "";
   if(!restrictedId){
     currentUserRestrictedClinicId = null;
@@ -2565,6 +2689,7 @@ const PAGE_RENDERERS = {
   reports: renderReports,
   pharmacy: renderPharmacy,
   labcases: renderLabCases,
+  maintenance: renderMaintenance,
   more: renderMore,
   admin: renderAdminPanel,
   patientProfile: ()=> renderPatientProfileSheet(profilePatientId)
@@ -2790,6 +2915,8 @@ async function renderHome(){
         <div id="autoRemStatus"></div>
         <div id="todayList"></div>
 
+        <div id="homeMaintDue"></div>
+
         <div class="section-title">Birthdays Today</div>
         <div id="birthdayList"></div>
 
@@ -2847,6 +2974,7 @@ async function renderHome(){
     el.onclick = ()=> openStatDetailSheet(el.dataset.stat);
   });
   animateStatNumbers(statGrid);
+  renderHomeMaintenanceDue();
 
   const todayList = document.getElementById("todayList");
   if(counts.todayAppts.length===0){
@@ -4534,6 +4662,7 @@ async function renderPatientProfileSheet(id){
         <button class="qbtn sc-appt" id="qAppt" style="animation-delay:80ms"><span class="qi-ico">${icon('calendar',20)}</span><span class="qi-lbl">New Appt</span></button>
         <button class="qbtn sc-call" id="qCall" style="animation-delay:120ms"><span class="qi-ico">${icon('phone',20)}</span><span class="qi-lbl">Call</span></button>
         <button class="qbtn sc-wa" id="qWhatsapp" style="animation-delay:160ms"><span class="qi-ico">${icon('message',20)}</span><span class="qi-lbl">WhatsApp</span></button>
+        <button class="qbtn sc-wa" id="qReview" style="animation-delay:180ms"><span class="qi-ico">${icon('star',20)}</span><span class="qi-lbl">Review Link</span></button>
         <button class="qbtn sc-email" id="qEmail" style="animation-delay:200ms"><span class="qi-ico">${icon('mail',20)}</span><span class="qi-lbl">Send Email</span></button>
         <button class="qbtn sc-instr" id="qInstructions" style="animation-delay:240ms"><span class="qi-ico">${icon('assist',20)}</span><span class="qi-lbl">Send Instructions</span></button>
         <button class="qbtn sc-print" id="qPrint" style="animation-delay:280ms"><span class="qi-ico">${icon('print',20)}</span><span class="qi-lbl">Print</span></button>
@@ -4566,6 +4695,7 @@ async function renderPatientProfileSheet(id){
     title:"WhatsApp Patient",
     message: `Hi ${p.name}, this is Healing Touch Dental. `
   });
+  document.getElementById("qReview").onclick = ()=> sendReviewLinkForPatient(p);
   document.getElementById("qPrint").onclick = ()=> openPrintCenterSheet(p);
   document.getElementById("qNotes").onclick = ()=> openPatientNotesSheet(p);
   document.getElementById("qConsent").onclick = ()=> openConsentFormsListSheet(p);
@@ -5239,6 +5369,8 @@ function openSlotChoiceSheet(date, time){
 }
 
 const QUEUE_COL_STATUS = {Expected:"Confirmed", Arrived:"Arrived", "In Chair":"InChair", Completed:"Completed"};
+// Chips in Today's Flow stay one line; the arrow expands one to show details.
+const queueChipExpanded = new Set();
 const QUEUE_COL_COLOR = {Expected:"var(--grey)", Arrived:"#B8863B", "In Chair":"var(--green)", Completed:"var(--charcoal-2)"};
 
 function buildQueueBoardHtml(todaysAppts){
@@ -5265,12 +5397,20 @@ function buildQueueBoardHtml(todaysAppts){
       ${Object.entries(buckets).map(([label,list])=>`
         <div class="queue-col" data-col="${label}" style="border-top:3px solid ${QUEUE_COL_COLOR[label]};">
           <div class="qtitle">${label} (${list.length})</div>
-          ${list.map(a=>`<div class="queue-chip" data-appt="${a.id}" style="border-left:3px solid ${QUEUE_COL_COLOR[label]};">
+          ${list.map(a=>{ const open = queueChipExpanded.has(a.id); return `<div class="queue-chip ${open?'qc-open':''}" data-appt="${a.id}" style="border-left:3px solid ${QUEUE_COL_COLOR[label]};">
             <div class="qc-row">
-              <div><div class="qn">${escapeHtml(a.patientName||"")}${a.status==="InChair"&&a.chair? ` <span style="font-weight:400;color:var(--grey);">(${escapeHtml(a.chair)})</span>`:""}</div>${a.doctor? `<div style="font-size:10.5px;color:var(--grey);margin-top:1px;">Dr. ${escapeHtml(a.doctor)}</div>`:""}<div class="qt">${formatTime(a.startTime)}</div></div>
-              <button class="qmenu-btn" data-qmenu="${a.id}">${icon('chevron',14)}</button>
+              <div class="qc-main"><span class="qn">${escapeHtml(a.patientName||"")}</span><span class="qt">${formatTime(a.startTime)}</span></div>
+              <button class="qc-exp" data-qexp="${a.id}" title="Show details">${icon('chevron',13)}</button>
+              <button class="qmenu-btn qc-opt" data-qmenu="${a.id}" title="Reschedule / Cancel / Missed…">${icon('more',14)}</button>
             </div>
-          </div>`).join("") || '<div style="color:var(--grey);font-size:11.5px;">—</div>'}
+            <div class="qc-details">
+              <div>${escapeHtml(a.treatmentType||"General")}${a.doctor? " · Dr. "+escapeHtml(a.doctor):""}</div>
+              ${a.status==="InChair"&&a.chair? `<div>Chair: ${escapeHtml(a.chair)}</div>`:""}
+              <div class="qc-mob" data-qmob="${a.patientId||""}"></div>
+              ${a.notes? `<div>Note: ${escapeHtml(String(a.notes).slice(0,120))}</div>`:""}
+              <div class="qc-links"><span data-qprofile="${a.patientId||""}">Open profile</span></div>
+            </div>
+          </div>`; }).join("") || '<div style="color:var(--grey);font-size:11.5px;">—</div>'}
         </div>
       `).join("")}
     </div>
@@ -5462,7 +5602,7 @@ function wireQueueDragDrop(root){
 
   root.querySelectorAll(".queue-chip[data-appt]").forEach(chip=>{
     chip.addEventListener("pointerdown", (ev)=>{
-      if(ev.target.closest(".qmenu-btn")) return;
+      if(ev.target.closest(".qmenu-btn, .qc-exp, .qc-details")) return;
       dragChip = chip;
       apptId = chip.dataset.appt;
       startX = ev.clientX; startY = ev.clientY;
@@ -5471,16 +5611,40 @@ function wireQueueDragDrop(root){
       document.addEventListener("pointerup", onUp);
     });
     chip.addEventListener("dblclick", async (ev)=>{
-      if(ev.target.closest(".qmenu-btn")) return;
+      if(ev.target.closest(".qmenu-btn, .qc-exp, .qc-details")) return;
       const appts = await dbGetAll("appointments");
       const appt = appts.find(x=>x.id===chip.dataset.appt);
       if(appt && appt.patientId) openPatientProfile(appt.patientId);
       else showToast("Patient record not found");
     });
   });
-  root.querySelectorAll(".qmenu-btn").forEach(btn=>{
+  root.querySelectorAll(".qmenu-btn[data-qmenu]").forEach(btn=>{
     btn.addEventListener("pointerdown", (ev)=> ev.stopPropagation());
     btn.addEventListener("click", (ev)=>{ ev.stopPropagation(); openQueueChipMenu(btn.dataset.qmenu); });
+  });
+  const fillMobile = async (chip)=>{
+    const slot = chip.querySelector(".qc-mob[data-qmob]");
+    if(!slot || slot.dataset.filled || !slot.dataset.qmob) return;
+    slot.dataset.filled = "1";
+    try{
+      const p = (await dbGetAll("patients")).find(x=>x.id===slot.dataset.qmob);
+      if(p && (p.mobile||p.code)) slot.textContent = [p.mobile? "Mobile: "+p.mobile : "", p.code? "ID: "+p.code : ""].filter(Boolean).join(" · ");
+    }catch(e){}
+  };
+  root.querySelectorAll(".qc-exp[data-qexp]").forEach(btn=>{
+    btn.addEventListener("pointerdown", (ev)=> ev.stopPropagation());
+    btn.addEventListener("click", (ev)=>{
+      ev.stopPropagation();
+      const chip = btn.closest(".queue-chip");
+      const id = btn.dataset.qexp;
+      const open = !chip.classList.contains("qc-open");
+      chip.classList.toggle("qc-open", open);
+      if(open){ queueChipExpanded.add(id); fillMobile(chip); } else queueChipExpanded.delete(id);
+    });
+  });
+  root.querySelectorAll(".queue-chip.qc-open").forEach(chip=> fillMobile(chip));
+  root.querySelectorAll("[data-qprofile]").forEach(el=>{
+    el.addEventListener("click", (ev)=>{ ev.stopPropagation(); if(el.dataset.qprofile) openPatientProfile(el.dataset.qprofile); else showToast("Patient record not found"); });
   });
 }
 
@@ -7502,6 +7666,763 @@ async function renderLabCases(){
   await renderAssistLab(document.getElementById("lcPageBody"));
 }
 
+// =========================================================
+// MAINTENANCE REGISTER — clinic upkeep log (inverter & batteries,
+// electrical, plumbing, dental equipment service, AC, autoclave
+// validation, fire safety, pest control, etc.). Every entry can carry a
+// "Next Due" date; the latest entry for the same clinic + category +
+// equipment decides what shows as Due / Overdue on the Overview, so
+// logging a new service automatically clears the old reminder.
+// Visible to the admin and, by default, to every staff login (it can be
+// switched off per login in Admin Panel > Manage Users).
+// =========================================================
+const MAINT_CATEGORIES = [
+  "Inverter & Batteries","Electrical","Plumbing & Water","Dental Chair & Unit",
+  "Autoclave / Sterilization","Compressor & Suction","X-ray / RVG / OPG",
+  "Dental Equipment (Other)","Air Conditioning","Generator / DG Set",
+  "RO / Water Purifier","Fire Safety","Pest Control","Computers, CCTV & Internet",
+  "Civil & Carpentry","Cleaning & Water Tank","Biomedical Waste Pickup","Rechargeable Equipment","Other"
+];
+const MAINT_WORK_TYPES = [
+  "Routine Service","Repair / Breakdown","Inspection / Check","Battery Charging / Water Top-up","Battery Recharge",
+  "Cleaning","Refill","Calibration / Validation","AMC Visit","Replacement / New Installation","Other"
+];
+const MAINT_STATUSES = ["Completed","In Progress","Pending"];
+// Reminder choices shared by maintenance entries and rechargeable equipment.
+const MAINT_REMINDER_OPTS = [["","No reminder"],["15","After 15 days"],["30","After 1 month"],["60","After 2 months"],["90","After 3 months"],["180","After 6 months"],["365","After 1 year"]];
+const RECHARGE_REMINDER_OPTS = [["15","15 days"],["30","1 month"],["60","2 months"],["90","3 months"],["180","6 months"]];
+// Starting list for each clinic; staff can edit, delete or add more.
+const RECHARGE_DEFAULT_DEVICES = [
+  "DC X-ray (Portable)","Endomotor","Light Cure Unit","Apex Locator",
+  "Obturation Unit – Downpack","Obturation Unit – Backfill Gun","Intraoral Camera",
+  "Electric Pulp Tester","Cordless Prophy Handpiece","Loupe LED Headlight","Portable Suction Unit"
+];
+// Typical default work type + next-due gap (in days) per category, used
+// only to pre-fill a new entry — every value stays editable.
+const MAINT_DEFAULTS = {
+  "Inverter & Batteries": {work:"Battery Charging / Water Top-up", due:30},
+  "Autoclave / Sterilization": {work:"Calibration / Validation", due:7},
+  "Air Conditioning": {work:"Routine Service", due:90},
+  "Fire Safety": {work:"Refill", due:365},
+  "Pest Control": {work:"Routine Service", due:90},
+  "RO / Water Purifier": {work:"Routine Service", due:90},
+  "Compressor & Suction": {work:"Routine Service", due:30},
+  "Generator / DG Set": {work:"Routine Service", due:90},
+  "Cleaning & Water Tank": {work:"Cleaning", due:180},
+  "Biomedical Waste Pickup": {work:"Routine Service", due:2},
+  "Dental Chair & Unit": {work:"Routine Service", due:180},
+  "X-ray / RVG / OPG": {work:"Inspection / Check", due:365}
+};
+
+let maintView = "Overview";
+let maintSearch = "";
+let maintCatFilter = "All";
+let maintStatusFilter = "All";
+let maintRangeFilter = "90";
+let maintPage = 1;
+
+function maintFmtDate(key){
+  if(!key) return "";
+  try{ return fromDateKey(key).toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"}); }catch(e){ return key; }
+}
+function maintDaysUntil(key){
+  if(!key) return null;
+  return Math.round((fromDateKey(key).getTime() - fromDateKey(toDateKey(new Date())).getTime())/86400000);
+}
+function maintAddDays(key, days){
+  const d = fromDateKey(key || toDateKey(new Date()));
+  d.setDate(d.getDate()+days);
+  return toDateKey(d);
+}
+function maintClinicName(clinics, id){
+  const c = clinics.find(x=>x.id===id);
+  return c ? c.name.replace('Healing Touch Dental – ','') : "";
+}
+function maintKey(r){ return [r.clinicId||"", r.category||"", normalizeStr(r.item)].join("|"); }
+
+async function maintLoad(){
+  let rows = await dbGetAll("maintenanceRecords");
+  if(selectedClinicId!=="ALL") rows = rows.filter(r=> !r.clinicId || r.clinicId===selectedClinicId);
+  rows.sort((a,b)=> (b.date||"").localeCompare(a.date||"") || (b.createdAt||"").localeCompare(a.createdAt||""));
+  return rows;
+}
+// Latest entry per clinic+category+equipment that has a Next Due date.
+function maintDueList(rows){
+  const latest = {};
+  rows.forEach(r=>{
+    const k = maintKey(r);
+    if(!latest[k]) latest[k] = r; // rows are already newest-first
+  });
+  return Object.values(latest)
+    .filter(r=> r.nextDueDate)
+    .map(r=> Object.assign({}, r, {_days: maintDaysUntil(r.nextDueDate)}))
+    .sort((a,b)=> a._days-b._days);
+}
+function maintDuePill(days){
+  if(days<0) return `<span class="status-pill inv-expired">Overdue ${-days}d</span>`;
+  if(days===0) return `<span class="status-pill inv-expired">Due today</span>`;
+  if(days<=7) return `<span class="status-pill inv-expiring">Due in ${days}d</span>`;
+  return `<span class="status-pill inv-ok">In ${days}d</span>`;
+}
+function maintStatusPill(s){
+  if(s==="Pending") return `<span class="status-pill inv-low">Pending</span>`;
+  if(s==="In Progress") return `<span class="status-pill inv-expiring">In Progress</span>`;
+  return `<span class="status-pill inv-ok">Completed</span>`;
+}
+
+async function renderMaintenance(){
+  const main = document.getElementById("main");
+  main.innerHTML = `
+    <div class="page">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+        <button class="icon-btn" id="mtBack" style="background:var(--off-white);color:var(--charcoal-2);transform:rotate(180deg);">${icon('chevron',16)}</button>
+        <h2 class="brand-serif" style="margin:0;font-size:19px;">Maintenance Register</h2>
+      </div>
+      <div class="view-tabs" id="mtViewTabs">
+        ${["Overview","Register"].map(v=>`<div class="tab-btn ${maintView===v?'active':''}" data-view="${v}">${v}</div>`).join("")}
+      </div>
+      <div id="mtBody"></div>
+    </div>
+  `;
+  document.getElementById("mtBack").onclick = ()=> goTo("more");
+  document.querySelectorAll("#mtViewTabs [data-view]").forEach(el=>{
+    el.onclick = ()=>{ maintView = el.dataset.view; renderMaintenance(); };
+  });
+  const body = document.getElementById("mtBody");
+  if(maintView==="Overview") await renderMaintOverview(body);
+  else await renderMaintRegister(body);
+}
+
+function maintRowHtml(r, clinics, cur, opts){
+  opts = opts || {};
+  const bits = [
+    escapeHtml(r.category||"Other"),
+    escapeHtml(r.workType||""),
+    r.doneBy? "By "+escapeHtml(r.doneBy) : "",
+    (selectedClinicId==="ALL" && r.clinicId)? escapeHtml(maintClinicName(clinics, r.clinicId)) : "",
+    opts.showDue? (r.nextDueDate? "Due "+maintFmtDate(r.nextDueDate) : "") : maintFmtDate(r.date)
+  ].filter(Boolean);
+  return `
+    <div class="fin-row" data-mtopen="${r.id}" style="cursor:pointer;">
+      <div class="fmain">
+        <div class="fname">${escapeHtml(r.item||r.category||"Maintenance")} ${opts.showDue? maintDuePill(r._days) : maintStatusPill(r.status)}${(r.attachments&&r.attachments.length)? ` <span title="Has attachments">${icon('file',12)}</span>`:""}</div>
+        <div class="fmeta">${bits.join(" · ")}</div>
+        ${(!opts.showDue && r.description)? `<div class="fmeta" style="margin-top:2px;">${escapeHtml(r.description.length>110? r.description.slice(0,110)+"…" : r.description)}</div>` : ""}
+      </div>
+      ${opts.showDue? `<div class="ficon"><button data-mtdone="${r.id}" title="Log it as done">${icon('check',14)}</button></div>`
+                    : `<div class="famount">${Number(r.cost)? finMoney(r.cost,cur) : ""}</div>`}
+    </div>`;
+}
+function wireMaintRows(root, rows){
+  root.querySelectorAll("[data-mtopen]").forEach(el=> el.onclick = ()=> openMaintenanceForm(el.dataset.mtopen));
+  root.querySelectorAll("[data-mtdone]").forEach(b=> b.onclick = (e)=>{
+    e.stopPropagation();
+    const src = rows.find(r=>r.id===b.dataset.mtdone);
+    if(src) openMaintenanceForm(null, {fromRecord: src});
+  });
+}
+
+async function renderMaintOverview(body){
+  const [rows, clinics, cur, devices] = await Promise.all([maintLoad(), dbGetAll("clinics"), finCurrency(), rechargeLoad()]);
+  const due = maintDueItems(rows, devices);
+  const overdue = due.filter(r=>r._days<0);
+  const soon = due.filter(r=>r._days>=0 && r._days<=7);
+  const upcoming = due.filter(r=>r._days>7 && r._days<=30);
+  const open = rows.filter(r=> r.status && r.status!=="Completed");
+  const monthKey = toDateKey(new Date()).slice(0,7);
+  const spent = rows.filter(r=>(r.date||"").slice(0,7)===monthKey).reduce((s,r)=> s+(Number(r.cost)||0), 0);
+  body.innerHTML = `
+    <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+      <button class="btn btn-primary" id="mtNew" style="flex:1;min-width:150px;">+ New Entry</button>
+      <button class="btn btn-outline" id="mtBattery" style="flex:1;min-width:150px;">🔋 Rechargeable Equipment</button>
+    </div>
+    <div class="stat-grid">
+      <div class="stat-card ${overdue.length?'risk':''}"><div class="num">${overdue.length}</div><div class="label">Overdue</div></div>
+      <div class="stat-card ${soon.length?'warn':''}"><div class="num">${soon.length}</div><div class="label">Due in 7 Days</div></div>
+      <div class="stat-card ${open.length?'warn':''}"><div class="num">${open.length}</div><div class="label">Open Jobs (Pending / In Progress)</div></div>
+      <div class="stat-card"><div class="num">${finMoney(spent,cur)}</div><div class="label">Spent This Month</div></div>
+    </div>
+
+    <div class="section-title">Overdue &amp; Due This Week</div>
+    ${(overdue.length+soon.length)? `<div class="list-card">${overdue.concat(soon).map(r=>maintDueRowHtml(r,clinics)).join("")}</div>
+      <p style="margin:6px 0 0;color:var(--grey);font-size:12px;">Tap Log Recharge / Log Done once it's done — the reminder then moves to the next due date.</p>`
+      : `<div class="empty-card"><b>Nothing due this week</b>Add a Next Due date when you log a service and it will remind you here.</div>`}
+
+    ${upcoming.length? `<div class="section-title">Coming Up (Next 30 Days)</div><div class="list-card">${upcoming.map(r=>maintDueRowHtml(r,clinics)).join("")}</div>` : ""}
+
+    <div class="section-title">Open Jobs</div>
+    ${open.length? `<div class="list-card">${open.map(r=>maintRowHtml(r,clinics,cur)).join("")}</div>`
+      : `<div class="empty-card"><b>No open jobs</b>Breakdowns or complaints saved as Pending or In Progress show up here until they're completed.</div>`}
+
+    <div class="section-title">Recent Entries</div>
+    ${rows.length? `<div class="list-card">${rows.slice(0,8).map(r=>maintRowHtml(r,clinics,cur)).join("")}</div>`
+      : `<div class="empty-card"><b>No entries yet</b>Tap + New Entry to log inverter, electrical, plumbing, equipment service and more.</div>`}
+  `;
+  document.getElementById("mtNew").onclick = ()=> openMaintenanceForm(null);
+  document.getElementById("mtBattery").onclick = ()=> openRechargeSheet();
+  wireMaintRows(body, rows);
+  wireMaintDue(body, due, ()=> renderMaintenance());
+}
+
+function maintFilteredRows(rows){
+  let out = rows;
+  if(maintCatFilter!=="All") out = out.filter(r=> (r.category||"Other")===maintCatFilter);
+  if(maintStatusFilter==="Open") out = out.filter(r=> r.status && r.status!=="Completed");
+  else if(maintStatusFilter==="Completed") out = out.filter(r=> !r.status || r.status==="Completed");
+  if(maintRangeFilter!=="All"){
+    const from = maintAddDays(toDateKey(new Date()), -Number(maintRangeFilter));
+    out = out.filter(r=> (r.date||"") >= from);
+  }
+  const q = normalizeStr(maintSearch);
+  if(q) out = out.filter(r=> [r.item,r.category,r.workType,r.description,r.doneBy,r.billNo,r.remarks,r.reading].some(v=> normalizeStr(v).includes(q)));
+  return out;
+}
+
+async function renderMaintRegister(body){
+  const [rows, clinics, cur] = await Promise.all([maintLoad(), dbGetAll("clinics"), finCurrency()]);
+  const list = maintFilteredRows(rows);
+  const total = list.reduce((s,r)=> s+(Number(r.cost)||0), 0);
+  const totalPages = Math.max(1, Math.ceil(list.length/PAGE_SIZE));
+  if(maintPage>totalPages) maintPage = totalPages;
+  const shown = list.slice((maintPage-1)*PAGE_SIZE, maintPage*PAGE_SIZE);
+  body.innerHTML = `
+    <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
+      <button class="btn btn-primary" id="mtNew2" style="flex:1;min-width:150px;">+ New Entry</button>
+      <button class="btn btn-outline" id="mtExport" style="flex:1;min-width:150px;">${icon('backup',15)} Export to Excel</button>
+    </div>
+    <div class="search-bar" style="margin-bottom:10px;">
+      <span class="icon-btn" style="background:none;color:var(--grey);">${icon('search',18)}</span>
+      <input id="mtSearch" placeholder="Search equipment, work, technician, bill no..." value="${escapeAttr(maintSearch)}">
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Category</label><select id="mtCat">
+        <option value="All">All categories</option>
+        ${MAINT_CATEGORIES.map(c=>`<option ${maintCatFilter===c?'selected':''}>${escapeHtml(c)}</option>`).join("")}
+      </select></div>
+      <div class="field"><label>Period</label><select id="mtRange">
+        ${[["30","Last 30 days"],["90","Last 3 months"],["365","Last 12 months"],["All","All time"]].map(([v,l])=>`<option value="${v}" ${maintRangeFilter===v?'selected':''}>${l}</option>`).join("")}
+      </select></div>
+    </div>
+    <div class="filter-row" id="mtStatusChips">
+      ${[["All","All"],["Open","Open Jobs"],["Completed","Completed"]].map(([v,l])=>`<div class="filter-chip ${maintStatusFilter===v?'active':''}" data-ms="${v}">${l}</div>`).join("")}
+    </div>
+    <p style="margin:4px 0 10px;color:var(--grey);font-size:12.5px;">${list.length} ${list.length===1?"entry":"entries"} · Total cost ${finMoney(total,cur)}</p>
+    ${list.length? `<div class="list-card">${shown.map(r=>maintRowHtml(r,clinics,cur)).join("")}</div>${paginationBarHtml("mtReg", list.length, maintPage)}`
+      : `<div class="empty-card"><b>No entries found</b>${(maintSearch||maintCatFilter!=="All"||maintStatusFilter!=="All")? "Try a different search, category or period." : "Tap + New Entry to start the register."}</div>`}
+  `;
+  document.getElementById("mtNew2").onclick = ()=> openMaintenanceForm(null);
+  document.getElementById("mtExport").onclick = ()=> exportMaintenanceExcel(list, clinics);
+  document.getElementById("mtSearch").oninput = (e)=>{
+    maintSearch = e.target.value; maintPage = 1;
+    const pos = e.target.selectionStart;
+    renderMaintRegister(body).then(()=>{ const s=document.getElementById("mtSearch"); if(s){ s.focus(); try{ s.setSelectionRange(pos,pos); }catch(_){} } });
+  };
+  document.getElementById("mtCat").onchange = (e)=>{ maintCatFilter = e.target.value; maintPage = 1; renderMaintRegister(body); };
+  document.getElementById("mtRange").onchange = (e)=>{ maintRangeFilter = e.target.value; maintPage = 1; renderMaintRegister(body); };
+  document.querySelectorAll("#mtStatusChips [data-ms]").forEach(el=> el.onclick = ()=>{ maintStatusFilter = el.dataset.ms; maintPage = 1; renderMaintRegister(body); });
+  wireMaintRows(body, rows);
+  wirePaginationBar("mtReg", list.length, maintPage, PAGE_SIZE, (p)=>{ maintPage = p; renderMaintRegister(body); });
+}
+
+function exportMaintenanceExcel(list, clinics){
+  if(typeof XLSX==="undefined"){ showToast("Excel export isn't available right now — check your internet connection"); return; }
+  if(!list.length){ showToast("Nothing to export"); return; }
+  const rows = [["Date","Clinic","Category","Equipment / Area","Work Type","Status","Work Done / Problem","Done By","Phone","Cost","Bill / Job No.","Reading / Result","Battery Voltage (V)","Battery Charge (%)","Water Topped Up","Next Due","AMC / Warranty Till","Remarks","Recorded By"]];
+  list.forEach(r=> rows.push([
+    r.date||"", maintClinicName(clinics, r.clinicId), r.category||"", r.item||"", r.workType||"", r.status||"Completed",
+    r.description||"", r.doneBy||"", r.doneByPhone||"", Number(r.cost)||0, r.billNo||"", r.reading||"",
+    r.batteryVoltage||"", r.batteryCharge||"", r.waterToppedUp? "Yes":"", r.nextDueDate||"", r.amcTill||"", r.remarks||"", r.recordedBy||""
+  ]));
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws["!cols"] = rows[0].map((h,i)=>({wch: [11,16,22,24,22,12,40,18,13,9,14,18,10,10,8,11,12,30,24][i]||14}));
+  XLSX.utils.book_append_sheet(wb, ws, "Maintenance Register");
+  XLSX.writeFile(wb, "Maintenance-Register-"+toDateKey(new Date())+".xlsx");
+  showToast("Exported");
+}
+
+async function openMaintenanceForm(id, opts){
+  opts = opts || {};
+  const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived);
+  const all = await dbGetAll("maintenanceRecords");
+  const today = toDateKey(new Date());
+  let r;
+  if(id){
+    r = all.find(x=>x.id===id);
+    if(!r){ showToast("Entry not found"); return; }
+    r = Object.assign({attachments:[]}, r);
+  }else{
+    const defClinic = currentUserRestrictedClinicId || (selectedClinicId!=="ALL"? selectedClinicId : getDefaultClinicId(clinics));
+    r = { id: uid("maint"), date: today, clinicId: defClinic, category:"", item:"", workType:"", status:"Completed",
+          description:"", doneBy:"", doneByPhone:"", cost:"", billNo:"", reading:"", batteryVoltage:"", batteryCharge:"",
+          waterToppedUp:false, nextDueDate:"", amcTill:"", remarks:"", attachments:[], createdAt: nowIso() };
+    if(opts.fromRecord){
+      const s = opts.fromRecord;
+      Object.assign(r, { clinicId: s.clinicId||r.clinicId, category: s.category||"", item: s.item||"", workType: s.workType||"",
+        doneBy: s.doneBy||"", doneByPhone: s.doneByPhone||"", amcTill: s.amcTill||"" });
+      // Keep the same gap as last time, if there was one.
+      if(s.reminderDays){ r.reminderDays = s.reminderDays; r.nextDueDate = maintAddDays(today, Number(s.reminderDays)); }
+      else if(s.nextDueDate && s.date){
+        const gap = Math.round((fromDateKey(s.nextDueDate)-fromDateKey(s.date))/86400000);
+        if(gap>0) r.nextDueDate = maintAddDays(today, gap);
+      }
+    }
+  }
+  const isEdit = !!id;
+  const itemSuggestions = Array.from(new Set(all.map(x=>(x.item||"").trim()).filter(Boolean))).sort();
+  const techSuggestions = Array.from(new Set(all.map(x=>(x.doneBy||"").trim()).filter(Boolean))).sort();
+  const lockClinic = !!currentUserRestrictedClinicId;
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheet()">${icon('close',18)}</button>
+    <h2>${isEdit?"Edit":"New"} Maintenance Entry</h2>
+    <div class="field-row">
+      <div class="field"><label>Date</label><input id="mfDate" type="date" value="${escapeAttr(r.date)}"></div>
+      <div class="field"><label>Clinic</label><select id="mfClinic" ${lockClinic?"disabled":""}>
+        ${clinics.map(c=>`<option value="${c.id}" ${r.clinicId===c.id?'selected':''}>${escapeHtml(c.name.replace('Healing Touch Dental – ',''))}</option>`).join("")}
+      </select></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Category</label><select id="mfCat">
+        <option value="">Select category</option>
+        ${MAINT_CATEGORIES.map(c=>`<option ${r.category===c?'selected':''}>${escapeHtml(c)}</option>`).join("")}
+      </select></div>
+      <div class="field"><label>Work Type</label><select id="mfWork">
+        <option value="">Select work type</option>
+        ${MAINT_WORK_TYPES.map(w=>`<option ${r.workType===w?'selected':''}>${escapeHtml(w)}</option>`).join("")}
+      </select></div>
+    </div>
+    <div class="field"><label>Equipment / Area</label><input id="mfItem" list="mfItemList" value="${escapeAttr(r.item)}" placeholder="e.g. Inverter Battery 1, Chair 2, Autoclave, Reception AC, Washroom tap">
+      <datalist id="mfItemList">${itemSuggestions.map(s=>`<option value="${escapeAttr(s)}">`).join("")}</datalist></div>
+    <div class="field"><label>Work Done / Problem</label><textarea id="mfDesc" rows="2" placeholder="What was checked, repaired or replaced">${escapeHtml(r.description)}</textarea></div>
+
+    <div id="mfBatteryBox" style="display:none;background:var(--off-white);border-radius:10px;padding:10px 12px;margin-bottom:12px;">
+      <div style="font-weight:600;font-size:13px;margin-bottom:8px;">Battery Readings</div>
+      <div class="field-row">
+        <div class="field"><label>Voltage (V)</label><input id="mfVolt" type="number" step="0.1" inputmode="decimal" value="${escapeAttr(r.batteryVoltage)}" placeholder="e.g. 12.6"></div>
+        <div class="field"><label>Charge (%)</label><input id="mfCharge" type="number" min="0" max="100" inputmode="numeric" value="${escapeAttr(r.batteryCharge)}" placeholder="e.g. 100"></div>
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;cursor:pointer;">
+        <input type="checkbox" id="mfWater" ${r.waterToppedUp?"checked":""} style="width:16px;height:16px;"> Distilled water topped up
+      </label>
+    </div>
+
+    <div class="field"><label>Reading / Test Result (optional)</label><input id="mfReading" value="${escapeAttr(r.reading)}" placeholder="e.g. Spore test Pass, Meter 12,345, Pressure OK"></div>
+    <div class="field-row">
+      <div class="field"><label>Done By (Technician / Vendor)</label><input id="mfBy" list="mfByList" value="${escapeAttr(r.doneBy)}" placeholder="Name or company">
+        <datalist id="mfByList">${techSuggestions.map(s=>`<option value="${escapeAttr(s)}">`).join("")}</datalist></div>
+      <div class="field"><label>Phone</label><input id="mfPhone" inputmode="tel" value="${escapeAttr(r.doneByPhone)}"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Cost (₹)</label><input id="mfCost" type="number" min="0" step="0.01" inputmode="decimal" value="${escapeAttr(r.cost)}" placeholder="0"></div>
+      <div class="field"><label>Bill / Job Card No.</label><input id="mfBill" value="${escapeAttr(r.billNo)}"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Status</label><select id="mfStatus">
+        ${MAINT_STATUSES.map(s=>`<option ${(r.status||"Completed")===s?'selected':''}>${s}</option>`).join("")}
+      </select></div>
+      <div class="field"><label>AMC / Warranty Valid Till</label><input id="mfAmc" type="date" value="${escapeAttr(r.amcTill)}"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Remind Me (on Home page)</label><select id="mfRemind">
+        ${MAINT_REMINDER_OPTS.map(([v,l])=>`<option value="${v}">${l}</option>`).join("")}
+        <option value="custom">On a specific date</option>
+      </select></div>
+      <div class="field" id="mfDueWrap"><label>Next Due Date</label><input id="mfDue" type="date" value="${escapeAttr(r.nextDueDate)}"></div>
+    </div>
+    <div class="field"><label>Remarks</label><textarea id="mfRemarks" rows="2">${escapeHtml(r.remarks)}</textarea></div>
+
+    <div class="field"><label>Bill / Photo Attachments</label>
+      <input id="mfFile" type="file" accept="image/*,application/pdf" multiple style="display:none;">
+      <button type="button" class="btn btn-outline btn-block" id="mfAttachBtn">${icon('camera',15)} Add Photo / Bill</button>
+      <div id="mfAttList" style="margin-top:8px;"></div>
+    </div>
+
+    ${isEdit? `<p style="color:var(--grey);font-size:12px;margin:0 0 10px;">Recorded by ${escapeHtml(r.recordedBy||"—")}${r.updatedAt? " · last edited "+new Date(r.updatedAt).toLocaleString("en-IN",{day:"numeric",month:"short",hour:"numeric",minute:"2-digit"}) : ""}</p>` : ""}
+    ${isEdit? `<button class="btn btn-outline btn-block" id="mfDelete" style="margin-bottom:8px;">Delete Entry</button>` : ""}
+    <button class="btn btn-primary btn-block" id="mfSave">${isEdit?"Save Changes":"Save Entry"}</button>
+  `);
+
+  let attachments = (r.attachments||[]).slice();
+  const catSel = document.getElementById("mfCat");
+  const batteryBox = document.getElementById("mfBatteryBox");
+  const syncBattery = ()=>{ batteryBox.style.display = (catSel.value==="Inverter & Batteries") ? "" : "none"; };
+  syncBattery();
+  catSel.onchange = ()=>{
+    syncBattery();
+    // Pre-fill sensible defaults on a new entry only, never over what's typed.
+    const d = MAINT_DEFAULTS[catSel.value];
+    if(!isEdit && d){
+      const ws = document.getElementById("mfWork"); if(!ws.value) ws.value = d.work;
+      if(!dueInp.value){
+        if(optVals.includes(String(d.due))){ remindSel.value = String(d.due); applyRemind(); }
+        else { dueInp.value = maintAddDays(document.getElementById("mfDate").value || today, d.due); setRemind("custom"); }
+      }
+    }
+  };
+  const remindSel = document.getElementById("mfRemind");
+  const dueInp = document.getElementById("mfDue");
+  const dueWrap = document.getElementById("mfDueWrap");
+  const optVals = MAINT_REMINDER_OPTS.map(o=>o[0]);
+  const setRemind = (v)=>{ remindSel.value = v; dueWrap.style.display = remindSel.value==="" ? "none" : ""; };
+  const applyRemind = ()=>{
+    const v = remindSel.value;
+    if(v==="") dueInp.value = "";
+    else if(v!=="custom") dueInp.value = maintAddDays(document.getElementById("mfDate").value || today, Number(v));
+    else if(!dueInp.value) dueInp.value = maintAddDays(document.getElementById("mfDate").value || today, 30);
+    setRemind(v);
+  };
+  setRemind(r.reminderDays && optVals.includes(String(r.reminderDays)) ? String(r.reminderDays) : (r.nextDueDate ? "custom" : ""));
+  remindSel.onchange = applyRemind;
+  dueInp.onchange = ()=>{ if(remindSel.value!=="custom") setRemind("custom"); };
+  document.getElementById("mfDate").onchange = ()=>{ const v = remindSel.value; if(v && v!=="custom") applyRemind(); };
+
+  const renderAtt = ()=>{
+    const wrap = document.getElementById("mfAttList");
+    if(!wrap) return;
+    wrap.innerHTML = attachments.length ? attachments.map((a,i)=>`
+      <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--grey-light);">
+        <span>${icon((a.type||"").startsWith("image/")?'image':'file',16)}</span>
+        <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;">${escapeHtml(a.name||"Attachment")}</span>
+        <button type="button" class="btn btn-outline btn-sm" data-attview="${i}">View</button>
+        <button type="button" class="btn btn-outline btn-sm" data-attdel="${i}">Remove</button>
+      </div>`).join("") : "";
+    wrap.querySelectorAll("[data-attview]").forEach(b=> b.onclick = ()=> maintViewAttachment(attachments[Number(b.dataset.attview)]));
+    wrap.querySelectorAll("[data-attdel]").forEach(b=> b.onclick = ()=>{ attachments.splice(Number(b.dataset.attdel),1); renderAtt(); });
+  };
+  renderAtt();
+  const fileInput = document.getElementById("mfFile");
+  document.getElementById("mfAttachBtn").onclick = ()=> fileInput.click();
+  fileInput.onchange = async ()=>{
+    const files = Array.from(fileInput.files||[]);
+    for(const f of files){
+      try{
+        if((f.type||"").startsWith("image/")){
+          attachments.push({ id: uid("att"), name: f.name, type:"image/jpeg", data: await compressImageFile(f, 1400) });
+        }else if(f.type==="application/pdf"){
+          if(f.size > 5*1024*1024){ showToast(f.name+" is over 5 MB — please attach a smaller file"); continue; }
+          const data = await new Promise((res,rej)=>{ const fr = new FileReader(); fr.onload = ()=>res(fr.result); fr.onerror = ()=>rej(new Error("read")); fr.readAsDataURL(f); });
+          attachments.push({ id: uid("att"), name: f.name, type:"application/pdf", data });
+        }else{
+          showToast("Only photos and PDF files can be attached");
+        }
+      }catch(e){ showToast("Couldn't read "+f.name); }
+    }
+    fileInput.value = "";
+    renderAtt();
+  };
+
+  document.getElementById("mfSave").onclick = async ()=>{
+    const category = catSel.value;
+    const item = document.getElementById("mfItem").value.trim();
+    const date = document.getElementById("mfDate").value;
+    if(!date){ showToast("Choose a date"); return; }
+    if(!category){ showToast("Choose a category"); return; }
+    if(!item){ showToast("Enter the equipment or area"); return; }
+    const nextDue = remindSel.value==="" ? "" : document.getElementById("mfDue").value;
+    if(nextDue && nextDue < date){ showToast("Next due date can't be before the entry date"); return; }
+    const isBattery = category==="Inverter & Batteries";
+    const updated = Object.assign({}, r, {
+      date, category, item,
+      clinicId: lockClinic ? currentUserRestrictedClinicId : document.getElementById("mfClinic").value,
+      workType: document.getElementById("mfWork").value,
+      description: document.getElementById("mfDesc").value.trim(),
+      reading: document.getElementById("mfReading").value.trim(),
+      batteryVoltage: isBattery ? document.getElementById("mfVolt").value.trim() : "",
+      batteryCharge: isBattery ? document.getElementById("mfCharge").value.trim() : "",
+      waterToppedUp: isBattery ? document.getElementById("mfWater").checked : false,
+      doneBy: document.getElementById("mfBy").value.trim(),
+      doneByPhone: document.getElementById("mfPhone").value.trim(),
+      cost: document.getElementById("mfCost").value==="" ? "" : Number(document.getElementById("mfCost").value),
+      billNo: document.getElementById("mfBill").value.trim(),
+      status: document.getElementById("mfStatus").value,
+      amcTill: document.getElementById("mfAmc").value,
+      nextDueDate: nextDue,
+      reminderDays: (remindSel.value && remindSel.value!=="custom") ? Number(remindSel.value) : "",
+      remarks: document.getElementById("mfRemarks").value.trim(),
+      attachments,
+      recordedBy: r.recordedBy || fbCurrentUserEmail || "",
+      updatedAt: nowIso()
+    });
+    if(isEdit) updated.updatedBy = fbCurrentUserEmail || "";
+    const btn = document.getElementById("mfSave");
+    btn.disabled = true; btn.textContent = "Saving…";
+    try{
+      await dbPut("maintenanceRecords", updated);
+      logActivity((isEdit?"Updated":"Added")+" maintenance entry: "+category+" — "+item);
+      showToast("Saved");
+      closeSheet();
+      if(currentPage==="maintenance") renderMaintenance();
+    }catch(e){
+      console.error(e);
+      showToast("Couldn't save — check your internet connection and try again");
+      btn.disabled = false; btn.textContent = isEdit?"Save Changes":"Save Entry";
+    }
+  };
+  const delBtn = document.getElementById("mfDelete");
+  if(delBtn) delBtn.onclick = async ()=>{
+    if(!confirm("Delete this maintenance entry? It will go to Trash, where the admin can restore it.")) return;
+    await dbDelete("maintenanceRecords", r.id);
+    logActivity("Deleted maintenance entry: "+(r.category||"")+" — "+(r.item||""));
+    showToast("Deleted");
+    closeSheet();
+    if(currentPage==="maintenance") renderMaintenance();
+  };
+}
+
+function maintViewAttachment(a){
+  if(!a || !a.data) return;
+  if((a.type||"").startsWith("image/")){ openImageViewer(a.data); return; }
+  if(a.data.startsWith("data:")){
+    try{
+      const [meta, b64] = a.data.split(",");
+      const bin = atob(b64); const arr = new Uint8Array(bin.length);
+      for(let i=0;i<bin.length;i++) arr[i] = bin.charCodeAt(i);
+      const url = URL.createObjectURL(new Blob([arr], {type: (meta.match(/data:([^;]+)/)||[])[1] || "application/pdf"}));
+      window.open(url, "_blank");
+      setTimeout(()=> URL.revokeObjectURL(url), 60000);
+    }catch(e){ showToast("Couldn't open this file"); }
+    return;
+  }
+  window.open(a.data, "_blank", "noopener");
+}
+
+
+// ---- Due items (maintenance entries + rechargeable equipment) ----
+function maintDueItems(rows, devices){
+  const items = maintDueList(rows).map(r=> Object.assign({_kind:"maint"}, r));
+  (devices||[]).forEach(d=>{
+    if(!d.nextDueDate) return;
+    items.push(Object.assign({_kind:"device"}, d, {_days: maintDaysUntil(d.nextDueDate)}));
+  });
+  return items.sort((a,b)=> a._days-b._days);
+}
+function maintDueRowHtml(it, clinics){
+  const clinicTxt = (selectedClinicId==="ALL" && it.clinicId)? " · "+escapeHtml(maintClinicName(clinics, it.clinicId)) : "";
+  if(it._kind==="device"){
+    return `
+    <div class="fin-row">
+      <div class="fmain">
+        <div class="fname">🔋 ${escapeHtml(it.name)}${it.brand? ` <span style="font-weight:500;color:var(--grey);">(${escapeHtml(it.brand)})</span>`:""} ${maintDuePill(it._days)}</div>
+        <div class="fmeta">Recharge due ${maintFmtDate(it.nextDueDate)}${it.lastChargedDate? " · last charged "+maintFmtDate(it.lastChargedDate):""}${clinicTxt}</div>
+      </div>
+      <button class="btn btn-primary btn-sm" data-dueRecharge="${it.id}">Log Recharge</button>
+    </div>`;
+  }
+  return `
+    <div class="fin-row">
+      <div class="fmain" data-mtopen="${it.id}" style="cursor:pointer;">
+        <div class="fname">${escapeHtml(it.item||it.category||"Maintenance")} ${maintDuePill(it._days)}</div>
+        <div class="fmeta">${escapeHtml(it.category||"")}${it.workType? " · "+escapeHtml(it.workType):""} · Due ${maintFmtDate(it.nextDueDate)}${clinicTxt}</div>
+      </div>
+      <button class="btn btn-outline btn-sm" data-dueDone="${it.id}">Log Done</button>
+    </div>`;
+}
+function wireMaintDue(root, items, after){
+  root.querySelectorAll("[data-dueRecharge]").forEach(b=> b.onclick = async (e)=>{
+    e.stopPropagation();
+    const d = items.find(x=>x._kind==="device" && x.id===b.dataset.duerecharge);
+    if(!d) return;
+    b.disabled = true;
+    await rechargeLogNow(d);
+    if(after) after();
+  });
+  root.querySelectorAll("[data-dueDone]").forEach(b=> b.onclick = (e)=>{
+    e.stopPropagation();
+    const src = items.find(x=>x._kind==="maint" && x.id===b.dataset.duedone);
+    if(src) openMaintenanceForm(null, {fromRecord: src});
+  });
+  root.querySelectorAll("[data-mtopen]").forEach(el=>{ if(!el.onclick) el.onclick = ()=> openMaintenanceForm(el.dataset.mtopen); });
+}
+
+// ---- Home page: items whose reminder date has arrived ----
+async function renderHomeMaintenanceDue(){
+  const wrap = document.getElementById("homeMaintDue");
+  if(!wrap) return;
+  if(!canAccessModule("maintenance")){ wrap.innerHTML = ""; return; }
+  try{
+    const [rows, devices, clinics] = await Promise.all([maintLoad(), rechargeLoad(), dbGetAll("clinics")]);
+    const due = maintDueItems(rows, devices).filter(it=> it._days<=0);
+    if(!document.getElementById("homeMaintDue")) return;
+    if(!due.length){ wrap.innerHTML = ""; return; }
+    wrap.innerHTML = `
+      <div class="section-title">Maintenance Due <span class="section-link" id="homeMaintOpen">Open Register</span></div>
+      <div class="list-card">${due.slice(0,8).map(it=>maintDueRowHtml(it, clinics)).join("")}</div>
+      ${due.length>8? `<p style="margin:6px 0 0;color:var(--grey);font-size:12px;">+${due.length-8} more in the Maintenance Register</p>`:""}`;
+    document.getElementById("homeMaintOpen").onclick = ()=>{ maintView = "Overview"; goTo("maintenance"); };
+    wireMaintDue(wrap, due, ()=> renderHomeMaintenanceDue());
+  }catch(e){ console.warn("Maintenance due on Home:", e); wrap.innerHTML = ""; }
+}
+
+// ---- Rechargeable equipment (DC X-ray, endomotor, light cure...) ----
+let rechargeClinicId = null;
+function rechargeDefaultClinic(clinics){
+  return currentUserRestrictedClinicId || (selectedClinicId!=="ALL"? selectedClinicId : getDefaultClinicId(clinics));
+}
+async function rechargeLoad(){
+  let rows = await dbGetAll("rechargeableDevices");
+  if(selectedClinicId!=="ALL") rows = rows.filter(d=> !d.clinicId || d.clinicId===selectedClinicId);
+  return rows;
+}
+// Adds the starting list once per clinic (never again, even if they're deleted).
+async function rechargeSeedIfNeeded(clinicId){
+  if(!clinicId) return;
+  const s = (await dbGetAll("settings"))[0];
+  if(!s) return;
+  const seeded = s.rechargeSeededClinics || {};
+  if(seeded[clinicId]) return;
+  const existing = (await dbGetAll("rechargeableDevices")).filter(d=> d.clinicId===clinicId);
+  if(!existing.length){
+    for(let i=0;i<RECHARGE_DEFAULT_DEVICES.length;i++){
+      await dbPut("rechargeableDevices", { id: uid("rdev"), clinicId, name: RECHARGE_DEFAULT_DEVICES[i], brand:"", reminderDays:30,
+        lastChargedDate:"", nextDueDate:"", notes:"", sort:i, createdAt: nowIso() });
+    }
+  }
+  s.rechargeSeededClinics = Object.assign({}, seeded, {[clinicId]: true});
+  await dbPut("settings", s);
+}
+async function rechargeLogNow(d){
+  const today = toDateKey(new Date());
+  const updated = Object.assign({}, d);
+  delete updated._kind; delete updated._days;
+  updated.lastChargedDate = today;
+  updated.lastChargedBy = fbCurrentUserEmail || "";
+  updated.nextDueDate = d.reminderDays ? maintAddDays(today, Number(d.reminderDays)) : "";
+  updated.updatedAt = nowIso();
+  try{
+    await dbPut("rechargeableDevices", updated);
+    await dbPut("maintenanceRecords", {
+      id: uid("maint"), date: today, clinicId: d.clinicId||"", category:"Rechargeable Equipment",
+      item: d.name + (d.brand? " – "+d.brand : ""), workType:"Battery Recharge", status:"Completed",
+      description:"Battery recharged", deviceId: d.id, nextDueDate:"", attachments:[],
+      recordedBy: fbCurrentUserEmail || "", createdAt: nowIso(), updatedAt: nowIso()
+    });
+    logActivity("Logged recharge: "+d.name);
+    showToast(updated.nextDueDate ? "Recharge logged · next reminder "+maintFmtDate(updated.nextDueDate) : "Recharge logged");
+  }catch(e){
+    console.error(e);
+    showToast("Couldn't save — check your internet connection and try again");
+  }
+}
+
+async function openRechargeSheet(){
+  const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived);
+  if(currentUserRestrictedClinicId) rechargeClinicId = currentUserRestrictedClinicId;
+  if(!rechargeClinicId || !clinics.some(c=>c.id===rechargeClinicId)) rechargeClinicId = rechargeDefaultClinic(clinics);
+  await rechargeSeedIfNeeded(rechargeClinicId);
+  const devices = (await dbGetAll("rechargeableDevices"))
+    .filter(d=> (d.clinicId||"")===rechargeClinicId)
+    .map(d=> Object.assign({}, d, {_days: d.nextDueDate? maintDaysUntil(d.nextDueDate) : null}))
+    .sort((a,b)=> (a.sort??999)-(b.sort??999) || (a.name||"").localeCompare(b.name||""));
+  const showClinicPicker = !currentUserRestrictedClinicId && clinics.length>1;
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheet()">${icon('close',18)}</button>
+    <h2>Rechargeable Equipment</h2>
+    <p style="margin-bottom:10px;">Tap <b>Log Recharge</b> after charging. Choose how often each one needs charging — when it's due, it shows on the Home page.</p>
+    ${showClinicPicker? `<div class="field"><label>Clinic</label><select id="rcClinic">
+      ${clinics.map(c=>`<option value="${c.id}" ${rechargeClinicId===c.id?'selected':''}>${escapeHtml(c.name.replace('Healing Touch Dental – ',''))}</option>`).join("")}
+    </select></div>` : ""}
+    <button class="btn btn-primary btn-block" id="rcAdd" style="margin-bottom:12px;">+ Add Equipment</button>
+    ${devices.length? `<div class="list-card">${devices.map(d=>`
+      <div style="padding:12px 14px;border-bottom:1px solid var(--grey-light);">
+        <div style="display:flex;align-items:flex-start;gap:8px;">
+          <div style="flex:1;min-width:0;">
+            <div style="font-weight:600;font-size:14px;color:var(--charcoal-2);">${escapeHtml(d.name)} ${d._days!==null? maintDuePill(d._days) : ""}</div>
+            <div style="font-size:12px;color:var(--grey);margin-top:2px;">${d.brand? "Make: "+escapeHtml(d.brand)+" · " : ""}${d.lastChargedDate? "Last charged "+maintFmtDate(d.lastChargedDate) : "Not logged yet"}${d.nextDueDate? " · Next "+maintFmtDate(d.nextDueDate) : ""}</div>
+          </div>
+          <button class="btn btn-outline btn-sm" data-rcedit="${d.id}" title="Edit">${icon('edit',13)}</button>
+          <button class="btn btn-outline btn-sm" data-rcdel="${d.id}" title="Delete">${icon('trash',13)}</button>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:8px;align-items:center;">
+          <select data-rcremind="${d.id}" style="flex:1;min-width:0;padding:8px;border-radius:8px;border:1px solid var(--grey-light);background:var(--white);color:var(--charcoal-2);font-size:13px;">
+            ${RECHARGE_REMINDER_OPTS.map(([v,l])=>`<option value="${v}" ${String(d.reminderDays||"")===v?'selected':''}>Remind every ${l}</option>`).join("")}
+          </select>
+          <button class="btn btn-primary btn-sm" data-rclog="${d.id}" style="white-space:nowrap;">Log Recharge</button>
+        </div>
+      </div>`).join("")}</div>`
+    : `<div class="empty-card"><b>No equipment added</b>Tap + Add Equipment to start.</div>`}
+  `);
+  const sel = document.getElementById("rcClinic");
+  if(sel) sel.onchange = ()=>{ rechargeClinicId = sel.value; openRechargeSheet(); };
+  document.getElementById("rcAdd").onclick = ()=> openRechargeDeviceForm(null);
+  const byId = (id)=> devices.find(x=>x.id===id);
+  document.querySelectorAll("[data-rcedit]").forEach(b=> b.onclick = ()=> openRechargeDeviceForm(b.dataset.rcedit));
+  document.querySelectorAll("[data-rcdel]").forEach(b=> b.onclick = async ()=>{
+    const d = byId(b.dataset.rcdel); if(!d) return;
+    if(!confirm(`Delete "${d.name}" from the list? Its past recharge entries stay in the register.`)) return;
+    await dbDelete("rechargeableDevices", d.id);
+    showToast("Deleted");
+    openRechargeSheet();
+    if(currentPage==="maintenance") renderMaintenance();
+  });
+  document.querySelectorAll("[data-rcremind]").forEach(s=> s.onchange = async ()=>{
+    const d = byId(s.dataset.rcremind); if(!d) return;
+    const upd = Object.assign({}, d); delete upd._days;
+    upd.reminderDays = Number(s.value);
+    upd.nextDueDate = upd.lastChargedDate ? maintAddDays(upd.lastChargedDate, upd.reminderDays) : "";
+    upd.updatedAt = nowIso();
+    await dbPut("rechargeableDevices", upd);
+    showToast("Reminder updated"+(upd.nextDueDate? " · next "+maintFmtDate(upd.nextDueDate) : " · starts after the first recharge"));
+    openRechargeSheet();
+  });
+  document.querySelectorAll("[data-rclog]").forEach(b=> b.onclick = async ()=>{
+    const d = byId(b.dataset.rclog); if(!d) return;
+    b.disabled = true; b.textContent = "Saving…";
+    await rechargeLogNow(d);
+    openRechargeSheet();
+    if(currentPage==="maintenance") renderMaintenance();
+    else if(currentPage==="home") renderHomeMaintenanceDue();
+  });
+}
+
+async function openRechargeDeviceForm(id){
+  const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived);
+  let d;
+  if(id){
+    d = (await dbGetAll("rechargeableDevices")).find(x=>x.id===id);
+    if(!d){ showToast("Not found"); return; }
+  }else{
+    d = { id: uid("rdev"), clinicId: rechargeClinicId || rechargeDefaultClinic(clinics), name:"", brand:"", reminderDays:30,
+          lastChargedDate:"", nextDueDate:"", notes:"", sort: 999, createdAt: nowIso() };
+  }
+  const isEdit = !!id;
+  const lockClinic = !!currentUserRestrictedClinicId;
+  openSheet(`
+    <button class="sheet-close" onclick="openRechargeSheet()">${icon('close',18)}</button>
+    <h2>${isEdit?"Edit":"Add"} Equipment</h2>
+    <div class="field"><label>Equipment Name</label><input id="rdName" list="rdNameList" value="${escapeAttr(d.name)}" placeholder="e.g. Endomotor">
+      <datalist id="rdNameList">${RECHARGE_DEFAULT_DEVICES.map(n=>`<option value="${escapeAttr(n)}">`).join("")}</datalist></div>
+    <div class="field"><label>Brand / Make</label><input id="rdBrand" value="${escapeAttr(d.brand)}" placeholder="e.g. Dentsply X-Smart, Woodpecker, NSK"></div>
+    <div class="field-row">
+      <div class="field"><label>Clinic</label><select id="rdClinic" ${lockClinic?"disabled":""}>
+        ${clinics.map(c=>`<option value="${c.id}" ${d.clinicId===c.id?'selected':''}>${escapeHtml(c.name.replace('Healing Touch Dental – ',''))}</option>`).join("")}
+      </select></div>
+      <div class="field"><label>Remind Every</label><select id="rdRemind">
+        ${RECHARGE_REMINDER_OPTS.map(([v,l])=>`<option value="${v}" ${String(d.reminderDays||30)===v?'selected':''}>${l}</option>`).join("")}
+      </select></div>
+    </div>
+    <div class="field"><label>Last Charged On (optional)</label><input id="rdLast" type="date" value="${escapeAttr(d.lastChargedDate)}"></div>
+    <div class="field"><label>Notes</label><textarea id="rdNotes" rows="2" placeholder="e.g. Serial no., battery type, charger kept in drawer 2">${escapeHtml(d.notes)}</textarea></div>
+    <button class="btn btn-primary btn-block" id="rdSave">${isEdit?"Save Changes":"Add Equipment"}</button>
+  `);
+  document.getElementById("rdSave").onclick = async ()=>{
+    const name = document.getElementById("rdName").value.trim();
+    if(!name){ showToast("Enter the equipment name"); return; }
+    const reminderDays = Number(document.getElementById("rdRemind").value);
+    const lastChargedDate = document.getElementById("rdLast").value;
+    const upd = Object.assign({}, d, {
+      name, brand: document.getElementById("rdBrand").value.trim(),
+      clinicId: lockClinic ? currentUserRestrictedClinicId : document.getElementById("rdClinic").value,
+      reminderDays, lastChargedDate,
+      nextDueDate: lastChargedDate ? maintAddDays(lastChargedDate, reminderDays) : "",
+      notes: document.getElementById("rdNotes").value.trim(), updatedAt: nowIso()
+    });
+    await dbPut("rechargeableDevices", upd);
+    showToast(isEdit? "Saved" : "Equipment added");
+    rechargeClinicId = upd.clinicId;
+    openRechargeSheet();
+    if(currentPage==="maintenance") renderMaintenance();
+  };
+}
 // ---- Manage Labs ----
 // Aligner labs (Invisalign, Spark, Illusion...) live in the same "labs"
 // store with kind:"aligner", so they're kept out of the normal lab pickers
@@ -8668,12 +9589,89 @@ function callNumber(number, name){
   logActivity(`Called ${name||number}`);
 }
 
-// Triggers the same print/PDF flow as the regular Print button, then opens a WhatsApp
+// ---- Shareable document links (Prescription, OPD card, invoices, instructions...) ----
+// Runs a print function in "capture" mode to get the exact printed page,
+// then publishes it under an unguessable token. doc.html shows it as an
+// A4 page with a Download PDF button, so WhatsApp only carries a short link.
+function captureDocHtml(printFn, timeoutMs){
+  return new Promise((resolve)=>{
+    let done = false;
+    const finish = (v)=>{ if(done) return; done = true; if(window.__printCapture===cap) window.__printCapture = null; resolve(v); };
+    const cap = { resolve: (html)=> finish(html) };
+    window.__printCapture = cap;
+    try{
+      const r = printFn();
+      if(r && typeof r.then==="function") r.then(()=>{ setTimeout(()=> finish(null), 6000); }, ()=> finish(null));
+    }catch(e){ finish(null); }
+    setTimeout(()=> finish(null), timeoutMs||15000);
+  });
+}
+function shrinkDocHtmlForDb(html){
+  if(html.length <= 900000) return html;
+  // Drop the largest embedded images (logos/letterheads/signatures) until it fits.
+  const imgs = [];
+  html.replace(/src="(data:[^"]{50000,})"/g, (m, d)=>{ imgs.push(d); return m; });
+  imgs.sort((a,b)=> b.length-a.length);
+  for(const d of imgs){
+    if(html.length <= 900000) break;
+    html = html.split(d).join("");
+  }
+  return html;
+}
+async function publishDocLink(html, meta){
+  meta = meta || {};
+  try{
+    const st = (await dbGetAll("settings"))[0] || {};
+    const custom = (st.docPageUrl||"").trim();
+    const base = custom || (/^https?:/i.test(location.origin) ? location.origin + "/doc.html" : "");
+    if(!base){ showToast("Open the PMS from its website address to create document links"); return null; }
+    const body = shrinkDocHtmlForDb(html);
+    if(body.length > 950000){ showToast("This document is too large to share as a link"); return null; }
+    const token = newReceiptToken();
+    // Stored alongside receipts so it uses the same, already-public read rule.
+    await window.__fb.put("publicReceipts", {
+      id: token, docType: "html", title: meta.title||"Document", html: body,
+      patientName: meta.patientName||"", createdAt: nowIso()
+    });
+    return base + (base.includes("?")?"&":"?") + "t=" + token;
+  }catch(err){
+    console.error("publishDocLink failed:", err);
+    showToast("Couldn't create the document link: "+((err&&err.message)||"error"));
+    return null;
+  }
+}
+async function sendDocLinkOnWhatsApp(patient, printFn, docLabel, extra){
+  extra = extra || {};
+  if(!patient){ showToast("No patient context available"); return; }
+  const number = patient.whatsappNumber || patient.mobile;
+  if(!number){ showToast("This patient has no mobile number on file"); return; }
+  showToast("Preparing "+docLabel+" link…");
+  const html = await captureDocHtml(printFn);
+  if(!html){ sendPdfOnWhatsAppTwoStep(patient, printFn, docLabel); return; }
+  const link = await publishDocLink(html, {title: docLabel, patientName: patient.name});
+  if(!link) return;
+  const st = (await dbGetAll("settings"))[0] || {};
+  const templateName = (st.docLinkTemplate||"").trim();
+  openWhatsAppComposer({
+    title: "Send "+docLabel+" (PDF link)",
+    toName: patient.name, toNumber: number, patientId: patient.id, recipientType: "Patient",
+    message: extra.message || `Hi ${patient.name}, your ${docLabel} from Healing Touch Dental is ready. View or download it (PDF) here: ${link}`,
+    templateName: templateName || null,
+    templateParams: templateName ? [patient.name||"Patient", docLabel, link] : null,
+    onSent: ()=> logActivity("Sent "+docLabel+" link to "+patient.name, {patientId: patient.id})
+  });
+}
+// Every "Send PDF on WhatsApp" button now sends a link to the document.
+function sendPdfOnWhatsApp(patient, printFn, docLabel){
+  return sendDocLinkOnWhatsApp(patient, printFn, docLabel);
+}
+
+// Fallback when a document can't be captured: the same print/PDF flow as the regular Print button, then opens a WhatsApp
 // composer to the patient so the just-saved PDF can be attached. WhatsApp's web link
 // format cannot auto-attach files (no browser can do this for a third-party app), so this
 // is a two-step assist rather than a silent auto-send: it opens the print dialog for you
 // to Save as PDF, and pre-fills the WhatsApp message so all that's left is attaching the file.
-function sendPdfOnWhatsApp(patient, printFn, docLabel){
+function sendPdfOnWhatsAppTwoStep(patient, printFn, docLabel){
   if(!patient){ showToast("No patient context available"); return; }
   if(!patient.mobile){ showToast("This patient has no mobile number on file"); return; }
   printFn();
@@ -9148,6 +10146,50 @@ async function dedupeOnlineBookings(){
 // staff are each waiting to see different bookings.
 let sessionPoppedBookingNotifIds = new Set();
 
+// ---- Website spam / bot filter ----
+// Bots that find the public booking form (or its Firebase config) submit
+// junk like "OPXpxRRrDkijYcZJDbsmIrdy" with impossible dates. These never
+// raise a notification: they're flagged as spam, kept out of the
+// Online Appointments list (viewable under "Blocked as spam", with a
+// "Not spam" button) and deleted automatically after 7 days.
+function bookingSpamReasons(b){
+  const reasons = [];
+  const name = String(b.name||"").trim();
+  const all = [b.name,b.phone,b.email,b.reason,b.clinicLocation].map(v=>String(v||"")).join(" ");
+  if(/https?:\/\/|www\.|<[a-z!/]/i.test(all)) reasons.push("link");
+  const letters = name.replace(/[^A-Za-z\u0900-\u097F]/g,"");
+  if(!letters.length || name.length>60 || /\d/.test(name)) reasons.push("bad name");
+  else{
+    const gib = name.split(/\s+/).some(w=>{
+      if(w.length<8 || !/[a-z]/.test(w) || !/[A-Z]/.test(w)) return false;
+      return (w.slice(1).match(/[A-Z]/g)||[]).length >= 2;
+    });
+    if(gib) reasons.push("gibberish name");
+  }
+  const digits = String(b.phone||"").replace(/\D/g,"");
+  let nat = digits.replace(/^0+/,"");
+  if(nat.length===12 && nat.startsWith("91")) nat = nat.slice(2);
+  const indianOk = nat.length===10 && /^[6-9]/.test(nat);
+  const intlOk = digits.length>=11 && digits.length<=15 && !digits.startsWith("91") && !digits.startsWith("0");
+  if(!indianOk && !intlOk) reasons.push("invalid phone");
+  if(b.date){
+    const d = new Date(b.date), y = d.getFullYear(), cy = new Date().getFullYear();
+    if(isNaN(d) || y < cy-1 || y > cy+2) reasons.push("invalid date");
+  }
+  if(b.age!==undefined && b.age!==null && String(b.age).trim()!==""){
+    const a = Number(b.age);
+    if(!isFinite(a) || a<0 || a>120) reasons.push("invalid age");
+  }
+  return reasons;
+}
+function isSpamBooking(b){
+  if(b.notSpam) return false;
+  const r = bookingSpamReasons(b);
+  // A single slip (e.g. a mistyped phone) still reaches the clinic; junk
+  // names, links or several bad fields together are treated as bots.
+  return r.includes("gibberish name") || r.includes("link") || r.length>=2;
+}
+
 async function checkForNewOnlineBookings(){
   const s = (await dbGetAll("settings"))[0] || {};
   if(!s.onlineBookingEnabled && !s.requestApptEnabled) return;
@@ -9169,6 +10211,30 @@ async function checkForNewOnlineBookings(){
   }catch(e){ console.error("checkForNewOnlineBookings: couldn't read notifications —", e); return; }
 
   const alreadyNotifiedIds = new Set(allNotifs.filter(n=>n.type==="online_booking" && n.relatedId).map(n=>n.relatedId));
+  const spamIds = new Set();
+  for(const b of allBookings){
+    if(!isSpamBooking(b)){
+      if(b.spam){ b.spam = false; await dbPut("onlineBookings", b).catch(()=>{}); }
+      continue;
+    }
+    spamIds.add(b.id);
+    const ageDays = (Date.now() - new Date(b.createdAt||Date.now()).getTime())/86400000;
+    if(ageDays > 7){ await window.__fb.delete("onlineBookings", b.id).catch(()=>{}); continue; }
+    if(!b.spam || !b.processed){
+      b.spam = true; b.processed = true; b.spamReasons = bookingSpamReasons(b);
+      await dbPut("onlineBookings", b).catch(()=>{});
+    }
+  }
+  // Clear any notification already raised for a spam submission.
+  for(const n of allNotifs){
+    if(n.type==="online_booking" && n.relatedId && spamIds.has(n.relatedId)){
+      await window.__fb.delete("notifications", n.id).catch(()=>{});
+    }
+  }
+  if(spamIds.size){
+    allBookings = allBookings.filter(b=> !spamIds.has(b.id));
+    refreshNotificationBell();
+  }
   for(const b of allBookings){
     if(alreadyNotifiedIds.has(b.id)){
       if(!b.processed){ b.processed = true; await dbPut("onlineBookings", b).catch(()=>{}); }
@@ -9388,6 +10454,7 @@ function requestApptFieldsHtml(){
 '      <label style="display:block;font-size:12.5px;font-weight:600;color:#555;margin-bottom:4px;">Please specify</label>',
 '      <input id="htdRaReasonOther" style="width:100%;box-sizing:border-box;padding:10px;border:1px solid #ddd;border-radius:8px;margin-bottom:12px;font-size:14px;">',
 '    </div>',
+'    <div style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden;" aria-hidden="true"><label>Leave this empty</label><input id="htdRaHpField" tabindex="-1" autocomplete="off"></div>',
 '    <div id="htdRaStatus" style="font-size:13px;margin-bottom:10px;"></div>'
   ].join("\n");
 }
@@ -9404,6 +10471,7 @@ function requestApptSubmitScript(mode){
 '  const fbApp = initializeApp('+JSON.stringify(REQUEST_APPT_FC)+', "htd-request-appt-widget-'+mode+'-"+Date.now()+Math.random());',
 '  const fbDb = getFirestore(fbApp);',
 '  const submitBtn = document.getElementById("htdRaSubmit");',
+'  const htdRaT0 = Date.now(); // bots submit within a second of loading',
 '  // Some site builders re-run injected scripts on soft-navigation/re-render',
 '  // without a full page reload, which would otherwise wire this handler',
 '  // again each time and cause the same click to submit more than once.',
@@ -9437,6 +10505,12 @@ function requestApptSubmitScript(mode){
 '    const mobile = document.getElementById("htdRaMobile").value.trim();',
 '    const statusEl = document.getElementById("htdRaStatus");',
 '    if(!name || !age || !mobile){ statusEl.textContent = "Please fill in your name, age, and mobile number."; statusEl.style.color = "#B00020"; return; }',
+'    if(mobile.replace(/\\D/g, "").length < 10){ statusEl.textContent = "Please enter a valid 10-digit mobile number."; statusEl.style.color = "#B00020"; return; }',
+'    const hpEl = document.getElementById("htdRaHpField");',
+'    if((hpEl && hpEl.value) || Date.now() - htdRaT0 < 2500){',
+afterSuccessJs,
+'      return;',
+'    }',
 '    submitBtn.dataset.htdSubmitting = "1";',
 '    submitBtn.disabled = true; submitBtn.textContent = "Submitting...";',
 '    try{',
@@ -9555,6 +10629,7 @@ function bubblesRequestFormInnerHtml(){
 BUBBLES_SERVICES.map(x=>'      <option value="'+x.replace(/"/g,'&quot;')+'">'+x.replace(/&/g,'&amp;')+'</option>').join("\n"),
 '    </select>',
 '    <div id="bdRaOtherWrap" style="display:none;"><label style="'+lbl+'">Please specify</label><input id="bdRaOther" style="'+inp+'"></div>',
+'    <div style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden;" aria-hidden="true"><label>Leave this empty</label><input id="bdRaHpField" tabindex="-1" autocomplete="off"></div>',
 '    <div id="bdRaStatus" style="font-size:13px;margin-bottom:10px;"></div>',
 '    <button id="bdRaSubmit" style="width:100%;background:linear-gradient(135deg,#F7A8C4,#7EC4F2);color:#fff;border:none;padding:13px;border-radius:24px;font-size:15.5px;font-weight:800;cursor:pointer;font-family:inherit;box-shadow:0 6px 16px -6px rgba(126,196,242,.8);">Request Appointment</button>'
   ].join("\n");
@@ -9577,6 +10652,7 @@ function bubblesRequestScript(mode){
 '  const svc = $("bdRaService");',
 '  if(svc) svc.onchange = () => { $("bdRaOtherWrap").style.display = svc.value === "Other" ? "block" : "none"; };',
 '  const btn = $("bdRaSubmit");',
+'  const bdT0 = Date.now(); // bots submit within a second of loading',
 '  if(btn && btn.dataset.bdWired !== "1"){',
 '    btn.dataset.bdWired = "1";',
 '    btn.onclick = async () => {',
@@ -9587,6 +10663,7 @@ function bubblesRequestScript(mode){
 '      const digits = mobile.replace(/\\D/g, "");',
 '      if(!name || !age || !mobile || !date || !svc.value){ st.textContent = "Please fill in all the fields marked *."; st.style.color = "#C53030"; return; }',
 '      if(digits.length < 10){ st.textContent = "Please enter a valid 10-digit mobile number."; st.style.color = "#C53030"; return; }',
+'      if(($("bdRaHpField") && $("bdRaHpField").value) || Date.now() - bdT0 < 2500){ $("bdRaForm").innerHTML = "'+done+'"; return; }',
 '      btn.dataset.busy = "1"; btn.disabled = true; btn.textContent = "Sending...";',
 '      try{',
 '        const ref = doc(collection(fbDb, "onlineBookings"));',
@@ -9723,7 +10800,9 @@ async function openRequestApptButtonSheet(){
 // two don't get tangled together.
 async function openOnlineAppointmentsListSheet(){
   await dedupeOnlineBookings().catch(()=>{});
-  const requests = (await dbGetAll("onlineBookings")).filter(b=>!b.time).sort((a,b)=> new Date(b.createdAt||0)-new Date(a.createdAt||0));
+  const allReq = (await dbGetAll("onlineBookings")).filter(b=>!b.time).sort((a,b)=> new Date(b.createdAt||0)-new Date(a.createdAt||0));
+  const spamReq = allReq.filter(b=> isSpamBooking(b));
+  const requests = allReq.filter(b=> !isSpamBooking(b));
   openSheet(`
     <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
     <h2>Online Appointments</h2>
@@ -9746,7 +10825,35 @@ async function openOnlineAppointmentsListSheet(){
     <div id="oaListZone">
       ${requests.length? requests.map(b=>onlineApptCardHtml(b)).join("") : `<div class="empty-card"><b>No requests yet</b>They'll show up here as soon as someone submits the form on your website.</div>`}
     </div>
+    ${spamReq.length? `
+      <details style="margin-top:14px;">
+        <summary style="font-size:13px;color:var(--grey);cursor:pointer;">Blocked as spam (${spamReq.length}) — bot submissions, deleted automatically after 7 days</summary>
+        <div style="margin-top:8px;">
+          ${spamReq.map(b=>`
+            <div class="note-card" style="margin-bottom:8px;opacity:.85;">
+              <div class="note-head"><b>${escapeHtml(String(b.name||"Unknown").slice(0,60))}</b><span class="status-pill" style="background:var(--grey-light);color:var(--charcoal-2);">Spam</span></div>
+              <div class="note-meta">${escapeHtml(String(b.phone||"No phone").slice(0,40))} · ${escapeHtml(bookingSpamReasons(b).join(", "))}</div>
+              <div class="note-meta">Submitted ${b.createdAt? new Date(b.createdAt).toLocaleString():""}</div>
+              <button class="btn btn-outline btn-sm" data-oanotspam="${b.id}" style="margin-top:6px;">Not spam — move to requests</button>
+            </div>`).join("")}
+          <button class="btn btn-block" id="btnOaDeleteSpam" style="color:var(--red);border:1px solid var(--red);background:none;">${icon('trash',15)} Delete All Spam</button>
+        </div>
+      </details>` : ""}
   `);
+  document.querySelectorAll("[data-oanotspam]").forEach(btn=> btn.onclick = async ()=>{
+    const b = spamReq.find(x=>x.id===btn.dataset.oanotspam); if(!b) return;
+    Object.assign(b, {notSpam:true, spam:false, processed:false});
+    await dbPut("onlineBookings", b);
+    showToast("Moved to requests");
+    openOnlineAppointmentsListSheet();
+  });
+  const delSpamBtn = document.getElementById("btnOaDeleteSpam");
+  if(delSpamBtn) delSpamBtn.onclick = async ()=>{
+    if(!confirm(`Delete all ${spamReq.length} spam submission${spamReq.length>1?'s':''}?`)) return;
+    for(const b of spamReq) await window.__fb.delete("onlineBookings", b.id).catch(()=>{});
+    showToast("Spam deleted");
+    openOnlineAppointmentsListSheet();
+  };
   wireOnlineApptCardActions(requests);
   const deleteAllBtn = document.getElementById("btnOaDeleteAll");
   if(deleteAllBtn){
@@ -9754,7 +10861,7 @@ async function openOnlineAppointmentsListSheet(){
       // Re-read fresh rather than trusting the list captured when this
       // screen opened, so anything that's arrived since (a new website
       // submission, for instance) gets caught too.
-      const current = (await dbGetAll("onlineBookings")).filter(b=>!b.time);
+      const current = (await dbGetAll("onlineBookings")).filter(b=>!b.time && !isSpamBooking(b));
       if(!current.length){ showToast("Nothing to delete"); return; }
       if(!confirm(`Delete all ${current.length} appointment request${current.length>1?'s':''}? This can't be undone.`)) return;
       let failCount = 0;
@@ -10209,6 +11316,8 @@ async function openInteraktConfigSheet(){
     <div class="field"><label>Default Country Code</label><input id="interaktCountryCode" value="${escapeAttr(s.interaktDefaultCountryCode||'+91')}" placeholder="e.g. +91"></div>
     <p style="margin-top:-8px;">Used whenever a patient's number is stored without one.</p>
     <div class="field"><label>Receipt Template Name</label><input id="interaktReceiptTemplate" value="${escapeAttr(s.interaktReceiptTemplate||'payment_receipt')}" placeholder="e.g. payment_receipt"></div>
+    <div class="field"><label>Document Link Template Name (optional)</label><input id="interaktDocTemplate" value="${escapeAttr(s.docLinkTemplate||'')}" placeholder="e.g. document_link"></div>
+    <p style="margin-top:-8px;">For Prescription / OPD card / document links sent through the API. Approved template with 3 body values: 1 Patient name, 2 Document name, 3 Link. Leave blank to send them from the WhatsApp Business app instead.</p>
     <div class="field"><label>Treatment Plan Template Name</label><input id="interaktPlanTemplate" value="${escapeAttr(s.interaktPlanTemplate||'treatment_estimate')}" placeholder="e.g. treatment_estimate"></div>
     <p style="margin-top:-8px;">Approved template with 4 body values: 1 Patient name, 2 Amount (number only, the template already has the ₹), 3 Date, 4 Receipt link.</p>
     <div class="field"><label>Receipt Page Address (optional)</label><input id="receiptPageUrl" value="${escapeAttr(s.receiptPageUrl||'')}" placeholder="Leave blank to use this site's /receipt.html"></div>
@@ -10231,6 +11340,7 @@ async function openInteraktConfigSheet(){
     s.interaktDefaultCountryCode = document.getElementById("interaktCountryCode").value.trim() || "+91";
     s.interaktReceiptTemplate = document.getElementById("interaktReceiptTemplate").value.trim() || "payment_receipt";
     s.interaktPlanTemplate = document.getElementById("interaktPlanTemplate").value.trim() || "treatment_estimate";
+    s.docLinkTemplate = document.getElementById("interaktDocTemplate").value.trim();
     s.receiptPageUrl = document.getElementById("receiptPageUrl").value.trim();
     await dbPut("settings", s);
     showToast("Saved");
@@ -10321,6 +11431,18 @@ async function buildWaMessageFromTemplate(key, vars){
   return msg;
 }
 
+// Opens a chat in the WhatsApp Business app (Android picks it directly;
+// iPhone / desktop open whichever WhatsApp app handles wa.me links).
+function openWhatsAppBusinessApp(number, message){
+  let num = String(number||"").replace(/\D/g,"").replace(/^0+/,"");
+  if(num.length===10) num = "91"+num;
+  const text = encodeURIComponent(message||"");
+  if(/Android/i.test(navigator.userAgent||"")){
+    location.href = `intent://send/?phone=${num}&text=${text}#Intent;scheme=whatsapp;package=com.whatsapp.w4b;S.browser_fallback_url=${encodeURIComponent("https://wa.me/"+num+"?text="+text)};end`;
+  }else{
+    window.open(`https://wa.me/${num}?text=${text}`, "_blank");
+  }
+}
 function openWhatsAppComposer(opts){
   if(!opts.toNumber){
     openSheet(`
@@ -10336,8 +11458,17 @@ function openWhatsAppComposer(opts){
     <p>To: ${escapeHtml(opts.toName||"")} · ${escapeHtml(opts.toNumber)}</p>
     <div class="field"><label>Message</label><textarea id="waComposerMsg" rows="4">${escapeHtml(opts.message||"")}</textarea></div>
     ${opts.templateName? "" : aiRewriteRowHtml("waAiRow")}
-    <button class="btn btn-primary btn-block" id="btnWaComposerSend">Open WhatsApp</button>
+    <button class="btn btn-primary btn-block" id="btnWaComposerSend">${opts.templateName? "Send via WhatsApp API" : "Send"}</button>
+    <button class="btn btn-outline btn-block" id="btnWaComposerApp" style="margin-top:8px;">${icon('message',15)} Open in WhatsApp Business App</button>
+    <p style="margin:6px 0 0;color:var(--grey);font-size:11.5px;">Opens the chat in the WhatsApp Business app with this message typed in — tap Send there. Works for any normal message, no template needed.</p>
   `);
+  document.getElementById("btnWaComposerApp").onclick = ()=>{
+    const msg = document.getElementById("waComposerMsg").value.trim();
+    openWhatsAppBusinessApp(opts.toNumber, msg);
+    logActivity(`WhatsApp app opened for ${opts.toName||opts.toNumber}`, opts.patientId?{patientId:opts.patientId}:{});
+    if(opts.onSent) opts.onSent();
+    closeSheet();
+  };
   if(!opts.templateName) wireAiRewrite("waAiRow", document.getElementById("waComposerMsg"));
   document.getElementById("btnWaComposerSend").onclick = async ()=>{
     const msg = document.getElementById("waComposerMsg").value.trim();
@@ -10441,8 +11572,12 @@ function patientBlockAgeGender(patient){
 }
 
 async function printDocument(opts){
-  const w = window.open("", "_blank");
-  if(!w){ showToast("Please allow pop-ups to print or save as PDF"); return; }
+  // Capture mode: "Send PDF link on WhatsApp" asks for the finished HTML
+  // instead of a print window, then publishes it as a shareable page.
+  const capture = window.__printCapture || null;
+  if(capture) window.__printCapture = null;
+  const w = capture ? null : window.open("", "_blank");
+  if(!capture && !w){ showToast("Please allow pop-ups to print or save as PDF"); return; }
   const s = (await dbGetAll("settings"))[0] || {};
   const clinic = opts.clinic || {};
   const clinicName = clinic.name ? clinic.name.replace('Healing Touch Dental – ','Healing Touch Dental — ') : "Healing Touch Dental";
@@ -10503,7 +11638,7 @@ async function printDocument(opts){
   const signatureEnabled = s.printSignatureEnabled!==false;
   const signHtmlFinal = !signatureEnabled ? "" : (opts.signHtml!==undefined ? opts.signHtml : `<div class="sign-line">Doctor's Signature: ____________________</div>`);
 
-  w.document.write(`
+  const __docHtml = (`
     <!DOCTYPE html><html><head><title>${escapeHtml(opts.title||"Document")}</title>
     <style>
       *{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact;color-adjust:exact;}
@@ -10540,7 +11675,7 @@ async function printDocument(opts){
       .pdf-hint{background:#eef8f0;border:1px solid #cfe8d6;border-radius:8px;padding:10px 14px;font-size:12.5px;color:#1F6E42;margin-bottom:16px;}
       @media print{ .pdf-hint{display:none;} }
     </style></head><body>
-    <div class="pdf-hint">Tip: in the print dialog, choose <b>"Save as PDF"</b> as the destination to download a PDF instead of printing.</div>
+    ${capture? "" : `<div class="pdf-hint">Tip: in the print dialog, choose <b>"Save as PDF"</b> as the destination to download a PDF instead of printing.</div>`}
     ${headerHtml}
     ${opts.patient? `<div class="patient-block">
       <div class="pb-row"><b>Patient Name:</b> ${escapeHtml(patientDisplayName(opts.patient)||"—")}</div>
@@ -10553,6 +11688,8 @@ async function printDocument(opts){
     ${footerHtml}
     </body></html>
   `);
+  if(capture){ capture.resolve(__docHtml); return; }
+  w.document.write(__docHtml);
   w.document.close();
   w.focus();
   setTimeout(()=>{ w.print(); }, 350);
@@ -16369,7 +17506,7 @@ async function openTreatmentPlanActionMenu(planId, patient, onRefresh){
     { key:"edit", icon:"edit", text:"Edit Treatment Plan", onClick: ()=>{ closeSheet(); openTreatmentPlanForm(planId, patient); } },
     { key:"aiExplain", icon:"sparkle", text:"AI: Explain Plan to Patient", onClick: ()=>{ closeSheet(); openAiPlanExplainer(plan, patient); } },
     { key:"print", icon:"print", text:"Print Treatment Plan", onClick: ()=>{ closeSheet(); printTreatmentPlanStandalone(plan, patient); } },
-    { key:"waPdf", icon:"message", text:"Send PDF on WhatsApp", onClick: ()=>{ closeSheet(); sendPdfOnWhatsApp(patient, ()=>printTreatmentPlanStandalone(plan, patient), "Treatment Plan"); } },
+    { key:"waPdf", icon:"message", text:"Send PDF Link on WhatsApp", onClick: ()=>{ closeSheet(); sendPdfOnWhatsApp(patient, ()=>printTreatmentPlanStandalone(plan, patient), "Treatment Plan"); } },
     { key:"share", icon:"share", text:"Share Treatment Plan", onClick: ()=>{ closeSheet(); shareEntityText("Treatment Plan", summary); } },
     { key:"email", icon:"mail", text:"Email Treatment Plan", onClick: ()=>{ closeSheet(); emailEntity("Treatment Plan — "+patient.name, summary, patient.email); } },
     { key:"delete", icon:"trash", text:"Delete Treatment Plan", onClick: async ()=>{
@@ -16653,7 +17790,7 @@ function renderPlanFormSheet(plan, clinics, isEdit, patient, doctors){
     ${isEdit? `<button class="btn btn-outline btn-block" id="btnDeletePlan" style="margin-top:6px;">Delete Plan</button>`:""}
     <button class="btn btn-primary btn-block" id="btnSavePlan" style="margin-top:8px;">${isEdit?"Save Changes":"Save Treatment Plan"}</button>
     <button class="btn btn-outline btn-block" id="btnPrintPlan" style="margin-top:8px;">Print / Export Estimate</button>
-    <button class="btn btn-outline btn-block" id="btnWaPdfPlan" style="margin-top:8px;">${icon('message',15)} Send PDF on WhatsApp</button>
+    <button class="btn btn-outline btn-block" id="btnWaPdfPlan" style="margin-top:8px;">${icon('message',15)} Send PDF Link on WhatsApp</button>
   `);
   wireFormBack(goBack);
   wireDoctorSelect("tpDoctor");
@@ -22073,7 +23210,7 @@ async function openExamActionMenu(examId, patient, tabBody, patientId){
   openEntryActionMenu("Examination Options", [
     { key:"edit", icon:"edit", text:"Edit Examination", onClick: ()=>{ closeSheet(); openExaminationForm(examId, patient); } },
     { key:"print", icon:"print", text:"Print Examination", onClick: ()=>{ closeSheet(); printExamFn(); } },
-    { key:"waPdf", icon:"message", text:"Send PDF on WhatsApp", onClick: ()=>{ closeSheet(); sendPdfOnWhatsApp(patient, printExamFn, "Examination Record"); } },
+    { key:"waPdf", icon:"message", text:"Send PDF Link on WhatsApp", onClick: ()=>{ closeSheet(); sendPdfOnWhatsApp(patient, printExamFn, "Examination Record"); } },
     { key:"share", icon:"share", text:"Share Examination", onClick: ()=>{ closeSheet(); shareEntityText("Examination", summary); } },
     { key:"email", icon:"mail", text:"Email Examination", onClick: ()=>{ closeSheet(); emailEntity("Examination — "+patient.name, summary, patient.email); } },
     { key:"delete", icon:"trash", text:"Delete Examination", onClick: async ()=>{
@@ -22974,7 +24111,7 @@ async function openTreatmentItemActionMenu(planId, itemId, patient, tabBody, pat
     { key:"notes", icon:"edit", text:"Add Treatment Notes", onClick: ()=>{ closeSheet(); openAddTreatmentNoteSheet(planId, itemId, patient, tabBody, patientId); } },
     { key:"aiPostOp", icon:"sparkle", text:"AI: Post-op Instructions", onClick: ()=>{ closeSheet(); openAiInstructionsSheet(patient, { type:"post", procedure: (item.treatment||"")+(item.tooth? " (tooth "+item.tooth+")" : ""), autoGenerate: true }); } },
     { key:"print", icon:"print", text:"Print Treatment", onClick: ()=>{ closeSheet(); printTreatmentFn(); } },
-    { key:"waPdf", icon:"message", text:"Send PDF on WhatsApp", onClick: ()=>{ closeSheet(); sendPdfOnWhatsApp(patient, ()=>printSingleTreatmentDone(item, patient, plan, (item.sittings||[]).map(s=>s.id)), "Treatment Record"); } },
+    { key:"waPdf", icon:"message", text:"Send PDF Link on WhatsApp", onClick: ()=>{ closeSheet(); sendPdfOnWhatsApp(patient, ()=>printSingleTreatmentDone(item, patient, plan, (item.sittings||[]).map(s=>s.id)), "Treatment Record"); } },
     { key:"share", icon:"share", text:"Share Treatment", onClick: ()=>{ closeSheet(); shareEntityText("Treatment", summary); } },
     { key:"email", icon:"mail", text:"Email Treatment", onClick: ()=>{ closeSheet(); emailEntity("Treatment — "+patient.name, summary, patient.email); } },
     { key:"delete", icon:"trash", text:"Delete Treatment", onClick: async ()=>{
@@ -23970,7 +25107,7 @@ async function openRxActionMenu(rxId, patient, tabBody, patientId){
   openEntryActionMenu("Prescription Options", [
     { key:"edit", icon:"edit", text:"Edit Prescription", onClick: ()=>{ closeSheet(); openPrescriptionForm(rxId, patient); } },
     { key:"print", icon:"print", text:"Print Prescription", onClick: async ()=>{ closeSheet(); const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived); rxItemsDraft = (rx.items||[]).map(it=>Object.assign({}, it)); printPrescription(rx, patient, clinics); } },
-    { key:"waPdf", icon:"message", text:"Send PDF on WhatsApp", onClick: async ()=>{ closeSheet(); const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived); rxItemsDraft = (rx.items||[]).map(it=>Object.assign({}, it)); sendPdfOnWhatsApp(patient, ()=>printPrescription(rx, patient, clinics), "Prescription"); } },
+    { key:"waPdf", icon:"message", text:"Send PDF Link on WhatsApp", onClick: async ()=>{ closeSheet(); const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived); rxItemsDraft = (rx.items||[]).map(it=>Object.assign({}, it)); sendPdfOnWhatsApp(patient, ()=>printPrescription(rx, patient, clinics), "Prescription"); } },
     { key:"mailPdf", icon:"mail", text:"Mail Prescription", onClick: async ()=>{ closeSheet(); const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived); rxItemsDraft = (rx.items||[]).map(it=>Object.assign({}, it)); sendPdfByEmail(patient, ()=>printPrescription(rx, patient, clinics), "Prescription"); } },
     { key:"pharmacyBill", icon:"receipt", text:"Generate Pharmacy Bill", onClick: ()=>{ closeSheet(); openRxPharmacyBillPicker(rx, patient, tabBody, patientId); } },
     { key:"share", icon:"share", text:"Share Prescription", onClick: ()=>{ closeSheet(); shareEntityText("Prescription", summary); } },
@@ -24116,7 +25253,7 @@ function renderRxFormSheet(rx, clinics, isEdit, patient, doctors, rxTemplates){
     ${isEdit? `<button class="btn btn-outline btn-block" id="btnDeleteRx" style="margin-bottom:8px;">Delete Prescription</button>`:""}
     <button class="btn btn-primary btn-block" id="btnSaveRx">${isEdit?"Save Changes":"Save Prescription"}</button>
     <button class="btn btn-outline btn-block" style="margin-top:8px;" id="btnPrintRx">Print / Export PDF</button>
-    <button class="btn btn-outline btn-block" style="margin-top:8px;" id="btnWaPdfRx">${icon('message',15)} Send PDF on WhatsApp</button>
+    <button class="btn btn-outline btn-block" style="margin-top:8px;" id="btnWaPdfRx">${icon('message',15)} Send PDF Link on WhatsApp</button>
     <button class="btn btn-outline btn-block" style="margin-top:8px;" id="btnMailPdfRx">${icon('mail',15)} Mail Prescription</button>
   `);
   wireFormBack(goBack);
@@ -25296,7 +26433,7 @@ async function openInvoiceActionMenu(invoiceId, patient, tabBody, patientId, cur
     { key:"edit", icon:"edit", text:"Edit Invoice", onClick: ()=>{ closeSheet(); returnToPatientProfile = patientId; openInvoiceForm(invoiceId, patient); } },
     { key:"print", icon:"print", text:"Print Invoice", onClick: async ()=>{ closeSheet(); const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived); invoiceItemsDraft = (inv.items||[]).map(it=>Object.assign({}, it)); printInvoice(inv, patient, clinics, cur); } },
     ...(inv.amountPaid>0 ? [{ key:"printBillPayment", icon:"receipt", text:"Print Bill Payment", onClick: async ()=>{ closeSheet(); const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived); printBillPayment(inv, patient, clinics, cur); } }] : []),
-    { key:"waPdf", icon:"message", text:"Send PDF on WhatsApp", onClick: async ()=>{ closeSheet(); const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived); invoiceItemsDraft = (inv.items||[]).map(it=>Object.assign({}, it)); sendPdfOnWhatsApp(patient, ()=>printInvoice(inv, patient, clinics, cur), "Invoice"); } },
+    { key:"waPdf", icon:"message", text:"Send PDF Link on WhatsApp", onClick: async ()=>{ closeSheet(); const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived); invoiceItemsDraft = (inv.items||[]).map(it=>Object.assign({}, it)); sendPdfOnWhatsApp(patient, ()=>printInvoice(inv, patient, clinics, cur), "Invoice"); } },
     { key:"mailPdf", icon:"mail", text:"Mail Invoice", onClick: async ()=>{ closeSheet(); const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived); invoiceItemsDraft = (inv.items||[]).map(it=>Object.assign({}, it)); sendPdfByEmail(patient, ()=>printInvoice(inv, patient, clinics, cur), "Invoice"); } },
     { key:"share", icon:"share", text:"Share Invoice", onClick: ()=>{ closeSheet(); shareEntityText("Invoice", summary); } },
     { key:"email", icon:"mail", text:"Email Invoice", onClick: ()=>{ closeSheet(); emailEntity("Invoice "+inv.invoiceNumber+" — "+patient.name, summary, patient.email); } },
@@ -25326,7 +26463,7 @@ async function openReceiptActionMenu(paymentId, patient, tabBody, patientId, cur
   openEntryActionMenu("Receipt Options", [
     { key:"edit", icon:"edit", text:"Edit Payment", onClick: ()=>{ closeSheet(); openEditPaymentSheet(paymentId, patient, tabBody, patientId, cur); } },
     { key:"print", icon:"print", text:"Print Receipt", onClick: ()=>{ closeSheet(); printReceipt(pmt, inv, patient, cur); } },
-    { key:"waPdf", icon:"message", text:"Send PDF on WhatsApp", onClick: ()=>{ closeSheet(); sendPdfOnWhatsApp(patient, ()=>printReceipt(pmt, inv, patient, cur), "Receipt"); } },
+    { key:"waPdf", icon:"message", text:"Send PDF Link on WhatsApp", onClick: ()=>{ closeSheet(); sendPdfOnWhatsApp(patient, ()=>printReceipt(pmt, inv, patient, cur), "Receipt"); } },
     { key:"mailPdf", icon:"mail", text:"Mail Receipt", onClick: ()=>{ closeSheet(); sendPdfByEmail(patient, ()=>printReceipt(pmt, inv, patient, cur), "Receipt"); } },
     { key:"share", icon:"share", text:"Share Receipt", onClick: ()=>{ closeSheet(); shareEntityText("Receipt", summary); } },
     { key:"email", icon:"mail", text:"Email Receipt", onClick: ()=>{ closeSheet(); emailEntity(kind+" — "+patient.name, summary, patient.email); } },
@@ -26368,7 +27505,7 @@ function renderInvoiceFormSheet(inv, clinics, isEdit, patient, cur){
     <button class="btn btn-primary btn-block" id="btnSaveInvoice" style="margin-top:8px;">${isEdit?"Save Changes":"Save Invoice"}</button>
     <button class="btn btn-outline btn-block" id="btnSaveInvoiceAndPay" style="margin-top:8px;">${icon('wallet',15)} Save Invoice &amp; Record Payment</button>
     <button class="btn btn-outline btn-block" id="btnPrintInvoice" style="margin-top:8px;">Print Invoice</button>
-    <button class="btn btn-outline btn-block" id="btnWaPdfInvoice" style="margin-top:8px;">${icon('message',15)} Send PDF on WhatsApp</button>
+    <button class="btn btn-outline btn-block" id="btnWaPdfInvoice" style="margin-top:8px;">${icon('message',15)} Send PDF Link on WhatsApp</button>
     <button class="btn btn-outline btn-block" id="btnMailPdfInvoice" style="margin-top:8px;">${icon('mail',15)} Mail Invoice</button>
     ${isEdit && inv.amountPaid>0? `<button class="btn btn-outline btn-block" id="btnPrintBillPayment" style="margin-top:8px;">${icon('receipt',15)} Print Bill Payment</button>`:""}
   `);
@@ -26995,6 +28132,21 @@ async function openTreatmentPlanLinkComposer(plan, patient){
 // and {{2}} carries a short line + the link; instructions.html shows it as a
 // clean page the patient can read, save or print.
 async function publishInstructionsLink(patient, type, title, body){
+  // Preferred: the instructions as a letterhead A4 document (doc.html, Download PDF).
+  try{
+    const clinicsAll = await dbGetAll("clinics");
+    const clinicI = clinicsAll.find(c=>c.id===patient.preferredClinicId) || clinicsAll.find(c=>c.isDefault) || clinicsAll[0] || {};
+    const kindTitle = (type==="pre" ? "Pre-Operative" : "Post-Operative") + " Instructions";
+    const lines = String(body||"").split(/\r?\n/);
+    const bodyHtml = `${title? `<h2 style="font-size:15px;margin:0 0 10px;">${escapeHtml(title)}</h2>`:""}
+      <div style="font-size:13.5px;line-height:1.7;">${lines.map(l=> l.trim()? `<div>${escapeHtml(l)}</div>` : `<div style="height:8px;"></div>`).join("")}</div>
+      <p style="margin-top:18px;font-size:12.5px;color:#555;">If you have any concerns, please call us${clinicI.phone? " on "+escapeHtml(clinicI.phone) : ""}.</p>`;
+    const html = await captureDocHtml(()=> printDocument({ title: kindTitle, patient, clinic: clinicI, docDate: new Date().toLocaleDateString(), bodyHtml, signHtml: "" }));
+    if(html){
+      const link = await publishDocLink(html, {title: kindTitle, patientName: patient.name});
+      if(link) return link;
+    }
+  }catch(e){ console.warn("Instruction document link failed, using the simple page:", e); }
   try{
     const st = (await dbGetAll("settings"))[0] || {};
     const custom = (st.instructionsPageUrl||"").trim();
@@ -27291,7 +28443,7 @@ function openPatientSummaryOptionsSheet(patient){
       <div class="field"><label>To</label><input type="date" id="psTo"></div>
     </div>
     <button class="btn btn-primary btn-block" id="psGenerate" style="margin-top:6px;">Print / Save as PDF</button>
-    <button class="btn btn-outline btn-block" id="psGenerateWa" style="margin-top:8px;">${icon('message',15)} Send PDF on WhatsApp</button>
+    <button class="btn btn-outline btn-block" id="psGenerateWa" style="margin-top:8px;">${icon('message',15)} Send PDF Link on WhatsApp</button>
     <button class="btn btn-outline btn-block" id="psGenerateMail" style="margin-top:8px;">${icon('mail',15)} Mail Patient Summary</button>
   `);
   document.getElementById("psSelectAll").onclick = ()=>{
@@ -27581,7 +28733,7 @@ function openOpdPrescriptionOptionsSheet(patient){
       <div class="field"><label>To</label><input type="date" id="opdTo"></div>
     </div>
     <button class="btn btn-primary btn-block" id="opdGenerate" style="margin-top:6px;">Print / Save as PDF</button>
-    <button class="btn btn-outline btn-block" id="opdGenerateWa" style="margin-top:8px;">${icon('message',15)} Send PDF on WhatsApp</button>
+    <button class="btn btn-outline btn-block" id="opdGenerateWa" style="margin-top:8px;">${icon('message',15)} Send PDF Link on WhatsApp</button>
     <button class="btn btn-outline btn-block" id="opdGenerateMail" style="margin-top:8px;">${icon('mail',15)} Mail OPD Prescription</button>
   `);
   document.getElementById("opdGenerate").onclick = ()=>{
@@ -27930,7 +29082,25 @@ async function openPrintCenterSheet(patient){
     <button class="btn btn-outline btn-block" id="pcPlan" style="margin-top:8px;">${icon('print',16)} Latest Treatment Plan</button>
     <button class="btn btn-outline btn-block" id="pcRx" style="margin-top:8px;">${icon('print',16)} Latest Prescription</button>
     <button class="btn btn-outline btn-block" id="pcInvoice" style="margin-top:8px;">${icon('print',16)} Latest Invoice</button>
+    <div class="section-title" style="margin-top:16px;">Send on WhatsApp (PDF link)</div>
+    <button class="btn btn-outline btn-block" id="pcWaRx">${icon('message',16)} Latest Prescription — Send Link</button>
+    <button class="btn btn-outline btn-block" id="pcWaOpd" style="margin-top:8px;">${icon('message',16)} Today's OPD Card — Send Link</button>
+    <button class="btn btn-outline btn-block" id="pcWaOpdRx" style="margin-top:8px;">${icon('message',16)} OPD Prescription — Send Link</button>
   `);
+  document.getElementById("pcWaRx").onclick = async ()=>{
+    closeSheet();
+    const rxs = (await dbGetAll("prescriptions")).filter(r=>r.patientId===patient.id).sort((a,b)=> new Date(b.date)-new Date(a.date));
+    if(!rxs.length){ showToast("No prescriptions yet"); return; }
+    const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived);
+    rxItemsDraft = (rxs[0].items||[]).map(it=>Object.assign({}, it));
+    sendDocLinkOnWhatsApp(patient, ()=>printPrescription(rxs[0], patient, clinics), "Prescription");
+  };
+  document.getElementById("pcWaOpd").onclick = ()=>{
+    closeSheet();
+    const todayKey = toDateKey(new Date());
+    sendDocLinkOnWhatsApp(patient, ()=>printPatientSummary(patient, { sections:{details:true, examination:true, treatmentDone:true, prescription:true, files:true}, from: todayKey, to: todayKey, opdCard:true }), "OPD Card");
+  };
+  document.getElementById("pcWaOpdRx").onclick = ()=>{ closeSheet(); openOpdPrescriptionOptionsSheet(patient); };
   document.getElementById("pcSummary").onclick = ()=>{ closeSheet(); openPatientSummaryOptionsSheet(patient); };
   document.getElementById("pcOpd").onclick = ()=>{ closeSheet(); openOpdPrescriptionOptionsSheet(patient); };
   document.getElementById("pcExam").onclick = async ()=>{
@@ -28004,6 +29174,7 @@ async function renderMore(){
         ${canAccessModule("inventory")? `<div class="list-row" id="rowInventory"><span class="row-ico">${icon('box',18)}</span><span class="txt">Inventory</span><span class="meta">Materials, stock, alerts</span><span class="chev">${icon('chevron',16)}</span></div>` : ""}
         ${canAccessModule("pharmacy")? `<div class="list-row" id="rowPharmacy"><span class="row-ico">${icon('pill',18)}</span><span class="txt">Pharmacy</span><span class="meta">Products, stock &amp; billing</span><span class="chev">${icon('chevron',16)}</span></div>` : ""}
         ${canAccessModule("labcases")? `<div class="list-row" id="rowLabCases"><span class="row-ico">${icon('flask',18)}</span><span class="txt">Lab Cases</span><span class="meta">Track lab work by patient</span><span class="chev">${icon('chevron',16)}</span></div>` : ""}
+        ${canAccessModule("maintenance")? `<div class="list-row" id="rowMaintenance"><span class="row-ico">${icon('wrench',18)}</span><span class="txt">Maintenance Register</span><span class="meta">Inverter, electrical, equipment service</span><span class="chev">${icon('chevron',16)}</span></div>` : ""}
         ${canAccessModule("reports")? `<div class="list-row" id="rowReports"><span class="row-ico">${icon('reports',18)}</span><span class="txt">Reports</span><span class="meta">Generate &amp; export PDF/Excel</span><span class="chev">${icon('chevron',16)}</span></div>` : ""}
         ${(!currentUserIsAdmin && canAccessModule("appointments"))? `<div class="list-row" id="rowOnlineAppts"><span class="row-ico">${icon('calendar',18)}</span><span class="txt">Online Appointments</span><span class="meta">Requests from your website</span><span class="chev">${icon('chevron',16)}</span></div>` : ""}
         ${(!currentUserIsAdmin && canAccessModule("dataImport"))? `<div class="list-row" id="rowDataImport"><span class="row-ico">${icon('backup',18)}</span><span class="txt">Import Patient Data</span><span class="meta">From Excel / CSV</span><span class="chev">${icon('chevron',16)}</span></div>` : ""}
@@ -28033,6 +29204,7 @@ async function renderMore(){
   wire("rowInventory", ()=> goTo("inventory"));
   wire("rowPharmacy", ()=> goTo("pharmacy"));
   wire("rowLabCases", ()=> goTo("labcases"));
+  wire("rowMaintenance", ()=> goTo("maintenance"));
   wire("rowReports", ()=> goTo("reports"));
   wire("rowOnlineAppts", openOnlineAppointmentsListSheet);
   wire("rowDataImport", openScopedPatientImportSheet);
@@ -28075,7 +29247,7 @@ async function openManageUsersSheet(){
     <div class="list-card">
       ${staffUsers.length? staffUsers.map(u=>`
         <div class="clinic-row" data-staffuser="${u.id}" style="cursor:pointer;">
-          <div><div class="name">${escapeHtml(u.displayName||u.email)}</div><div class="addr">${escapeHtml(u.email)} · ${PERMISSION_MODULES.filter(m=>u.permissions&&u.permissions[m.key]).length} sections</div></div>
+          <div><div class="name">${escapeHtml(u.displayName||u.email)}</div><div class="addr">${escapeHtml(u.email)} · ${PERMISSION_MODULES.filter(m=>staffPermOn(u.permissions, m)).length} sections</div></div>
           <span class="chev">${icon('chevron',16)}</span>
         </div>
       `).join("") : `<div class="empty-card">No staff logins yet — add one above.</div>`}
@@ -28098,7 +29270,7 @@ function openStaffUserForm(existing){
     <div class="section-title" style="margin-top:14px;">What can they see?</div>
     ${PERMISSION_MODULES.map(m=>`
       <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;margin-bottom:8px;cursor:pointer;">
-        <input type="checkbox" class="suPerm" data-perm="${m.key}" ${existing?.permissions?.[m.key]?"checked":""} style="width:16px;height:16px;flex-shrink:0;"> ${escapeHtml(m.label)}
+        <input type="checkbox" class="suPerm" data-perm="${m.key}" ${staffPermOn(existing?.permissions, m)?"checked":""} style="width:16px;height:16px;flex-shrink:0;"> ${escapeHtml(m.label)}
       </label>
     `).join("")}
     <p style="margin:6px 0 14px;color:var(--grey);">Admin Panel, Settings, Backup &amp; Restore, Clinics, Doctors, and Trash always stay Admin-only.</p>
@@ -32513,6 +33685,7 @@ async function refreshClinicSelector(){
 // Icon system — clean line icons (SVG), no emoji anywhere
 // ---------------------------------------------------------
 const ICON_PATHS = {
+  wrench: `<path d="M14.6 3.6a4.6 4.6 0 0 0-4.9 6.1L3.9 15.5a1.9 1.9 0 0 0 0 2.7l1.9 1.9a1.9 1.9 0 0 0 2.7 0l5.8-5.8a4.6 4.6 0 0 0 6.1-4.9l-2.9 2.9-2.6-.4-.4-2.6 2.9-2.9a4.6 4.6 0 0 0-.9-.1Z"/>`,
   home: `<path d="M4 11.5 12 4l8 7.5"/><path d="M6 10v9a1 1 0 0 0 1 1h4v-6h2v6h4a1 1 0 0 0 1-1v-9"/>`,
   user: `<circle cx="12" cy="8.2" r="3.4"/><path d="M5 20c0-4 3.2-6.5 7-6.5s7 2.5 7 6.5"/>`,
   calendar: `<rect x="3.5" y="5" width="17" height="15" rx="2.2"/><path d="M3.5 9.7h17"/><path d="M8 3v4M16 3v4"/>`,
@@ -32673,6 +33846,7 @@ setupLogin(async function boot(){
     await checkPaymentDueReminders();
     await checkLowStockNotifications();
     await checkForNewOnlineBookings();
+    setTimeout(()=>{ autoMoveFilesToStorageOnce().catch(e=>console.warn("Auto file move:", e)); }, 30000);
     await checkChecklistNotifications();
     await cleanupOldCompletedCommitments();
     if(bootSettings && bootSettings.teamChatMode==="direct") startGlobalDirectMessageListener();
