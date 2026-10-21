@@ -9697,6 +9697,11 @@ async function publishDocLink(html, meta){
     return null;
   }
 }
+const DOC_LINK_TEMPLATES = {
+  "OPD Card": "opd_message",
+  "Prescription": "prescription_message",
+  "OPD Prescription": "prescription_message"
+};
 async function sendDocLinkOnWhatsApp(patient, printFn, docLabel, extra){
   extra = extra || {};
   if(!patient){ showToast("No patient context available"); return; }
@@ -9708,13 +9713,15 @@ async function sendDocLinkOnWhatsApp(patient, printFn, docLabel, extra){
   const link = await publishDocLink(html, {title: docLabel, patientName: patient.name});
   if(!link) return;
   const st = (await dbGetAll("settings"))[0] || {};
-  const templateName = (st.docLinkTemplate||"").trim();
+  // Approved Interakt templates: {{1}} name, {{2}} link.
+  const fixedTemplate = DOC_LINK_TEMPLATES[docLabel] || null;
+  const templateName = fixedTemplate || (st.docLinkTemplate||"").trim();
   openWhatsAppComposer({
     title: "Send "+docLabel+" (PDF link)",
     toName: patient.name, toNumber: number, patientId: patient.id, recipientType: "Patient",
     message: extra.message || `Hi ${patient.name}, your ${docLabel} from Healing Touch Dental is ready. View or download it (PDF) here: ${link}`,
     templateName: templateName || null,
-    templateParams: templateName ? [patient.name||"Patient", docLabel, link] : null,
+    templateParams: fixedTemplate ? [patient.name||"Patient", link] : (templateName ? [patient.name||"Patient", docLabel, link] : null),
     onSent: ()=> logActivity("Sent "+docLabel+" link to "+patient.name, {patientId: patient.id})
   });
 }
@@ -26357,12 +26364,91 @@ function openConsentActionChoiceSheet(template, patient){
     <p style="margin-bottom:14px;">How would you like to collect this consent for ${escapeHtml(patient.name)}?</p>
     <button class="btn btn-primary btn-block" id="btnConsentPrint" style="margin-bottom:8px;">${icon('print',16)} Print Consent</button>
     <button class="btn btn-outline btn-block" id="btnConsentWaPdf" style="margin-bottom:8px;">${icon('message',16)} Send PDF on WhatsApp</button>
-    <button class="btn btn-outline btn-block" id="btnConsentDigital">${icon('edit',16)} Sign Digital Consent</button>
+    <button class="btn btn-outline btn-block" id="btnConsentDigital" style="margin-bottom:8px;">${icon('edit',16)} Sign Digital Consent (here, on this device)</button>
+    <button class="btn btn-outline btn-block" id="btnConsentRemote">${icon('message',16)} Send to Patient to Sign (WhatsApp link)</button>
+    <p style="margin:6px 0 0;color:var(--grey);font-size:11.5px;">The patient opens the link on their phone, reads the form, signs with their finger and submits. The signed form is saved automatically in their Files → Consent Forms.</p>
   `);
   document.getElementById("btnCloseConsentChoice").onclick = ()=> openConsentFormsListSheet(patient);
   document.getElementById("btnConsentPrint").onclick = ()=>{ closeSheet(); printConsentForm(template, patient); };
   document.getElementById("btnConsentWaPdf").onclick = ()=>{ closeSheet(); sendPdfOnWhatsApp(patient, ()=>printConsentForm(template, patient), template.name); };
   document.getElementById("btnConsentDigital").onclick = ()=>{ closeSheet(); openDigitalConsentSheet(template, patient); };
+  document.getElementById("btnConsentRemote").onclick = ()=>{ closeSheet(); sendConsentForSignature(template, patient); };
+}
+
+// ---- Remote consent: patient signs on their own phone ----
+// A copy of the form is published under an unguessable link (publicConsents/
+// <token>); consent.html shows it, collects the signature and marks it
+// "signed". The PMS listens for signed forms and files them into the
+// patient's consents (Files → Consent Forms) automatically.
+async function sendConsentForSignature(template, patient){
+  const number = patient.whatsappNumber || patient.mobile;
+  if(!number){ showToast("This patient has no mobile number on file"); return; }
+  if(!/^https?:/i.test(location.origin)){ showToast("Open the PMS from its website address to send consent links"); return; }
+  try{
+    const clinics = await dbGetAll("clinics");
+    const clinic = clinics.find(c=>c.id===patient.preferredClinicId) || clinics.find(c=>c.isDefault) || clinics[0] || {};
+    const token = newReceiptToken();
+    await window.__fb.put("publicConsents", {
+      id: token, status: "pending",
+      templateId: template.id, name: template.name||"Consent Form", body: template.body||"",
+      patientId: patient.id, patientName: patientDisplayName(patient) || patient.name || "",
+      ageGender: patientAgeGenderStr(patient), mobile: patient.mobile||"",
+      clinicId: patient.preferredClinicId||"",
+      clinicName: (clinic.name||"Healing Touch Dental").replace("Healing Touch Dental – ","Healing Touch Dental — "),
+      clinicAddress: clinic.address||"", clinicPhone: clinic.phone||"",
+      clinicLogo: (clinic.logo && clinic.logo.length<150000) ? clinic.logo : "",
+      createdAt: nowIso(), createdBy: fbCurrentUserEmail||""
+    });
+    const link = location.origin + "/consent.html?t=" + token;
+    openWhatsAppComposer({
+      title: "Send Consent to Sign",
+      toName: patient.name, toNumber: number, patientId: patient.id, recipientType: "Patient",
+      message: `Hi ${patient.name},\n\nPlease read and sign your ${template.name} from Healing Touch Dental here: ${link}`,
+      templateName: "consent_form",
+      templateParams: [patient.name||"Patient", link],
+      onSent: ()=> logActivity("Sent consent form ("+template.name+") to "+patient.name+" for signature", {patientId: patient.id})
+    });
+  }catch(err){
+    console.error("sendConsentForSignature:", err);
+    showToast("Couldn't create the consent link: "+((err&&err.message)||"error"));
+  }
+}
+let consentWatchUnsub = null;
+const consentImporting = new Set();
+async function importSignedConsent(row){
+  if(!row || !row.id || row.status!=="signed" || consentImporting.has(row.id)) return;
+  consentImporting.add(row.id);
+  try{
+    const record = {
+      id: "consent_"+row.id, patientId: row.patientId, templateId: row.templateId||"", name: row.name||"Consent Form",
+      bodyText: row.body||"", patientName: row.patientName||"", ageGender: row.ageGender||"", mobile: row.mobile||"",
+      clinicId: row.clinicId||"", clinicName: (row.clinicName||"").replace('Healing Touch Dental — ',''),
+      signatureDataUrl: row.signatureDataUrl||"", signerName: row.signerName||"",
+      signedAt: row.signedAt||nowIso(), signedRemotely: true
+    };
+    await dbPut("consents", record);
+    // Keep only a small receipt in the public copy once it's filed.
+    await window.__fb.put("publicConsents", { id: row.id, status: "saved", name: record.name, patientName: record.patientName, signedAt: record.signedAt, savedAt: nowIso() });
+    logActivity("Patient signed consent ("+record.name+") online — saved to Files", {patientId: record.patientId});
+    await createLoggedNotification({
+      id: uid("notif"), type: "consent_signed", relatedId: row.id, monthKey: toDateKey(new Date()),
+      title: "Consent signed: "+(record.patientName||"Patient"),
+      message: (record.patientName||"A patient")+" signed \""+record.name+"\" online. It's saved in their Files → Consent Forms.",
+      read: false, createdAt: nowIso()
+    }).catch(()=>{});
+    refreshNotificationBell && refreshNotificationBell();
+    showToast((record.patientName||"Patient")+" signed "+record.name+" — saved to Files");
+  }catch(err){
+    console.warn("importSignedConsent:", err);
+  }finally{
+    consentImporting.delete(row.id);
+  }
+}
+function startConsentSubmissionWatch(){
+  if(consentWatchUnsub || !window.__fb || !window.__fb.listenQuery) return;
+  consentWatchUnsub = window.__fb.listenQuery("publicConsents", "status", "signed", "signedAt", (rows)=>{
+    rows.forEach(r=> importSignedConsent(r));
+  });
 }
 
 async function printConsentForm(template, patient){
@@ -26464,7 +26550,7 @@ async function viewSignedConsent(consent){
     <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:20px;">
       <div style="width:50%;text-align:center;">
         <img src="${consent.signatureDataUrl}" style="max-width:220px;max-height:80px;border:1px solid #ddd;border-radius:6px;">
-        <div style="font-size:11px;color:#666;margin-top:4px;">Patient Signature — signed ${new Date(consent.signedAt).toLocaleString()}</div>
+        <div style="font-size:11px;color:#666;margin-top:4px;">Patient Signature${consent.signerName? " ("+escapeHtml(consent.signerName)+")" : ""} — signed ${new Date(consent.signedAt).toLocaleString()}${consent.signedRemotely? " (online)" : ""}</div>
       </div>
       ${doctorColHtml}
     </div>
@@ -28406,7 +28492,7 @@ async function sendInstructionsWhatsApp(patient, type, title, body){
   const link = await publishInstructionsLink(patient, type, title, body);
   if(!link) return;
   const kind = type==="pre" ? "pre-operative" : "post-operative";
-  const param2 = `Your ${kind} instructions${title? " for "+title : ""} are here: ${link}`;
+  const param2 = link;
   openWhatsAppComposer({
     toName: patient.name, toNumber: number, patientId: patient.id,
     title: (type==="pre"?"Pre-Op":"Post-Op")+" Instructions",
@@ -34051,6 +34137,7 @@ async function refreshAccessForCurrentUser(){
   await checkForNewOnlineBookings().catch(()=>{});
   goTo("home");
   startAutoReminderWatch();
+  startConsentSubmissionWatch();
 }
 
 setupLogin(async function boot(){
@@ -34085,6 +34172,7 @@ setupLogin(async function boot(){
     await refreshRxFieldDatalists();
     goTo("home");
     startAutoReminderWatch();
+    startConsentSubmissionWatch();
 
     // periodic overdue/backup check while app stays open
     setInterval(async ()=>{

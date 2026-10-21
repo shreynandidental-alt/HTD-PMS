@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Consent Form · Healing Touch Dental</title>
+<style>
+  :root{ --green:#0E6F5C; --ink:#14171A; --grey:#5b6470; --line:#dfe3e6; --bg:#eef1f0; }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);font-family:Arial,Helvetica,sans-serif;color:var(--ink);-webkit-text-size-adjust:100%;}
+  .wrap{max-width:720px;margin:0 auto;padding:16px 16px 40px;}
+  .card{background:#fff;border-radius:14px;box-shadow:0 2px 12px rgba(0,0,0,.07);padding:18px;margin-bottom:14px;}
+  .head{display:flex;gap:12px;align-items:center;}
+  .head img{width:56px;height:56px;object-fit:contain;flex-shrink:0;}
+  .head h1{font-size:16px;margin:0;}
+  .head .sub{font-size:12px;color:var(--grey);margin-top:3px;line-height:1.4;}
+  h2{font-size:17px;margin:0 0 10px;}
+  .info{font-size:13.5px;line-height:1.7;background:#f5f7f6;border-radius:10px;padding:10px 12px;margin-bottom:14px;}
+  .body{white-space:pre-wrap;font-size:14px;line-height:1.65;}
+  label.f{display:block;font-size:12px;font-weight:700;color:var(--grey);margin:0 0 6px;text-transform:uppercase;letter-spacing:.3px;}
+  input[type=text]{width:100%;font-size:16px;padding:12px;border:1px solid var(--line);border-radius:10px;}
+  .agree{display:flex;gap:10px;align-items:flex-start;font-size:14px;line-height:1.5;margin:14px 0;}
+  .agree input{width:22px;height:22px;flex-shrink:0;margin-top:1px;}
+  .pad{border:2px dashed #b9c2c8;border-radius:12px;background:#fafbfb;position:relative;}
+  .pad canvas{width:100%;height:200px;display:block;touch-action:none;}
+  .pad .hint{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#9aa3aa;font-size:14px;pointer-events:none;}
+  .row{display:flex;gap:10px;margin-top:12px;}
+  button{font-size:16px;font-weight:700;border-radius:10px;padding:13px 16px;border:0;cursor:pointer;}
+  .btn{background:var(--green);color:#fff;flex:1;}
+  .btn:disabled{opacity:.55;}
+  .ghost{background:#fff;color:var(--ink);border:1px solid var(--line);}
+  .msg{text-align:center;padding:40px 16px;font-size:15px;line-height:1.6;color:var(--grey);}
+  .ok{color:var(--green);font-size:48px;line-height:1;}
+  .err{color:#b42318;font-size:13.5px;margin-top:10px;min-height:1em;}
+  .foot{text-align:center;font-size:11px;color:#8a939a;margin-top:6px;}
+</style>
+</head>
+<body>
+<div class="wrap" id="app"><div class="card msg">Loading your consent form…</div></div>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
+  import { getFirestore, doc, getDoc, updateDoc } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyAGoza4ETqjMJug-7royY0pZfpzBgNAPFU",
+    authDomain: "htd-pms.firebaseapp.com",
+    projectId: "htd-pms",
+    storageBucket: "htd-pms.firebasestorage.app",
+    messagingSenderId: "500213236550",
+    appId: "1:500213236550:web:86b6e6c0fb4defa38d1b47"
+  };
+  const app = document.getElementById("app");
+  const esc = (s)=> String(s==null?"":s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const message = (html)=>{ app.innerHTML = `<div class="card msg">${html}</div>`; };
+
+  const token = new URLSearchParams(location.search).get("t") || "";
+  let db, ref, data;
+  if(!/^[a-f0-9]{16,}$/i.test(token)){ message("This link isn't valid. Please contact the clinic."); }
+  else{
+    try{
+      db = getFirestore(initializeApp(firebaseConfig));
+      ref = doc(db, "publicConsents", token);
+      const snap = await getDoc(ref);
+      data = snap.exists() ? snap.data() : null;
+      if(!data) message("We couldn't find this consent form. Please contact the clinic.");
+      else if(data.status !== "pending") doneScreen(data, true);
+      else render();
+    }catch(err){
+      console.error(err);
+      message("We couldn't load this form right now. Please check your internet and try again, or contact the clinic.");
+    }
+  }
+
+  function doneScreen(d, already){
+    app.innerHTML = `<div class="card msg">
+      <div class="ok">✓</div>
+      <h2 style="margin:12px 0 6px;color:#14171A;">${already? "Already signed" : "Thank you!"}</h2>
+      <div>${already? "This consent form has already been signed and submitted." : "Your signed consent has been sent to the clinic."}</div>
+      <div style="margin-top:8px;font-size:13px;">${esc(d.name||"Consent Form")}${d.signedAt? " · "+esc(new Date(d.signedAt).toLocaleString()) : ""}</div>
+      <div style="margin-top:14px;font-size:13px;">You can close this page now.</div>
+    </div>`;
+  }
+
+  function render(){
+    document.title = (data.name||"Consent Form") + " · " + (data.clinicName||"Healing Touch Dental");
+    app.innerHTML = `
+      <div class="card head">
+        ${data.clinicLogo? `<img src="${esc(data.clinicLogo)}" alt="">` : ""}
+        <div><h1>${esc(data.clinicName||"Healing Touch Dental")}</h1>
+          <div class="sub">${esc(data.clinicAddress||"")}${data.clinicPhone? "<br>"+esc(data.clinicPhone) : ""}</div></div>
+      </div>
+      <div class="card">
+        <h2>${esc(data.name||"Consent Form")}</h2>
+        <div class="info"><b>Patient:</b> ${esc(data.patientName||"")}<br><b>Age/Gender:</b> ${esc(data.ageGender||"—")}<br><b>Mobile:</b> ${esc(data.mobile||"—")}</div>
+        <div class="body">${esc(data.body||"")}</div>
+      </div>
+      <div class="card">
+        <label class="f" for="nm">Your full name</label>
+        <input type="text" id="nm" autocomplete="name" value="${esc(data.patientName||"")}">
+        <div class="agree"><input type="checkbox" id="ag"><label for="ag">I have read and understood this consent form, and I agree to it.</label></div>
+        <label class="f">Sign below with your finger</label>
+        <div class="pad"><canvas id="sig"></canvas><div class="hint" id="hint">Sign here</div></div>
+        <div class="row">
+          <button class="ghost" id="clr" type="button">Clear</button>
+          <button class="btn" id="sub" type="button">Submit Signed Consent</button>
+        </div>
+        <div class="err" id="err"></div>
+      </div>
+      <div class="foot">Your signature is shared only with ${esc(data.clinicName||"the clinic")}.</div>`;
+
+    const cv = document.getElementById("sig"), ctx = cv.getContext("2d"), hint = document.getElementById("hint");
+    let drawing = false, signed = false, last = null, strokes = 0;
+    function size(){
+      const r = cv.getBoundingClientRect(), dpr = Math.min(window.devicePixelRatio||1, 2);
+      cv.width = Math.round(r.width*dpr); cv.height = Math.round(r.height*dpr);
+      ctx.setTransform(dpr,0,0,dpr,0,0);
+      ctx.lineWidth = 2.4; ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.strokeStyle = "#14171A";
+      signed = false; strokes = 0; hint.style.display = "";
+    }
+    size();
+    window.addEventListener("orientationchange", ()=> setTimeout(size, 300));
+    const pos = (e)=>{ const r = cv.getBoundingClientRect(); return {x:e.clientX-r.left, y:e.clientY-r.top}; };
+    cv.addEventListener("pointerdown", (e)=>{ e.preventDefault(); drawing = true; last = pos(e); cv.setPointerCapture(e.pointerId); hint.style.display = "none"; });
+    cv.addEventListener("pointermove", (e)=>{
+      if(!drawing) return; e.preventDefault();
+      const p = pos(e); ctx.beginPath(); ctx.moveTo(last.x,last.y); ctx.lineTo(p.x,p.y); ctx.stroke(); last = p; strokes++;
+      if(strokes > 8) signed = true;
+    });
+    const stop = ()=>{ drawing = false; };
+    cv.addEventListener("pointerup", stop); cv.addEventListener("pointercancel", stop);
+    document.getElementById("clr").onclick = ()=>{ ctx.clearRect(0,0,cv.width,cv.height); size(); };
+
+    const err = document.getElementById("err");
+    document.getElementById("sub").onclick = async ()=>{
+      err.textContent = "";
+      const name = document.getElementById("nm").value.trim();
+      if(name.length < 2){ err.textContent = "Please enter your full name."; return; }
+      if(!document.getElementById("ag").checked){ err.textContent = "Please tick the box to confirm you agree."; return; }
+      if(!signed){ err.textContent = "Please sign in the box above."; return; }
+      // Export a compact signature image (white background, max 900px wide).
+      const scale = Math.min(1, 900 / cv.width);
+      const out = document.createElement("canvas");
+      out.width = Math.round(cv.width*scale); out.height = Math.round(cv.height*scale);
+      const o = out.getContext("2d"); o.fillStyle = "#fff"; o.fillRect(0,0,out.width,out.height);
+      o.drawImage(cv, 0, 0, out.width, out.height);
+      const sigUrl = out.toDataURL("image/png");
+      const btn = document.getElementById("sub"); btn.disabled = true; btn.textContent = "Submitting…";
+      try{
+        const signedAt = new Date().toISOString();
+        await updateDoc(ref, { status: "signed", signatureDataUrl: sigUrl, signedAt, signerName: name.slice(0,120), signerAgent: (navigator.userAgent||"").slice(0,300) });
+        doneScreen({ name: data.name, signedAt }, false);
+        window.scrollTo(0,0);
+      }catch(e){
+        console.error(e);
+        btn.disabled = false; btn.textContent = "Submit Signed Consent";
+        err.textContent = "Couldn't submit right now. Please check your internet and try again. (" + (e && e.code || "error") + ")";
+      }
+    };
+  }
+</script>
+</body>
+</html>
