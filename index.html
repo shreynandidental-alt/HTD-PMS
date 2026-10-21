@@ -1530,10 +1530,53 @@
   const fbDb = getFirestore(fbApp);
   enableIndexedDbPersistence(fbDb).catch(()=>{ /* multiple tabs open, etc — safe to ignore */ });
 
+  // ---- Read saver ----
+  // Every screen calls getAll() for whole collections, often many times a
+  // minute. Reading them fresh from the server each time cost a full read of
+  // every document on every call (600k+ reads/day, far past Firebase's free
+  // 50k). Instead, each collection is kept live with one listener: the first
+  // call reads it once, after that only documents that actually change are
+  // read, and every getAll() is answered instantly from memory. Writes from
+  // this device and from other devices show up through the same listener.
+  const __live = {};
+  const LIVE_IDLE_MS = 20*60*1000;
+  function liveCollection(storeName){
+    let e = __live[storeName];
+    if(e){ e.lastUsed = Date.now(); return e; }
+    e = { snap:null, lastUsed: Date.now(), settled:false, unsub:null };
+    e.ready = new Promise((resolve, reject)=>{
+      const settle = (ok, err)=>{ if(e.settled) return; e.settled = true; clearTimeout(t1); clearTimeout(t2); ok ? resolve() : reject(err); };
+      // Offline / slow network: fall back to whatever this device has cached.
+      const t1 = setTimeout(()=>{ if(e.snap) settle(true); }, 5000);
+      const t2 = setTimeout(()=>{ e.snap ? settle(true) : (delete __live[storeName], e.unsub && e.unsub(), settle(false, new Error("timeout"))); }, 15000);
+      e.unsub = onSnapshot(collection(fbDb, storeName), {includeMetadataChanges:true}, (snap)=>{
+        e.snap = snap;
+        if(!snap.metadata.fromCache) settle(true);
+      }, (err)=>{
+        if(__live[storeName]===e) delete __live[storeName];
+        settle(false, err);
+      });
+    });
+    __live[storeName] = e;
+    return e;
+  }
+  setInterval(()=>{
+    const now = Date.now();
+    Object.keys(__live).forEach(k=>{
+      const e = __live[k];
+      if(e.settled && now - e.lastUsed > LIVE_IDLE_MS){ try{ e.unsub && e.unsub(); }catch(x){} delete __live[k]; }
+    });
+  }, 5*60*1000);
+
   window.__fb = {
     add: async (storeName, obj)=>{ await setDoc(doc(fbDb, storeName, obj.id), obj); return obj; },
     put: async (storeName, obj)=>{ await setDoc(doc(fbDb, storeName, obj.id), obj); return obj; },
     getAll: async (storeName)=>{
+      try{
+        const e = liveCollection(storeName);
+        await e.ready;
+        if(e.snap) return e.snap.docs.map(d=>({...d.data(), id: d.id}));
+      }catch(err){ console.warn("[read saver] live read failed for "+storeName+", reading directly:", err && (err.code||err.message)); }
       const snap = await getDocs(collection(fbDb, storeName));
       // The document's real Firestore ID (d.id) is the source of truth —
       // not whatever "id" field (if any) happens to be inside its data.
