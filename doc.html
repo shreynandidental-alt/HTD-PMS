@@ -93,6 +93,23 @@
     frame.addEventListener("load", ()=>{ fit(); setTimeout(fit, 400); setTimeout(fit, 1500); });
     window.addEventListener("resize", fit);
 
+    // html2pdf renders in THIS page, where the document's own styles don't
+    // exist, so copy them over, re-targeting its "body" rules to a wrapper.
+    function printableCopy(doc){
+      const root = document.createElement("div");
+      root.className = "docroot";
+      root.style.cssText = "margin:0;max-width:none;width:auto;background:#fff;";
+      doc.querySelectorAll("style").forEach(st=>{
+        const css = (st.textContent||"")
+          .replace(/@page[^{]*\{[^}]*\}/g, "")
+          .replace(/(^|[},;\s])(html|body)(?=[\s{,.:#\[>])/g, "$1.docroot");
+        const el = document.createElement("style"); el.textContent = css; root.append(el);
+      });
+      const b = doc.body.cloneNode(true);
+      b.querySelectorAll("script").forEach(x=>x.remove());
+      while(b.firstChild) root.append(b.firstChild);
+      return root;
+    }
     const fileName = (d.title||"Document").replace(/[^\w\- ]+/g,"").trim() + (d.patientName? " - "+String(d.patientName).replace(/[^\w\- ]+/g,"").trim() : "") + ".pdf";
     const pdfBtn = document.getElementById("btnPdf");
     const printBtn = document.getElementById("btnPrint");
@@ -105,10 +122,10 @@
         await html2pdf().set({
           margin: [6, 6, 8, 6], filename: fileName,
           image: { type: "jpeg", quality: 0.95 },
-          html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff", windowWidth: 820 },
+          html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff" },
           jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
           pagebreak: { mode: ["css", "legacy"] }
-        }).from(frame.contentDocument.body).save();
+        }).from(printableCopy(frame.contentDocument)).save();
       }catch(e){
         console.error(e);
         alert("Couldn't create the PDF here — opening Print instead. Choose \"Save as PDF\" there.");

@@ -5797,6 +5797,7 @@ async function openPatientEmailSheet(patient){
   const clinics = await dbGetAll("clinics");
   const clinic = clinics.find(c=>c.id===patient.preferredClinicId) || clinics[0];
   const sign = `\n\nWarm regards,\nHealing Touch Dental${clinic && clinic.phone ? "\n"+clinic.phone : ""}`;
+  const api = await emailApiStatus();
   openSheet(`
     <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
     <h2>Send Email — ${escapeHtml(patient.name)}</h2>
@@ -5804,10 +5805,11 @@ async function openPatientEmailSheet(patient){
     <div class="field"><label>Subject</label><input id="peSubject" value="Healing Touch Dental"></div>
     <div class="field"><label>Message</label><textarea id="peBody" rows="8">${escapeHtml(`Dear ${patient.name},\n\n`+sign)}</textarea></div>
     ${aiRewriteRowHtml("peAiRow")}
-    <button class="btn btn-primary btn-block" id="btnPeSend">${icon('mail',15)} Open Email</button>
+    <button class="btn btn-primary btn-block" id="btnPeSend">${icon('mail',15)} ${api.configured ? "Send Email" : "Open Email"}</button>
+    ${api.configured ? `<button class="btn btn-outline btn-block" id="btnPeApp" style="margin-top:8px;">Open in email app instead</button>` : ""}
   `);
   wireAiRewrite("peAiRow", document.getElementById("peBody"));
-  document.getElementById("btnPeSend").onclick = async ()=>{
+  const peSend = async (viaApp)=>{
     const to = document.getElementById("peTo").value.trim();
     const subject = document.getElementById("peSubject").value.trim();
     const body = document.getElementById("peBody").value;
@@ -5816,11 +5818,23 @@ async function openPatientEmailSheet(patient){
       const fresh = (await dbGetAll("patients")).find(x=>x.id===patient.id);
       if(fresh && !fresh.email){ fresh.email = to; await dbPut("patients", fresh); patient.email = to; }
     }
-    window.open(`mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, "_blank");
+    if(api.configured && !viaApp){
+      const btn = document.getElementById("btnPeSend"); const label = btn.innerHTML;
+      btn.disabled = true; btn.textContent = "Sending…";
+      const r = await sendEmailDirect({to, subject, text: body});
+      if(!r.success){ btn.disabled = false; btn.innerHTML = label; showToast("Email not sent: "+r.error); return; }
+      showToast("Email sent to "+to);
+    }else{
+      window.open(`mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, "_blank");
+    }
+    const sent = api.configured && !viaApp;
     await logComm({channel:"Email", recipientType:"Patient", recipientName:patient.name, recipientContact:to, message: subject+"\n\n"+body, context:"Patient Email", patientId: patient.id});
-    logActivity("Email opened for "+patient.name, {patientId: patient.id});
+    logActivity((sent?"Email sent to ":"Email opened for ")+patient.name, {patientId: patient.id});
     closeSheet();
   };
+  document.getElementById("btnPeSend").onclick = ()=> peSend(false);
+  const peApp = document.getElementById("btnPeApp");
+  if(peApp) peApp.onclick = ()=> peSend(true);
 }
 
 // Turns multi-line instructions into one WhatsApp-safe line: no newlines or
@@ -9688,11 +9702,114 @@ function sendPdfOnWhatsAppTwoStep(patient, printFn, docLabel){
   }, 500);
 }
 
-// Same honest two-step pattern as sendPdfOnWhatsApp: no browser can silently attach a file
-// to an email either, so this opens the print dialog for Save as PDF, then the patient's
-// registered email client (mailto:, using whatever's set as default on the device — Gmail,
-// Outlook, or otherwise) with the message ready, so the last step is just attaching the file.
-function sendPdfByEmail(patient, printFn, docLabel){
+// ---- Direct email (clinic Gmail via api/send-email) ----
+// When GMAIL_USER / GMAIL_APP_PASSWORD are set in Vercel, emails go straight
+// from the PMS (with the PDF attached). Until then every email button keeps
+// working exactly as before, by opening the device's email app.
+let __emailApiState = null;
+async function emailApiStatus(force){
+  if(__emailApiState && !force) return __emailApiState;
+  if(!/^https?:/i.test(location.origin)) return (__emailApiState = {configured:false});
+  try{
+    const r = await fetch("/api/send-email", {method:"GET", cache:"no-store"});
+    const j = await r.json().catch(()=>({}));
+    __emailApiState = {configured: !!j.configured, from: j.from||""};
+  }catch(e){ return {configured:false}; }
+  return __emailApiState;
+}
+async function sendEmailDirect({to, subject, text, attachments}){
+  let token = null;
+  try{ token = window.__fbAuth && window.__fbAuth.getIdToken ? await window.__fbAuth.getIdToken() : null; }catch(e){}
+  if(!token) return {success:false, error:"Please sign in again"};
+  if(!navigator.onLine) return {success:false, error:"You're offline"};
+  try{
+    const r = await fetch("/api/send-email", {method:"POST", headers:{"Authorization":"Bearer "+token, "Content-Type":"application/json"}, body: JSON.stringify({to, subject, text, attachments: attachments||[]})});
+    const j = await r.json().catch(()=>({}));
+    if(!r.ok || !j.success) return {success:false, error: j.error || ("Email server error (HTTP "+r.status+")")};
+    return {success:true};
+  }catch(e){ return {success:false, error:(e&&e.message)||"Couldn't reach the email server"}; }
+}
+// Turns a captured print page into a PDF (base64), rendered inside a hidden
+// frame so the document keeps its own print styles.
+const HTML2PDF_SRC = "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
+function htmlToPdfBase64(html){
+  return new Promise((resolve)=>{
+    const f = document.createElement("iframe");
+    f.setAttribute("aria-hidden","true"); f.tabIndex = -1;
+    f.style.cssText = "position:fixed;left:-12000px;top:0;width:820px;height:1160px;border:0;";
+    let done = false;
+    const finish = (v)=>{ if(done) return; done = true; clearTimeout(timer); setTimeout(()=>{ try{ f.remove(); }catch(e){} }, 0); resolve(v); };
+    const timer = setTimeout(()=> finish(null), 45000);
+    f.onload = async ()=>{
+      try{
+        const w = f.contentWindow, d = f.contentDocument;
+        for(let i=0; i<80 && !w.html2pdf; i++) await new Promise(r=>setTimeout(r,100));
+        if(!w.html2pdf){ finish(null); return; }
+        d.querySelectorAll(".pdf-hint").forEach(el=>el.remove());
+        const imgs = Array.from(d.images||[]);
+        await Promise.all(imgs.map(im=> im.complete ? null : new Promise(r=>{ im.onload = im.onerror = r; setTimeout(r, 5000); })));
+        // Options are built inside the frame: html2pdf checks "instanceof Array",
+        // which fails for arrays made in this (parent) window.
+        const pdfOpts = w.JSON.parse(JSON.stringify({
+          margin: [8, 6, 10, 6],
+          image: { type: "jpeg", quality: 0.85 },
+          html2canvas: { scale: 1.6, useCORS: true, backgroundColor: "#ffffff", windowWidth: 820, logging: false },
+          jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
+          pagebreak: { mode: ["css", "legacy"] }
+        }));
+        const uri = await w.html2pdf().set(pdfOpts).from(d.body).outputPdf("datauristring");
+        finish(String(uri||"").split(",")[1] || null);
+      }catch(e){ console.error("htmlToPdfBase64:", e); finish(null); }
+    };
+    const inject = `<script src="${HTML2PDF_SRC}"><\/script>`;
+    f.srcdoc = /<\/body>/i.test(html) ? html.replace(/<\/body>/i, inject+"</body>") : html + inject;
+    document.body.appendChild(f);
+  });
+}
+function pdfFileName(docLabel, patient){
+  return ((docLabel||"Document") + (patient && patient.name ? " - "+patient.name : "")).replace(/[^\w\- ]+/g,"").replace(/\s+/g," ").trim() + ".pdf";
+}
+
+// Emails a document as a PDF attachment. With the email API set up, the PDF
+// is made here and sent straight from the clinic Gmail; if it's too large to
+// attach, a download link goes instead. Without the email API, falls back to
+// the old two-step flow (Save as PDF, then the device's email app).
+async function sendPdfByEmail(patient, printFn, docLabel){
+  if(!patient){ showToast("No patient context available"); return; }
+  if(!patient.email){ showToast("This patient has no email on file"); return; }
+  const api = await emailApiStatus();
+  if(!api.configured) return sendPdfByEmailTwoStep(patient, printFn, docLabel);
+  const base = {
+    title: "Email "+docLabel, toName: patient.name, toEmail: patient.email,
+    subject: docLabel+" — Healing Touch Dental", patientId: patient.id, recipientType: "Patient"
+  };
+  const sign = "\n\nLet us know if you have any questions.\n\nWarm regards,\nHealing Touch Dental";
+  showToast("Preparing "+docLabel+" PDF…");
+  const html = await captureDocHtml(printFn);
+  if(!html){
+    // This document type can't be captured; its print tab is already open.
+    showToast("In the print tab, choose \"Save as PDF\", then use Open in email app to attach it");
+    openMailComposer(Object.assign(base, {message: `Hi ${patient.name},\n\nPlease find your ${docLabel} from Healing Touch Dental attached.`+sign}));
+    return;
+  }
+  const b64 = await htmlToPdfBase64(html);
+  if(b64 && b64.length < 4300000){
+    openMailComposer(Object.assign(base, {
+      message: `Hi ${patient.name},\n\nPlease find your ${docLabel} from Healing Touch Dental attached (PDF).`+sign,
+      attachments: [{filename: pdfFileName(docLabel, patient), contentType: "application/pdf", contentBase64: b64}]
+    }));
+    return;
+  }
+  const link = await publishDocLink(html, {title: docLabel, patientName: patient.name});
+  if(!link) return;
+  openMailComposer(Object.assign(base, {
+    message: `Hi ${patient.name},\n\nYour ${docLabel} from Healing Touch Dental is ready. View or download it (PDF) here:\n${link}`+sign
+  }));
+}
+
+// Old two-step flow (no email API): opens the print dialog for Save as PDF,
+// then the device's email app with the message ready to attach the file.
+function sendPdfByEmailTwoStep(patient, printFn, docLabel){
   if(!patient){ showToast("No patient context available"); return; }
   if(!patient.email){ showToast("This patient has no email on file"); return; }
   printFn();
@@ -11280,6 +11397,7 @@ async function openCommunicationSettingsSheet(){
     <button class="btn btn-primary btn-block" id="btnSaveCommProvider" style="margin-bottom:8px;">Save</button>
     <button class="btn btn-outline btn-block" id="btnConfigureInterakt" style="margin-bottom:8px;">${icon('settings',15)} Configure WhatsApp Business API</button>
     <button class="btn btn-outline btn-block" id="btnConfigureMeta">${icon('settings',15)} Configure Meta Cloud API ${metaConfigured? '(Configured)' : '(Not Configured)'}</button>
+    <button class="btn btn-outline btn-block" id="btnConfigureEmail" style="margin-top:8px;">${icon('mail',15)} Email — Setup &amp; Test</button>
     <p style="margin-top:8px;">This is where you register your WhatsApp Business API credentials whenever you're ready — you can add or change these any time after the app is live, right from here, with nothing else needing to change.</p>
   `);
   document.getElementById("btnSaveCommProvider").onclick = async ()=>{
@@ -11290,6 +11408,43 @@ async function openCommunicationSettingsSheet(){
   };
   document.getElementById("btnConfigureInterakt").onclick = ()=> openInteraktConfigSheet();
   document.getElementById("btnConfigureMeta").onclick = ()=> openMetaCloudConfigSheet();
+  document.getElementById("btnConfigureEmail").onclick = ()=> openEmailSetupSheet();
+}
+
+// Email API status + test. The Gmail App password lives only in Vercel
+// (GMAIL_APP_PASSWORD), never in the PMS, same as the WhatsApp secret key.
+async function openEmailSetupSheet(){
+  const api = await emailApiStatus(true);
+  const s = (await dbGetAll("settings"))[0] || {};
+  const defTo = fbCurrentUserEmail || s.adminEmail || "";
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>Email</h2>
+    ${api.configured
+      ? `<div class="pdf-ok" style="background:#eef8f0;border:1px solid #cfe8d6;border-radius:10px;padding:10px 12px;color:#1F6E42;font-size:13px;margin-bottom:12px;"><b>Connected.</b> Emails are sent directly from <b>${escapeHtml(api.from)}</b> — with PDFs attached — and patients with an email address also get the 9 AM appointment reminder by email.</div>
+         <div class="field"><label>Send a test email to</label><input id="emTestTo" type="email" inputmode="email" value="${escapeAttr(defTo)}"></div>
+         <button class="btn btn-primary btn-block" id="btnEmTest">${icon('mail',15)} Send Test Email</button>`
+      : `<div style="background:#fff6e6;border:1px solid #f0d9a8;border-radius:10px;padding:10px 12px;color:#7a5200;font-size:13px;margin-bottom:12px;"><b>Not set up yet.</b> Email buttons currently open your device's email app.</div>
+         <p style="font-size:13px;margin:0 0 6px;">In Vercel → htd-pms → Settings → Environment Variables, add:</p>
+         <ul style="font-size:13px;line-height:1.7;padding-left:18px;margin:0 0 8px;">
+           <li><b>SMTP_HOST</b> = mail.dentalhealingtouch.in</li>
+           <li><b>SMTP_USER</b> = info@dentalhealingtouch.in</li>
+           <li><b>SMTP_PASS</b> = that mailbox's password</li>
+         </ul>
+         <p style="font-size:12.5px;color:var(--grey);margin:0 0 12px;">(Or, for a Gmail account: GMAIL_USER and a 16-letter GMAIL_APP_PASSWORD.) Then redeploy, come back here and send a test email.</p>
+         <button class="btn btn-outline btn-block" id="btnEmRecheck">Check Again</button>`}
+  `);
+  const re = document.getElementById("btnEmRecheck");
+  if(re) re.onclick = ()=> openEmailSetupSheet();
+  const t = document.getElementById("btnEmTest");
+  if(t) t.onclick = async ()=>{
+    const to = document.getElementById("emTestTo").value.trim();
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)){ showToast("Enter a valid email address"); return; }
+    t.disabled = true; t.textContent = "Sending…";
+    const r = await sendEmailDirect({to, subject:"Test email from Healing Touch Dental PMS", text:"This is a test email from your PMS.\n\nIf you can read this, email sending is working.\n\nHealing Touch Dental"});
+    t.disabled = false; t.innerHTML = `${icon('mail',15)} Send Test Email`;
+    showToast(r.success ? "Test email sent to "+to : "Email not sent: "+r.error);
+  };
 }
 
 // The Interakt Secret Key is never entered or stored here — it lives only
@@ -11708,7 +11863,11 @@ async function shareEntityText(title, text){
   }
   window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
 }
-function emailEntity(subject, body, toEmail){
+async function emailEntity(subject, body, toEmail){
+  if(toEmail && (await emailApiStatus()).configured){
+    openMailComposer({title:"Send Email", toName:"", toEmail, subject, message: body});
+    return;
+  }
   window.open(`mailto:${toEmail||""}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, "_blank");
 }
 
@@ -11739,7 +11898,7 @@ function openSmsComposer(opts){
   };
 }
 
-function openMailComposer(opts){
+async function openMailComposer(opts){
   if(!opts.toEmail){
     openSheet(`
       <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
@@ -11748,20 +11907,47 @@ function openMailComposer(opts){
     `);
     return;
   }
+  const api = await emailApiStatus();
+  const atts = opts.attachments || [];
+  const attKb = (a)=> Math.max(1, Math.round(String(a.contentBase64||"").length*0.75/1024));
   openSheet(`
     <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
     <h2>${opts.title||"Send Email"}</h2>
     <p>To: ${escapeHtml(opts.toName||"")} · ${escapeHtml(opts.toEmail)}</p>
     <div class="field"><label>Subject</label><input id="mailComposerSubject" value="${escapeAttr(opts.subject||"")}"></div>
-    <div class="field"><label>Message</label><textarea id="mailComposerMsg" rows="5">${escapeHtml(opts.message||"")}</textarea></div>
-    <button class="btn btn-primary btn-block" id="btnMailComposerSend">Open Email App</button>
+    <div class="field"><label>Message</label><textarea id="mailComposerMsg" rows="6">${escapeHtml(opts.message||"")}</textarea></div>
+    ${api.configured && atts.length ? `<div style="display:flex;flex-direction:column;gap:6px;margin:-4px 0 12px;">${atts.map(a=>`<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--line,#ddd);border-radius:10px;font-size:13px;">${icon('file',15)}<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(a.filename)}</span><span style="color:var(--grey);font-size:12px;">${attKb(a)} KB</span></div>`).join("")}</div>` : ""}
+    <button class="btn btn-primary btn-block" id="btnMailComposerSend">${icon('mail',15)} ${api.configured ? "Send Email" : "Open Email App"}</button>
+    ${api.configured ? `<button class="btn btn-outline btn-block" id="btnMailComposerApp" style="margin-top:8px;">Open in email app instead${atts.length?" (attach the PDF yourself)":""}</button>` : ""}
   `);
-  document.getElementById("btnMailComposerSend").onclick = async ()=>{
+  const sendBtn = document.getElementById("btnMailComposerSend");
+  const logIt = async (msg, verb)=>{
+    await logComm({channel:"Email", recipientType: opts.patientId?"Patient":(opts.recipientType||"Other"), recipientName:opts.toName, recipientContact:opts.toEmail, message: msg + (verb==="sent" && atts.length ? "\n[Attached: "+atts.map(a=>a.filename).join(", ")+"]" : ""), patientId: opts.patientId||null});
+    logActivity(`Email ${verb} for ${opts.toName||opts.toEmail}`, opts.patientId?{patientId:opts.patientId}:{});
+  };
+  const openApp = async ()=>{
     const subj = document.getElementById("mailComposerSubject").value.trim();
     const msg = document.getElementById("mailComposerMsg").value.trim();
     window.location.href = `mailto:${opts.toEmail}?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(msg)}`;
-    await logComm({channel:"Email", recipientType: opts.patientId?"Patient":(opts.recipientType||"Other"), recipientName:opts.toName, recipientContact:opts.toEmail, message: msg, patientId: opts.patientId||null});
-    logActivity(`Email opened for ${opts.toName||opts.toEmail}`, opts.patientId?{patientId:opts.patientId}:{});
+    await logIt(msg, "opened");
+    if(opts.onSent) opts.onSent();
+    closeSheet();
+  };
+  if(!api.configured){ sendBtn.onclick = openApp; return; }
+  document.getElementById("btnMailComposerApp").onclick = openApp;
+  sendBtn.onclick = async ()=>{
+    const subj = document.getElementById("mailComposerSubject").value.trim();
+    const msg = document.getElementById("mailComposerMsg").value.trim();
+    const label = sendBtn.innerHTML;
+    sendBtn.disabled = true; sendBtn.textContent = "Sending…";
+    const r = await sendEmailDirect({to: opts.toEmail, subject: subj, text: msg, attachments: atts});
+    if(!r.success){
+      sendBtn.disabled = false; sendBtn.innerHTML = label;
+      showToast("Email not sent: "+r.error);
+      return;
+    }
+    await logIt(msg, "sent");
+    showToast("Email sent to "+opts.toEmail);
     if(opts.onSent) opts.onSent();
     closeSheet();
   };
@@ -14719,8 +14905,7 @@ async function openOutstandingReminderMenu(r){
   document.getElementById("btnOsEmail").onclick = ()=>{
     closeSheet();
     if(!r.patient.email){ showToast("No email on file for this patient"); return; }
-    window.open(`mailto:${r.patient.email}?subject=${encodeURIComponent("Outstanding Payment Reminder")}&body=${encodeURIComponent(message)}`, "_blank");
-    logComm({channel:"Email", recipientType:"Patient", recipientName:r.patient.name, recipientContact:r.patient.email, message, patientId:r.patient.id});
+    openMailComposer({ title:"Outstanding Payment Reminder", toName: r.patient.name, toEmail: r.patient.email, subject:"Outstanding Payment Reminder — Healing Touch Dental", message, patientId: r.patient.id, recipientType:"Patient" });
   };
 }
 
@@ -23678,7 +23863,7 @@ async function renderAutoRemStatus(state){
       const t = new Date(run.remindersDoneAt).toLocaleTimeString("en-IN",{timeZone:"Asia/Kolkata",hour:"numeric",minute:"2-digit"});
       const ar = (run.summary && run.summary.appointmentReminders) || {};
       if(ar.failed){ cls="ars-bad"; text = `Auto reminders sent at ${t}, but some didn't go — tap to see`; }
-      else { cls="ars-ok"; text = `Auto WhatsApp reminders sent at ${t}${run.trigger==="app"?" (back-up)":""}`; }
+      else { const er = (run.summary && run.summary.emailReminders) || {}; cls="ars-ok"; text = `Auto WhatsApp reminders sent at ${t}${run.trigger==="app"?" (back-up)":""}${er.sent? " · "+er.sent+" by email":""}`; }
     }else if(run && run.status==="error"){ cls="ars-bad"; text = "Auto reminders didn't run: "+(run.error||"server error")+" — tap to send now"; }
     else if(mins < 9*60){ cls="ars-wait"; text = "Auto WhatsApp reminders will go at 9 AM"; }
     else if(run && run.status==="running"){ cls="ars-busy"; text = "Sending today's WhatsApp reminders…"; }
