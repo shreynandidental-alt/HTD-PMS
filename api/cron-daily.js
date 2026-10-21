@@ -38,6 +38,7 @@
 // alongside this file.
 
 import { activeBackend, notConfiguredError, sendWhatsAppTemplate } from "./_lib/whatsapp.js";
+import { emailConfigured, sendEmail } from "./_lib/email.js";
 import { initializeApp, cert, getApps } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
@@ -159,7 +160,7 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: notConfiguredError() });
   }
 
-  const summary = { appointmentReminders: { sent: 0, skipped: 0, failed: 0 }, birthdays: { sent: 0, skipped: 0, failed: 0 }, sixMonthFollowUps: { sent: 0, skipped: 0, failed: 0 }, caseFollowUps: { sent: 0, skipped: 0, failed: 0 }, errors: [] };
+  const summary = { appointmentReminders: { sent: 0, skipped: 0, failed: 0 }, birthdays: { sent: 0, skipped: 0, failed: 0 }, sixMonthFollowUps: { sent: 0, skipped: 0, failed: 0 }, caseFollowUps: { sent: 0, skipped: 0, failed: 0 }, emailReminders: { sent: 0, skipped: 0, failed: 0 }, errors: [] };
   await logRun({ status: "running", startedAt: new Date().toISOString(), trigger: caller, backend: activeBackend() });
 
   const today = todayIST();
@@ -209,6 +210,62 @@ export default async function handler(req, res) {
   } catch (err) {
     summary.errors.push("Appointment reminders crashed: " + err.message);
     console.error("[cron-daily] appointment reminders crashed: " + (err.stack || err));
+  }
+  // ---------- 1b. Appointment reminders by EMAIL - for patients who have an
+  // email address saved. Runs alongside WhatsApp (not instead of it) and has
+  // its own "sent" stamp, so neither channel blocks or repeats the other.
+  if (emailConfigured()) {
+    try {
+      const snap = await db.collection("appointments").where("date", "==", todayKey).get();
+      const due = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+        .filter(a => !["Cancelled", "NoShow", "Completed", "Reserved", "Rescheduled"].includes(a.status) && !a.emailReminderSentAt);
+      let clinics = null;
+      for (const appt of due) {
+        try {
+          const patient = await getPatient(appt.patientId);
+          const to = String((patient && patient.email) || "").trim();
+          if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) { summary.emailReminders.skipped++; continue; }
+          const ref = db.collection("appointments").doc(appt.id);
+          if (!(await claim(db, ref, "emailReminderSentAt"))) { summary.emailReminders.skipped++; continue; }
+          if (!clinics) clinics = await getAllDocs(db, "clinics").catch(() => []);
+          const clinic = clinics.find(c => c.id === appt.clinicId) || clinics.find(c => c.id === (patient && patient.preferredClinicId)) || null;
+          const name = (patient && patient.name) || appt.patientName || "";
+          const time = formatTime12h(appt.startTime);
+          const lines = [
+            "Dear " + (name || "Patient") + ",",
+            "",
+            "This is a reminder of your dental appointment today, " + formatDateLong(today) + (time ? ", at " + time : "") + ".",
+            ""
+          ];
+          if (clinic) {
+            lines.push("Clinic: " + (clinic.name || "Healing Touch Dental"));
+            if (clinic.address) lines.push("Address: " + clinic.address);
+            if (clinic.phone) lines.push("Phone: " + clinic.phone);
+            if (clinic.address || clinic.name) lines.push("Directions: https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(clinic.address || clinic.name));
+            lines.push("");
+          }
+          lines.push("If you need to reschedule, please call or WhatsApp us.", "", "Warm regards,", "Healing Touch Dental");
+          const result = await sendEmail({
+            to,
+            subject: "Appointment reminder - today" + (time ? " at " + time : "") + " | Healing Touch Dental",
+            text: lines.join("\n")
+          });
+          if (result.success) {
+            await ref.update({ emailReminderSentAt: new Date().toISOString() });
+            summary.emailReminders.sent++;
+          } else {
+            await ref.update({ emailReminderSentAtClaim: null }).catch(() => {});
+            summary.emailReminders.failed++;
+            summary.errors.push("Email reminder for " + (name || appt.id) + ": " + result.error);
+          }
+        } catch (e) {
+          summary.emailReminders.failed++;
+          summary.errors.push("Email reminder for " + (appt.patientName || appt.id) + ": " + e.message);
+        }
+      }
+    } catch (err) {
+      summary.errors.push("Email reminders crashed: " + err.message);
+    }
   }
   await logRun({ remindersDoneAt: new Date().toISOString(), summary });
 
