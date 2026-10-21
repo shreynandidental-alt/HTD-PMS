@@ -41,30 +41,18 @@
 <div class="wrap" id="app"><div class="card msg">Loading your consent form…</div></div>
 
 <script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
-  import { getFirestore, doc, getDoc, updateDoc } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
-
-  const firebaseConfig = {
-    apiKey: "AIzaSyAGoza4ETqjMJug-7royY0pZfpzBgNAPFU",
-    authDomain: "htd-pms.firebaseapp.com",
-    projectId: "htd-pms",
-    storageBucket: "htd-pms.firebasestorage.app",
-    messagingSenderId: "500213236550",
-    appId: "1:500213236550:web:86b6e6c0fb4defa38d1b47"
-  };
   const app = document.getElementById("app");
   const esc = (s)=> String(s==null?"":s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
   const message = (html)=>{ app.innerHTML = `<div class="card msg">${html}</div>`; };
 
   const token = new URLSearchParams(location.search).get("t") || "";
-  let db, ref, data;
+  let data;
   if(!/^[a-f0-9]{16,}$/i.test(token)){ message("This link isn't valid. Please contact the clinic."); }
   else{
     try{
-      db = getFirestore(initializeApp(firebaseConfig));
-      ref = doc(db, "publicConsents", token);
-      const snap = await getDoc(ref);
-      data = snap.exists() ? snap.data() : null;
+      const r = await fetch("/api/consent?t=" + encodeURIComponent(token), {cache:"no-store"});
+      data = r.status === 404 ? null : await r.json();
+      if(r.status !== 404 && !r.ok) throw new Error(data && data.error || ("HTTP " + r.status));
       if(!data) message("We couldn't find this consent form. Please contact the clinic.");
       else if(data.status !== "pending") doneScreen(data, true);
       else render();
@@ -150,13 +138,16 @@
       const btn = document.getElementById("sub"); btn.disabled = true; btn.textContent = "Submitting…";
       try{
         const signedAt = new Date().toISOString();
-        await updateDoc(ref, { status: "signed", signatureDataUrl: sigUrl, signedAt, signerName: name.slice(0,120), signerAgent: (navigator.userAgent||"").slice(0,300) });
-        doneScreen({ name: data.name, signedAt }, false);
+        const r = await fetch("/api/consent", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ t: token, signerName: name.slice(0,120), signatureDataUrl: sigUrl }) });
+        const j = await r.json().catch(()=>({}));
+        if(r.status === 409){ doneScreen({ name: data.name }, true); return; }
+        if(!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+        doneScreen({ name: data.name, signedAt: j.signedAt || signedAt }, false);
         window.scrollTo(0,0);
       }catch(e){
         console.error(e);
         btn.disabled = false; btn.textContent = "Submit Signed Consent";
-        err.textContent = "Couldn't submit right now. Please check your internet and try again. (" + (e && e.code || "error") + ")";
+        err.textContent = (e && e.message && !/^HTTP|fetch/i.test(e.message)) ? e.message : "Couldn't submit right now. Please check your internet and try again.";
       }
     };
   }
