@@ -41,6 +41,17 @@
 <div class="wrap" id="app"><div class="card msg">Loading your consent form…</div></div>
 
 <script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
+  import { getFirestore, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyAGoza4ETqjMJug-7royY0pZfpzBgNAPFU",
+    authDomain: "htd-pms.firebaseapp.com",
+    projectId: "htd-pms",
+    storageBucket: "htd-pms.firebasestorage.app",
+    messagingSenderId: "500213236550",
+    appId: "1:500213236550:web:86b6e6c0fb4defa38d1b47"
+  };
   const app = document.getElementById("app");
   const esc = (s)=> String(s==null?"":s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
   const message = (html)=>{ app.innerHTML = `<div class="card msg">${html}</div>`; };
@@ -50,9 +61,9 @@
   if(!/^[a-f0-9]{16,}$/i.test(token)){ message("This link isn't valid. Please contact the clinic."); }
   else{
     try{
-      const r = await fetch("/api/consent?t=" + encodeURIComponent(token), {cache:"no-store"});
-      data = r.status === 404 ? null : await r.json();
-      if(r.status !== 404 && !r.ok) throw new Error(data && data.error || ("HTTP " + r.status));
+      const snap = await getDoc(doc(getFirestore(initializeApp(firebaseConfig)), "publicReceipts", token));
+      data = snap.exists() ? snap.data() : null;
+      if(data && data.docType !== "consent") data = null;
       if(!data) message("We couldn't find this consent form. Please contact the clinic.");
       else if(data.status !== "pending") doneScreen(data, true);
       else render();

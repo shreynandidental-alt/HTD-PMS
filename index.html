@@ -26376,9 +26376,11 @@ function openConsentActionChoiceSheet(template, patient){
 }
 
 // ---- Remote consent: patient signs on their own phone ----
-// A copy of the form is published under an unguessable link (publicConsents/
-// <token>); consent.html shows it, collects the signature and marks it
-// "signed". The PMS listens for signed forms and files them into the
+// A copy of the form is published under an unguessable link, stored with the
+// other shareable documents (publicReceipts/<token>, docType "consent", which
+// the patient's phone can already open). consent.html shows it and sends the
+// signature to api/consent, which records it once in consentSubmissions/
+// <token>. The PMS listens for new submissions and files them into the
 // patient's consents (Files → Consent Forms) automatically.
 async function sendConsentForSignature(template, patient){
   const number = patient.whatsappNumber || patient.mobile;
@@ -26388,8 +26390,8 @@ async function sendConsentForSignature(template, patient){
     const clinics = await dbGetAll("clinics");
     const clinic = clinics.find(c=>c.id===patient.preferredClinicId) || clinics.find(c=>c.isDefault) || clinics[0] || {};
     const token = newReceiptToken();
-    await window.__fb.put("publicConsents", {
-      id: token, status: "pending",
+    await window.__fb.put("publicReceipts", {
+      id: token, docType: "consent", status: "pending",
       templateId: template.id, name: template.name||"Consent Form", body: template.body||"",
       patientId: patient.id, patientName: patientDisplayName(patient) || patient.name || "",
       ageGender: patientAgeGenderStr(patient), mobile: patient.mobile||"",
@@ -26415,38 +26417,46 @@ async function sendConsentForSignature(template, patient){
 }
 let consentWatchUnsub = null;
 const consentImporting = new Set();
-async function importSignedConsent(row){
-  if(!row || !row.id || row.status!=="signed" || consentImporting.has(row.id)) return;
-  consentImporting.add(row.id);
+async function importSignedConsent(sub){
+  if(!sub || !sub.id || sub.status!=="new" || consentImporting.has(sub.id)) return;
+  consentImporting.add(sub.id);
   try{
-    const record = {
-      id: "consent_"+row.id, patientId: row.patientId, templateId: row.templateId||"", name: row.name||"Consent Form",
-      bodyText: row.body||"", patientName: row.patientName||"", ageGender: row.ageGender||"", mobile: row.mobile||"",
-      clinicId: row.clinicId||"", clinicName: (row.clinicName||"").replace('Healing Touch Dental — ',''),
-      signatureDataUrl: row.signatureDataUrl||"", signerName: row.signerName||"",
-      signedAt: row.signedAt||nowIso(), signedRemotely: true
-    };
-    await dbPut("consents", record);
-    // Keep only a small receipt in the public copy once it's filed.
-    await window.__fb.put("publicConsents", { id: row.id, status: "saved", name: record.name, patientName: record.patientName, signedAt: record.signedAt, savedAt: nowIso() });
-    logActivity("Patient signed consent ("+record.name+") online — saved to Files", {patientId: record.patientId});
-    await createLoggedNotification({
-      id: uid("notif"), type: "consent_signed", relatedId: row.id, monthKey: toDateKey(new Date()),
-      title: "Consent signed: "+(record.patientName||"Patient"),
-      message: (record.patientName||"A patient")+" signed \""+record.name+"\" online. It's saved in their Files → Consent Forms.",
-      read: false, createdAt: nowIso()
-    }).catch(()=>{});
-    refreshNotificationBell && refreshNotificationBell();
-    showToast((record.patientName||"Patient")+" signed "+record.name+" — saved to Files");
+    const form = await window.__fb.get("publicReceipts", sub.id);
+    if(!form || form.docType!=="consent"){
+      await window.__fb.put("consentSubmissions", { id: sub.id, status: "invalid", checkedAt: nowIso() });
+      return;
+    }
+    if(form.status!=="saved"){
+      const record = {
+        id: "consent_"+sub.id, patientId: form.patientId, templateId: form.templateId||"", name: form.name||"Consent Form",
+        bodyText: form.body||"", patientName: form.patientName||"", ageGender: form.ageGender||"", mobile: form.mobile||"",
+        clinicId: form.clinicId||"", clinicName: (form.clinicName||"").replace('Healing Touch Dental — ',''),
+        signatureDataUrl: sub.signatureDataUrl||"", signerName: sub.signerName||"",
+        signedAt: sub.signedAt||nowIso(), signedRemotely: true
+      };
+      await dbPut("consents", record);
+      // The public copy keeps only a small "already signed" note.
+      await window.__fb.put("publicReceipts", { id: sub.id, docType: "consent", status: "saved", name: record.name, patientName: record.patientName, signedAt: record.signedAt, savedAt: nowIso() });
+      logActivity("Patient signed consent ("+record.name+") online — saved to Files", {patientId: record.patientId});
+      await createLoggedNotification({
+        id: uid("notif"), type: "consent_signed", relatedId: sub.id, monthKey: toDateKey(new Date()),
+        title: "Consent signed: "+(record.patientName||"Patient"),
+        message: (record.patientName||"A patient")+" signed \""+record.name+"\" online. It's saved in their Files → Consent Forms.",
+        read: false, createdAt: nowIso()
+      }).catch(()=>{});
+      refreshNotificationBell && refreshNotificationBell();
+      showToast((record.patientName||"Patient")+" signed "+record.name+" — saved to Files");
+    }
+    await window.__fb.put("consentSubmissions", { id: sub.id, status: "saved", signedAt: sub.signedAt||"", savedAt: nowIso() });
   }catch(err){
     console.warn("importSignedConsent:", err);
   }finally{
-    consentImporting.delete(row.id);
+    consentImporting.delete(sub.id);
   }
 }
 function startConsentSubmissionWatch(){
   if(consentWatchUnsub || !window.__fb || !window.__fb.listenQuery) return;
-  consentWatchUnsub = window.__fb.listenQuery("publicConsents", "status", "signed", "signedAt", (rows)=>{
+  consentWatchUnsub = window.__fb.listenQuery("consentSubmissions", "status", "new", "signedAt", (rows)=>{
     rows.forEach(r=> importSignedConsent(r));
   });
 }
