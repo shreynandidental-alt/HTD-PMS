@@ -11679,11 +11679,19 @@ function openWhatsAppComposer(opts){
     const msg = document.getElementById("waComposerMsg").value.trim();
     const btn = document.getElementById("btnWaComposerSend");
     btn.disabled = true;
-    const result = await CommunicationService.send("sendText", {
+    let result = await CommunicationService.send("sendText", {
       toName: opts.toName, toNumber: opts.toNumber, message: msg,
       patientId: opts.patientId||null, recipientType: opts.recipientType,
       templateName: opts.templateName||null, templateParams: opts.templateParams||null
     });
+    // A newer template may still be awaiting WhatsApp approval: fall back to the older one.
+    if(!result.success && opts.templateName && opts.templateFallback){
+      result = await CommunicationService.send("sendText", {
+        toName: opts.toName, toNumber: opts.toNumber, message: msg,
+        patientId: opts.patientId||null, recipientType: opts.recipientType,
+        templateName: opts.templateFallback, templateParams: opts.templateParams||null
+      });
+    }
     if(!result.success){
       btn.disabled = false;
       const provider = await CommunicationService.getActiveProvider();
@@ -28507,7 +28515,10 @@ async function sendInstructionsWhatsApp(patient, type, title, body){
     toName: patient.name, toNumber: number, patientId: patient.id,
     title: (type==="pre"?"Pre-Op":"Post-Op")+" Instructions",
     message: `Hi ${patient.name},\n\nPlease read your ${kind} instructions${title? " for "+title : ""} here: ${link}\n\n— Healing Touch Dental`,
-    templateName: type==="pre" ? "pre_operative" : "post_operative",
+    // post_operative was approved by WhatsApp as a Marketing template, which
+    // WhatsApp often doesn't deliver; post_op_instructions is the Utility copy.
+    templateName: type==="pre" ? "pre_operative" : "post_op_instructions",
+    templateFallback: type==="pre" ? null : "post_operative",
     templateParams: [patient.name||"Patient", param2],
     onSent: ()=> logActivity("Sent "+kind+" instructions"+(title? " ("+title+")":"")+" link to "+patient.name, {patientId: patient.id})
   });
