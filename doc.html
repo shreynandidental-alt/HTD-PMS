@@ -107,6 +107,26 @@
       });
       const b = doc.body.cloneNode(true);
       b.querySelectorAll("script").forEach(x=>x.remove());
+      // html2canvas ignores object-fit: give images their real shape.
+      const origImgs = [...doc.images], copyImgs = [...b.querySelectorAll("img")];
+      origImgs.forEach((im, i)=>{
+        const c = copyImgs[i]; if(!c || !im.naturalWidth || !im.naturalHeight) return;
+        const fit = (doc.defaultView || window).getComputedStyle(im).objectFit;
+        if(fit==="contain" || fit==="scale-down" || fit==="cover"){
+          const r = Math.min((im.clientWidth||im.naturalWidth)/im.naturalWidth, (im.clientHeight||im.naturalHeight)/im.naturalHeight);
+          c.style.width = Math.round(im.naturalWidth*r)+"px"; c.style.height = Math.round(im.naturalHeight*r)+"px"; c.style.objectFit = "fill";
+        }
+      });
+      // Footer as plain centred lines (pasted formatting breaks in the PDF).
+      const origFc = [...doc.querySelectorAll(".footer-custom")];
+      b.querySelectorAll(".footer-custom").forEach((fc, i)=>{
+        const src = origFc[i] || fc;
+        const lines = (src.innerText||src.textContent||"").split(/\n+/).map(t=>t.replace(/\s+/g," ").trim()).filter(Boolean);
+        fc.innerHTML = ""; lines.forEach(t=>{ const dv = document.createElement("div"); dv.textContent = t; fc.append(dv); });
+      });
+      const even = document.createElement("style");
+      even.textContent = ".docroot, .docroot *{font-size:12px !important; line-height:1.45 !important; letter-spacing:normal !important; word-spacing:normal !important; zoom:1 !important;} .docroot .footer, .docroot .footer *{white-space:normal !important; text-align:center !important; float:none !important; position:static !important; background:transparent !important;} .docroot .footer{margin-top:24px !important;}";
+      root.append(even);
       while(b.firstChild) root.append(b.firstChild);
       return root;
     }

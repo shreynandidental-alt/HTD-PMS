@@ -9305,6 +9305,7 @@ async function openLabCaseForm(id, prefillPatient){
     };
   }
   const isEdit = !!id;
+  const labWarrantyAttachments = lc.warrantyAttachments ? JSON.parse(JSON.stringify(lc.warrantyAttachments)) : [];
   openSheet(`
     <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
     <h2>${isEdit?"Edit Lab Case":"New Lab Case"}</h2>
@@ -9354,8 +9355,11 @@ async function openLabCaseForm(id, prefillPatient){
       <select id="lfStatus">${LAB_CASE_STATUSES.map(s=>`<option value="${s}" ${lc.status===s?'selected':''}>${s}</option>`).join("")}</select>
     </div>
     <div class="field"><label>Notes</label><textarea id="lfNotes" rows="2">${escapeHtml(lc.notes)}</textarea></div>
+    ${warrantyUploadBlockHtml('labWarranty','Warranty Card (photo or PDF)')}
+    <p style="margin:-6px 0 12px;color:var(--grey);font-size:11.5px;">Also shows in Clinical → Prosthodontics → Crowns / Veneers for this tooth.</p>
     <button class="btn btn-primary btn-block" id="btnSaveLabCase">${isEdit?"Save Changes":"Save Lab Case"}</button>
   `);
+  wireWarrantyUpload('labWarranty', labWarrantyAttachments);
   function populateWorkItems(labId){
     const wrap = document.getElementById("lfWorkItemWrap");
     const sel = document.getElementById("lfWorkItem");
@@ -9437,6 +9441,7 @@ async function openLabCaseForm(id, prefillPatient){
       deliveryDate: document.getElementById("lfDelivery").value,
       status: document.getElementById("lfStatus").value,
       notes: document.getElementById("lfNotes").value.trim(),
+      warrantyAttachments: labWarrantyAttachments,
       updatedAt: nowIso()
     });
     if(updated.status==="Ready"){
@@ -9459,6 +9464,7 @@ async function openLabCaseForm(id, prefillPatient){
     if(updated.status==="Delivered to Patient"){
       await syncLabCaseToCrownCase(updated);
     }
+    await syncLabWarrantyToCrownCase(updated).catch(e=> console.warn("Warranty card sync:", e));
     if(!isEdit && (updated.labContact || updated.labId)){
       await offerNotifyLabForNewCase(updated);
     }else{
@@ -9555,7 +9561,7 @@ async function syncLabCaseToCrownCase(labCase){
   if(labCase.caseType==="Denture") return; // not a crown/veneer/bridge item
   const mapping = LAB_TO_PROSTH_MAP[labCase.caseType] || {type:"Other", material:"Other"};
   const prosthCases = await dbGetAll("prostheticCases");
-  const existing = prosthCases.find(c=> c.patientId===labCase.patientId && (c.tooth||"").trim()===(labCase.tooth||"").trim() && (c.tooth||"").trim()!=="");
+  const existing = prosthCases.find(c=> c.labCaseId===labCase.id) || prosthCases.find(c=> c.patientId===labCase.patientId && (c.tooth||"").trim()===(labCase.tooth||"").trim() && (c.tooth||"").trim()!=="");
 
   if(existing){
     existing.status = "Delivered";
@@ -9568,12 +9574,47 @@ async function syncLabCaseToCrownCase(labCase){
       type: mapping.type, tooth: labCase.tooth||"", material: mapping.material, shade:"",
       lab: labCase.labName||"", startDate: labCase.dateSent? new Date(labCase.dateSent).toISOString() : nowIso(),
       dueDate: labCase.deliveryDate? new Date(labCase.deliveryDate).toISOString() : null,
-      status: "Delivered", warrantyYears: 2, cost: 0,
+      status: "Delivered", warrantyYears: 2, cost: 0, labCaseId: labCase.id,
       notes: "Auto-created from delivered lab case"+(labCase.labName? " ("+labCase.labName+")":""),
       createdAt: nowIso(), updatedAt: nowIso()
     });
   }
   logActivity("Lab case delivery synced to crown case for "+labCase.patientName, {patientId: labCase.patientId});
+}
+
+// Warranty cards added on a lab case are mirrored into the matching
+// Crown / Veneer case (same patient + tooth, or the one this lab case
+// created), creating that case if needed. Cards are tagged with the lab case
+// they came from, so removing one on the lab case removes it there too.
+async function syncLabWarrantyToCrownCase(labCase){
+  if(!labCase || !labCase.patientId || labCase.caseType==="Denture") return;
+  const cards = labCase.warrantyAttachments || [];
+  const prosthCases = await dbGetAll("prostheticCases");
+  const tooth = (labCase.tooth||"").trim();
+  let target = prosthCases.find(c=> c.labCaseId===labCase.id)
+    || (tooth ? prosthCases.find(c=> c.patientId===labCase.patientId && (c.tooth||"").trim()===tooth) : null);
+  const tag = "lab:"+labCase.id;
+  if(!target){
+    if(!cards.length) return;
+    const mapping = LAB_TO_PROSTH_MAP[labCase.caseType] || {type:"Other", material:"Other"};
+    target = {
+      id: uid("prosth"), patientId: labCase.patientId, labCaseId: labCase.id,
+      type: mapping.type, tooth, material: mapping.material, shade: labCase.shade||"",
+      lab: labCase.labName||"", startDate: labCase.dateSent? new Date(labCase.dateSent).toISOString() : nowIso(),
+      dueDate: labCase.patientPromisedDate? new Date(labCase.patientPromisedDate).toISOString() : null,
+      status: labCase.status==="Delivered to Patient" ? "Delivered" : "In Lab", warrantyYears: 2, cost: 0,
+      notes: "Auto-created from lab case"+(labCase.labName? " ("+labCase.labName+")":""),
+      warrantyAttachments: [], createdAt: nowIso()
+    };
+  }
+  const kept = (target.warrantyAttachments||[]).filter(a=> a.source!==tag);
+  const fromLab = cards.map(a=> Object.assign({}, a, {source: tag}));
+  const before = JSON.stringify(target.warrantyAttachments||[]);
+  target.warrantyAttachments = kept.concat(fromLab);
+  if(!target.labCaseId) target.labCaseId = labCase.id;
+  if(JSON.stringify(target.warrantyAttachments) === before && prosthCases.some(c=>c.id===target.id)) return;
+  target.updatedAt = nowIso();
+  await dbPut("prostheticCases", target);
 }
 
 async function renderPatientLabCasesTab(body, patientId, patient){
@@ -9802,6 +9843,7 @@ function htmlToPdfBase64(html){
         d.querySelectorAll(".pdf-hint").forEach(el=>el.remove());
         const imgs = Array.from(d.images||[]);
         await Promise.all(imgs.map(im=> im.complete ? null : new Promise(r=>{ im.onload = im.onerror = r; setTimeout(r, 5000); })));
+        tidyDocForPdf(d, w);
         // Options are built inside the frame: html2pdf checks "instanceof Array",
         // which fails for arrays made in this (parent) window.
         const pdfOpts = w.JSON.parse(JSON.stringify({
@@ -9819,6 +9861,37 @@ function htmlToPdfBase64(html){
     f.srcdoc = /<\/body>/i.test(html) ? html.replace(/<\/body>/i, inject+"</body>") : html + inject;
     document.body.appendChild(f);
   });
+}
+// The PDF is drawn by html2canvas, which ignores object-fit (so logos got
+// squashed into their square box), the page "zoom" setting and some pasted
+// footer formatting. This evens the page out before drawing: logos keep their
+// real shape, every text is one size, and the footer is plain centred text.
+const PDF_TEXT_PX = 12;
+function tidyDocForPdf(d, w){
+  d.querySelectorAll("img").forEach(im=>{
+    const cs = w.getComputedStyle(im);
+    const nw = im.naturalWidth, nh = im.naturalHeight;
+    if(!nw || !nh) return;
+    if(cs.objectFit==="contain" || cs.objectFit==="scale-down" || cs.objectFit==="cover"){
+      const bw = im.clientWidth || nw, bh = im.clientHeight || nh;
+      const r = Math.min(bw/nw, bh/nh);
+      im.style.width = Math.round(nw*r)+"px";
+      im.style.height = Math.round(nh*r)+"px";
+      im.style.objectFit = "fill";
+    }
+  });
+  d.querySelectorAll(".footer-custom").forEach(fc=>{
+    const lines = (fc.innerText||fc.textContent||"").split(/\n+/).map(t=>t.replace(/\s+/g," ").trim()).filter(Boolean);
+    fc.innerHTML = lines.map(t=>`<div>${t.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]))}</div>`).join("");
+  });
+  const st = d.createElement("style");
+  st.textContent = `
+    body{zoom:1 !important;}
+    body, body *{font-size:${PDF_TEXT_PX}px !important; line-height:1.45 !important; letter-spacing:normal !important; word-spacing:normal !important;}
+    .footer, .footer *{white-space:normal !important; text-align:center !important; float:none !important; position:static !important; background:transparent !important; width:auto !important; max-width:100% !important;}
+    .footer{margin-top:24px !important;}
+  `;
+  d.head.appendChild(st);
 }
 function pdfFileName(docLabel, patient){
   return ((docLabel||"Document") + (patient && patient.name ? " - "+patient.name : "")).replace(/[^\w\- ]+/g,"").replace(/\s+/g," ").trim() + ".pdf";
@@ -18618,15 +18691,34 @@ function warrantyUploadBlockHtml(prefix, label){
       <label>${escapeHtml(label||'Warranty Card / Sticker')}</label>
       <div class="file-grid" id="${prefix}Thumbs" style="display:none;"></div>
       <input type="file" accept="image/*" capture="environment" id="${prefix}CameraInput" style="display:none;">
-      <input type="file" accept="image/*" id="${prefix}GalleryInput" style="display:none;">
+      <input type="file" accept="image/*,application/pdf,.pdf" id="${prefix}GalleryInput" style="display:none;">
       <div style="display:flex;gap:8px;">
         <button type="button" class="btn btn-outline" style="flex:1;" id="${prefix}TakePhotoBtn">${icon('camera',15)} Take Photo</button>
-        <button type="button" class="btn btn-outline" style="flex:1;" id="${prefix}GalleryBtn">${icon('image',15)} Choose from Gallery</button>
+        <button type="button" class="btn btn-outline" style="flex:1;" id="${prefix}GalleryBtn">${icon('image',15)} Upload Image / PDF</button>
       </div>
     </div>
   `;
 }
 
+// A warranty attachment is an image ({imageData}) or a PDF ({fileData, mimeType:"application/pdf", name}).
+function isPdfAttachment(a){ return !!(a && (a.mimeType==="application/pdf" || (!a.imageData && a.fileData))); }
+function attachmentThumbInnerHtml(a){
+  if(isPdfAttachment(a)) return `<div style="width:100%;height:100%;min-height:90px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;background:var(--off-white,#f4f5f4);color:#b42318;font-weight:800;font-size:13px;">PDF<span style="font-weight:600;font-size:10.5px;color:var(--grey);max-width:92%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(a.name||"Warranty card")}</span></div>`;
+  return `<img src="${a.imageData}">`;
+}
+function openWarrantyAttachment(a){
+  if(!a) return;
+  if(!isPdfAttachment(a)){ openImageViewer(a.imageData); return; }
+  const src = a.fileData || "";
+  if(/^https?:/i.test(src)){ window.open(src, "_blank"); return; }
+  try{
+    const bin = atob(src.split(",")[1]||""); const bytes = new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++) bytes[i] = bin.charCodeAt(i);
+    const url = URL.createObjectURL(new Blob([bytes], {type:"application/pdf"}));
+    const w = window.open(url, "_blank");
+    if(!w){ const link = document.createElement("a"); link.href = url; link.download = a.name||"warranty-card.pdf"; document.body.appendChild(link); link.click(); link.remove(); }
+  }catch(e){ showToast("Couldn't open this PDF"); }
+}
 function renderWarrantyThumbs(prefix, attachments){
   const el = document.getElementById(prefix+"Thumbs");
   if(!el) return;
@@ -18634,7 +18726,7 @@ function renderWarrantyThumbs(prefix, attachments){
   el.style.display = "grid";
   el.innerHTML = attachments.map((a,i)=>`
     <div class="file-thumb" data-warranty-thumb="${i}" style="position:relative;">
-      <img src="${a.imageData}">
+      ${attachmentThumbInnerHtml(a)}
       <button type="button" class="icon-btn-sm" data-warranty-remove="${i}" style="position:absolute;top:4px;right:4px;background:rgba(20,20,20,0.6);color:#fff;">${icon('close',12)}</button>
     </div>
   `).join("");
@@ -18646,7 +18738,7 @@ function renderWarrantyThumbs(prefix, attachments){
     };
   });
   el.querySelectorAll("[data-warranty-thumb]").forEach(thumb=>{
-    thumb.onclick = ()=> openImageViewer(attachments[parseInt(thumb.dataset.warrantyThumb)].imageData);
+    thumb.onclick = ()=> openWarrantyAttachment(attachments[parseInt(thumb.dataset.warrantyThumb)]);
   });
 }
 
@@ -18658,10 +18750,16 @@ function wireWarrantyUpload(prefix, attachments){
     const file = e.target.files[0];
     if(!file) return;
     try{
-      const dataUrl = await compressImageFile(file, 1000);
-      attachments.push({id: uid("wca"), imageData: dataUrl, uploadedAt: nowIso()});
+      if(file.type==="application/pdf" || /\.pdf$/i.test(file.name||"")){
+        if(file.size > 8*1024*1024){ showToast("That PDF is too large (max 8 MB)"); e.target.value = ""; return; }
+        const dataUrl = await new Promise((res,rej)=>{ const r = new FileReader(); r.onload = ()=>res(r.result); r.onerror = ()=>rej(new Error("read failed")); r.readAsDataURL(file); });
+        attachments.push({id: uid("wca"), fileData: dataUrl.replace(/^data:[^;]*;/, "data:application/pdf;"), mimeType: "application/pdf", name: file.name||"warranty-card.pdf", uploadedAt: nowIso()});
+      }else{
+        const dataUrl = await compressImageFile(file, 1000);
+        attachments.push({id: uid("wca"), imageData: dataUrl, uploadedAt: nowIso()});
+      }
       renderWarrantyThumbs(prefix, attachments);
-    }catch(err){ showToast("Couldn't read that image — please try again"); }
+    }catch(err){ showToast("Couldn't read that file — please try again"); }
     e.target.value = "";
   };
   document.getElementById(prefix+"CameraInput").onchange = handle;
@@ -18672,13 +18770,13 @@ function warrantyThumbsViewHtml(attachments, title, kind){
   if(!attachments || !attachments.length) return "";
   kind = kind || "warranty";
   return `<div class="section-title" style="margin:14px 0 8px;">${escapeHtml(title||'Warranty Card / Sticker')}</div>
-    <div class="file-grid">${attachments.map((a,i)=>`<div class="file-thumb" data-view-${kind}-idx="${i}"><img src="${a.imageData}"></div>`).join("")}</div>`;
+    <div class="file-grid">${attachments.map((a,i)=>`<div class="file-thumb" data-view-${kind}-idx="${i}">${attachmentThumbInnerHtml(a)}</div>`).join("")}</div>`;
 }
 function wireWarrantyThumbsView(container, attachments, kind){
   kind = kind || "warranty";
   const datasetKey = "view" + kind.charAt(0).toUpperCase() + kind.slice(1) + "Idx";
   container.querySelectorAll(`[data-view-${kind}-idx]`).forEach(el=>{
-    el.onclick = ()=> openImageViewer(attachments[parseInt(el.dataset[datasetKey])].imageData);
+    el.onclick = ()=> openWarrantyAttachment(attachments[parseInt(el.dataset[datasetKey])]);
   });
 }
 
