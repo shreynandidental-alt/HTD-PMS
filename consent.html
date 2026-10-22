@@ -1,6 +1,20 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<script>
+/* Show every date day-first (dd/mm/yyyy), whatever language the computer
+   is set to. Dates are still saved exactly as before; only how they are
+   shown changes. Code that asks for a specific locale is left alone. */
+(function(){
+  var LOC = "en-GB", P = Date.prototype, oD = P.toLocaleDateString, oS = P.toLocaleString;
+  function own(l){ return l === undefined || l === null || (Array.isArray(l) && !l.length); }
+  P.toLocaleDateString = function(l, o){ return oD.call(this, own(l) ? LOC : l, o); };
+  P.toLocaleString = function(l, o){
+    if(own(l)) return oS.call(this, LOC, Object.assign({hour12: true}, o || {}));
+    return oS.call(this, l, o);
+  };
+})();
+</script>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <meta name="robots" content="noindex, nofollow">
