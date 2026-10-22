@@ -1511,7 +1511,8 @@
     createUserWithEmailAndPassword, sendPasswordResetEmail
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
   import {
-    getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc, writeBatch,
+    getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
+    collection, doc, getDoc, getDocs, setDoc, deleteDoc, writeBatch,
     enableIndexedDbPersistence, query, where, orderBy, onSnapshot
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
@@ -1527,8 +1528,16 @@
   const fbApp = initializeApp(firebaseConfig);
   window.__fbApp = fbApp;
   const fbAuth = getAuth(fbApp);
-  const fbDb = getFirestore(fbApp);
-  enableIndexedDbPersistence(fbDb).catch(()=>{ /* multiple tabs open, etc — safe to ignore */ });
+  // Offline cache shared by every open tab (the old setup only cached in the
+  // first tab, so each extra tab re-downloaded everything).
+  let fbDb;
+  try{
+    fbDb = initializeFirestore(fbApp, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) });
+  }catch(e){
+    console.warn("Shared offline cache unavailable, using the default:", e);
+    fbDb = getFirestore(fbApp);
+    enableIndexedDbPersistence(fbDb).catch(()=>{});
+  }
 
   // ---- Read saver ----
   // Every screen calls getAll() for whole collections, often many times a
@@ -1539,7 +1548,6 @@
   // read, and every getAll() is answered instantly from memory. Writes from
   // this device and from other devices show up through the same listener.
   const __live = {};
-  const LIVE_IDLE_MS = 20*60*1000;
   function liveCollection(storeName){
     let e = __live[storeName];
     if(e){ e.lastUsed = Date.now(); return e; }
@@ -1560,13 +1568,9 @@
     __live[storeName] = e;
     return e;
   }
-  setInterval(()=>{
-    const now = Date.now();
-    Object.keys(__live).forEach(k=>{
-      const e = __live[k];
-      if(e.settled && now - e.lastUsed > LIVE_IDLE_MS){ try{ e.unsub && e.unsub(); }catch(x){} delete __live[k]; }
-    });
-  }, 5*60*1000);
+  // Listeners stay open while the tab is open: once open they only cost a
+  // read when a record actually changes, whereas closing and re-opening one
+  // after 30+ minutes makes Firebase charge for the whole list again.
 
   window.__fb = {
     add: async (storeName, obj)=>{ await setDoc(doc(fbDb, storeName, obj.id), obj); return obj; },
