@@ -1152,7 +1152,18 @@
   .kiosk-submit{
     width:100%;padding:18px;font-size:17px;font-weight:700;border-radius:14px;
     background:var(--green);color:#FFFFFF;border:none;cursor:pointer;margin-top:8px;
+    transition:transform .12s ease, opacity .2s ease, filter .2s ease;
   }
+  .kiosk-submit:active{transform:scale(.97);filter:brightness(.92);}
+  /* After a tap: button locks, shows a spinner + "please wait" so patients
+     know it worked and can't submit twice. */
+  .is-busy{pointer-events:none !important;opacity:.9;filter:saturate(.85);}
+  .kiosk-submit.is-busy, .kiosk-family-option.is-busy, .btn.is-busy{display:flex;align-items:center;justify-content:center;gap:10px;}
+  .kiosk-spin{width:20px;height:20px;border-radius:50%;border:3px solid rgba(255,255,255,.45);border-top-color:#fff;animation:kioskSpin .8s linear infinite;flex-shrink:0;}
+  .kiosk-family-option .kiosk-spin, .btn-outline .kiosk-spin{border-color:rgba(14,111,92,.25);border-top-color:var(--green);}
+  @keyframes kioskSpin{to{transform:rotate(360deg);}}
+  .kiosk-success .tick{animation:kioskPop .45s cubic-bezier(.2,1.4,.4,1) both;}
+  @keyframes kioskPop{0%{transform:scale(.3);opacity:0;}100%{transform:scale(1);opacity:1;}}
   .kiosk-family-list{display:flex;flex-direction:column;gap:12px;margin-bottom:20px;}
   .kiosk-family-option{
     display:flex;flex-direction:column;text-align:left;width:100%;padding:16px 18px;border-radius:14px;
@@ -16727,6 +16738,33 @@ function parseMedicalAlertsToSelection(text){
   return { selected: [...new Set(selected)], others: unmatched.join(", ") };
 }
 
+// Locks a kiosk button the moment it's tapped (spinner + "please wait"),
+// ignores further taps until the action finishes, and unlocks it again only
+// if the screen didn't move on (e.g. a required field was missing).
+function kioskGuard(btn, fn, busyText){
+  return async (...args)=>{
+    if(!btn || btn.dataset.busy==="1") return;
+    btn.dataset.busy = "1";
+    const old = btn.innerHTML;
+    btn.classList.add("is-busy");
+    btn.setAttribute("aria-busy","true");
+    btn.innerHTML = `<span class="kiosk-spin"></span><span>${busyText||"Please wait…"}</span>`;
+    try{ await fn(...args); }
+    catch(e){ console.error(e); showToast("Something went wrong — please try again"); }
+    if(document.body.contains(btn)){
+      btn.dataset.busy = ""; btn.classList.remove("is-busy"); btn.removeAttribute("aria-busy"); btn.innerHTML = old;
+    }
+  };
+}
+// Mobile numbers are stored in different formats (+91, spaces, leading 0):
+// compare on the last 10 digits.
+function kioskMobileKey(v){ const d = String(v||"").replace(/\D/g,""); return d.length>=10 ? d.slice(-10) : d; }
+function kioskPatientsForMobile(patients, mobile){
+  const key = kioskMobileKey(mobile);
+  if(key.length<10) return [];
+  return patients.filter(p=> p.status!=="Archived" && (kioskMobileKey(p.mobile)===key || kioskMobileKey(p.whatsappNumber)===key));
+}
+
 function renderKioskMobileEntry(){
   kioskExistingPatient = null;
   const root = document.getElementById("kioskRoot");
@@ -16750,12 +16788,16 @@ function renderKioskMobileEntry(){
       return;
     }
     const patients = await dbGetAll("patients");
-    const matches = patients.filter(p=> p.mobile===mobile && p.status!=="Archived");
-    if(matches.length>1) renderKioskFamilyPicker(mobile, matches);
-    else renderKioskForm(matches[0]||null, mobile);
+    const matches = kioskPatientsForMobile(patients, mobile);
+    // Any patient already on this number (family members often share one):
+    // let the person choose their profile, or register as someone new.
+    if(matches.length>=1) renderKioskFamilyPicker(mobile, matches);
+    else renderKioskForm(null, mobile);
   };
-  document.getElementById("btnKioskMobileContinue").onclick = goContinue;
-  document.getElementById("kmeMobile").addEventListener("keydown",(e)=>{ if(e.key==="Enter") goContinue(); });
+  const contBtn = document.getElementById("btnKioskMobileContinue");
+  const guardedContinue = kioskGuard(contBtn, goContinue, "Checking…");
+  contBtn.onclick = guardedContinue;
+  document.getElementById("kmeMobile").addEventListener("keydown",(e)=>{ if(e.key==="Enter") guardedContinue(); });
 }
 
 
@@ -16766,7 +16808,7 @@ function renderKioskFamilyPicker(mobile, matches){
     <div class="kiosk-body">
       <div class="kiosk-card">
         <h1 class="brand-serif">Who's Here Today?</h1>
-        <div class="sub">We found ${matches.length} patients registered with this number. Please select who's here today.</div>
+        <div class="sub">${matches.length>1 ? `We found ${matches.length} patients registered with this number.` : `We found a patient registered with this number.`} Please tap your name — or add yourself if you're not listed.</div>
         <div class="kiosk-family-list">
           ${matches.map(p=>`
             <button type="button" class="kiosk-family-option" data-patient="${p.id}">
@@ -16775,8 +16817,8 @@ function renderKioskFamilyPicker(mobile, matches){
             </button>
           `).join("")}
           <button type="button" class="kiosk-family-option kiosk-family-new" id="btnKioskFamilyNew">
-            <span class="kfo-name">+ Add a New Family Member</span>
-            <span class="kfo-meta">Register someone new under this number</span>
+            <span class="kfo-name">+ I'm Not Listed — Register Me</span>
+            <span class="kfo-meta">New family member using this number</span>
           </button>
         </div>
         ${kioskBackLink()}
@@ -16786,12 +16828,13 @@ function renderKioskFamilyPicker(mobile, matches){
   wireKioskHeader();
   wireKioskBackLink();
   root.querySelectorAll("[data-patient]").forEach(btn=>{
-    btn.onclick = ()=>{
+    btn.onclick = kioskGuard(btn, ()=>{
       const p = matches.find(x=>x.id===btn.dataset.patient);
       renderKioskForm(p||null, mobile);
-    };
+    }, "Opening…");
   });
-  document.getElementById("btnKioskFamilyNew").onclick = ()=> renderKioskForm(null, mobile);
+  const newBtn = document.getElementById("btnKioskFamilyNew");
+  newBtn.onclick = kioskGuard(newBtn, ()=> renderKioskForm(null, mobile, {newFamilyMember: true}), "Opening…");
 }
 
 function kioskFieldMissing(patient, field){
@@ -16808,7 +16851,9 @@ function wireKioskBackLink(){
   if(b) b.onclick = renderKioskMobileEntry;
 }
 
-function renderKioskForm(existing, mobile){
+let kioskNewFamilyMember = false;
+function renderKioskForm(existing, mobile, opts){
+  kioskNewFamilyMember = !!(opts && opts.newFamilyMember);
   kioskExistingPatient = existing || null;
   kioskLookupMobile = mobile || (existing ? existing.mobile : "");
   kioskGender = existing ? (existing.gender||"") : "";
@@ -16853,10 +16898,11 @@ function renderKioskForm(existing, mobile){
     `;
     wireKioskHeader();
     wireKioskBackLink();
-    document.getElementById("btnKioskConfirmCheckin").onclick = ()=>{
+    const ciBtn = document.getElementById("btnKioskConfirmCheckin");
+    ciBtn.onclick = kioskGuard(ciBtn, async ()=>{
       logActivity("Patient checked in via Kiosk: "+existing.name, {patientId:existing.id});
       renderKioskSuccess(existing.name, true);
-    };
+    }, "Checking in…");
     return;
   }
 
@@ -16941,7 +16987,8 @@ function renderKioskForm(existing, mobile){
       }
     };
   }
-  document.getElementById("btnKioskSubmit").onclick = ()=> existing ? submitKioskExistingUpdate(existing, missing) : submitKioskRegistration();
+  const subBtn = document.getElementById("btnKioskSubmit");
+  subBtn.onclick = kioskGuard(subBtn, ()=> existing ? submitKioskExistingUpdate(existing, missing) : submitKioskRegistration(), existing ? "Saving…" : "Registering…");
 }
 
 async function submitKioskExistingUpdate(patient, missing){
@@ -16984,7 +17031,11 @@ async function submitKioskRegistration(){
   if(!kioskSource){ showToast("Please let us know how you heard about us"); return; }
 
   const patients = await dbGetAll("patients");
-  const existing = patients.find(p=> p.mobile===mobile && p.status!=="Archived");
+  // Same number + same name = this person is already registered (e.g. a
+  // repeat tap): don't create a duplicate. A different name on the same
+  // number is a family member and is registered normally.
+  const sameName = (a,b)=> normalizeStr(a||"").replace(/\s+/g," ").trim() === normalizeStr(b||"").replace(/\s+/g," ").trim();
+  const existing = kioskPatientsForMobile(patients, mobile).find(p=> sameName(p.name, name));
 
   if(existing){
     logActivity("Patient checked in via Kiosk: "+existing.name, {patientId: existing.id});
