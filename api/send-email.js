@@ -27,6 +27,21 @@ async function admin() {
   return FA;
 }
 
+// The staff list is cached for 10 minutes so sending emails costs almost no
+// database reads. If Firebase's daily read limit is used up, a valid PMS
+// login is accepted on its own so email keeps working (like consent signing).
+let staffCache = null; // {at, adminEmail, emails:Set}
+async function staffList(db) {
+  if (staffCache && Date.now() - staffCache.at < 10 * 60 * 1000) return staffCache;
+  const [settings, staff] = await Promise.all([db.collection("settings").get(), db.collection("staffUsers").get()]);
+  staffCache = {
+    at: Date.now(),
+    adminEmail: String(settings.docs.map(d => d.data().adminEmail).find(Boolean) || "").toLowerCase(),
+    emails: new Set(staff.docs.map(d => String(d.data().email || "").toLowerCase()).filter(Boolean))
+  };
+  return staffCache;
+}
+
 async function authorize(req) {
   const authz = req.headers.authorization || "";
   if (!authz.startsWith("Bearer ")) return { ok: false, why: "Please sign in to the PMS first." };
@@ -36,11 +51,16 @@ async function authorize(req) {
   catch (e) { return { ok: false, why: "Your login has expired. Please refresh the PMS and try again." }; }
   const email = String(decoded.email || "").toLowerCase();
   if (!email) return { ok: false, why: "This login has no email address." };
-  const settings = await db.collection("settings").get();
-  const adminEmail = settings.docs.map(d => d.data().adminEmail).find(Boolean);
-  if (!adminEmail || String(adminEmail).toLowerCase() === email) return { ok: true, email };
-  const staff = await db.collection("staffUsers").get();
-  if (staff.docs.some(d => String(d.data().email || "").toLowerCase() === email)) return { ok: true, email };
+  let list;
+  try { list = await staffList(db); }
+  catch (e) {
+    if (/RESOURCE_EXHAUSTED|quota/i.test(String(e && e.message))) {
+      console.warn("[send-email] staff check skipped (Firebase read limit reached); allowing verified login " + email);
+      return { ok: true, email };
+    }
+    throw e;
+  }
+  if (!list.adminEmail || list.adminEmail === email || list.emails.has(email)) return { ok: true, email };
   return { ok: false, why: "This login isn't a PMS staff account." };
 }
 
