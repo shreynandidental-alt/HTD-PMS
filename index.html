@@ -25812,7 +25812,7 @@ async function printPrescription(rx, patient, clinics){
 
 // ---- Files & X-rays ----
 const XRAY_CATEGORIES = ["IOPA","OPG","CBCT","Bitewing","Occlusal","Cephalogram","Pre-op","Post-op","Other"];
-const DOCUMENT_CATEGORIES = ["ID Proof","Insurance","Medical Record","Referral","Previous Prescription","Handwritten Prescription","Previous Dental Record","Consent","STL / 3D Scan File","DICOM / CBCT Raw File","Other"];
+const DOCUMENT_CATEGORIES = ["ID Proof","Insurance","Medical Record","Referral","Previous Prescription","Handwritten Prescription","Previous Dental Record","Consent","STL / 3D Scan File","DICOM / CBCT Raw File","Intraoral Photo","Other"];
 
 async function renderFilesTab(body, patientId, patient){
   const xrays = (await dbGetAll("xrays")).filter(x=>x.patientId===patientId).sort((a,b)=> new Date(b.date||0)-new Date(a.date||0));
@@ -25860,6 +25860,8 @@ async function renderFilesTab(body, patientId, patient){
       </div>
     `).join("")}</div>` : `<div class="empty-card"><b>No documents uploaded yet</b></div>`}
   `;
+  // RVG Imaging link panel (X-rays / photos sent with "Export to PMS")
+  try{ if(window.HTD_RVG) window.HTD_RVG.renderPanel(body, patientId, patient); }catch(_){ }
   body.querySelectorAll("[data-consentfile]").forEach(el=>{
     el.onclick = ()=>{
       const c = signedConsents.find(x=>x.id===el.dataset.consentfile);
@@ -34387,6 +34389,265 @@ setupLogin(async function boot(){
       </div>`;
   }
 });
+</script>
+<script>
+/* =====================================================================
+   RVG Imaging link
+   Receives X-rays and intraoral photos sent with "Export to PMS" in RVG
+   Imaging (running on THIS computer) and files them in the patient's
+   Files tab: X-rays -> X-Rays (category IOPA), photos -> Documents
+   (category "Intraoral Photo"). Patients are matched by mobile number,
+   then by name. Anything that can't be matched waits in the patient's
+   Files tab under "RVG Imaging" to be added by hand.
+   RVG Imaging serves the images only on 127.0.0.1 and only to a PMS that
+   knows its link key (Settings > This computer in RVG Imaging).
+   ===================================================================== */
+(function(){
+  "use strict";
+  var LS_KEY = "htd_rvg_key", LS_PORT = "htd_rvg_port";
+  var R = window.HTD_RVG = { unmatched: [], connected: false, lastError: "", busy: false, toldUnmatched: {} };
+
+  function lsGet(k){ try{ return localStorage.getItem(k) || ""; }catch(_){ return ""; } }
+  function lsSet(k, v){ try{ if(v) localStorage.setItem(k, v); else localStorage.removeItem(k); }catch(_){} }
+  R.key = function(){ return lsGet(LS_KEY).trim(); };
+  R.port = function(){ var p = parseInt(lsGet(LS_PORT), 10); return (p > 1023 && p < 65536) ? p : 50560; };
+  R.base = function(){ return "http://127.0.0.1:" + R.port(); };
+
+  function call(path, method){
+    return fetch(R.base() + path, { method: method || "GET", headers: { "X-RVG-Key": R.key() }, cache: "no-store" });
+  }
+
+  function last10(v){ var d = String(v || "").replace(/\D/g, ""); return d.length >= 10 ? d.slice(-10) : d; }
+  function normName(n){
+    return String(n || "").toLowerCase()
+      .replace(/^(dr|mr|mrs|ms|miss|master|baby|smt|shri)\.?\s+/, "")
+      .replace(/[^a-z0-9]+/g, " ").trim();
+  }
+  R.last10 = last10; R.normName = normName;
+
+  // Returns the single matching patient, or null when none / more than one match.
+  R.matchPatient = function(item, patients){
+    var m = last10(item.mobile), n = normName(item.patientName), c = [];
+    if(m.length === 10){
+      c = patients.filter(function(p){ return last10(p.mobile) === m || last10(p.altMobile) === m; });
+      if(c.length > 1 && n){
+        var byName = c.filter(function(p){ return normName(p.name) === n; });
+        if(byName.length === 1) return byName[0];
+      }
+      if(c.length === 1) return c[0];
+      if(c.length > 1) return null;
+    }
+    if(n){
+      c = patients.filter(function(p){ return normName(p.name) === n; });
+      if(c.length === 1) return c[0];
+    }
+    return null;
+  };
+
+  function blobToDataUrl(b){
+    return new Promise(function(res, rej){
+      var r = new FileReader();
+      r.onload = function(){ res(r.result); };
+      r.onerror = function(){ rej(new Error("read failed")); };
+      r.readAsDataURL(b);
+    });
+  }
+
+  function itemDateIso(item){
+    var acq = String(item.acquiredAt || "");
+    var exam = String(item.examDate || "");
+    if(acq && (!exam || acq.slice(0, 10) === exam)){
+      var d = new Date(acq.replace(" ", "T"));
+      if(!isNaN(d)) return d.toISOString();
+    }
+    if(exam){ var e = new Date(exam + "T12:00:00"); if(!isNaN(e)) return e.toISOString(); }
+    return nowIso();
+  }
+
+  function rvgKey(item){ return String(item.imageId) + (/\[display-adjusted copy\]/.test(item.notes || "") ? "-adj" : ""); }
+
+  // Saves one outbox item into the patient's Files. Returns "saved", "duplicate" or "taken".
+  R.saveItem = async function(item, patient){
+    var c = await call("/rvg/claim/" + item.id, "POST");
+    if(c.status === 409 || c.status === 404) return "taken";            // another tab is saving it / already saved
+    if(!c.ok) throw new Error("RVG Imaging refused (" + c.status + ")");
+    try{
+      var key = rvgKey(item);
+      var isPhoto = item.modality === "PHOTO";
+      var store = isPhoto ? "patientDocuments" : "xrays";
+      var existing = (await dbGetAll(store)).filter(function(x){ return x.patientId === patient.id && x.rvgImageId === key; });
+      if(existing.length){ await call("/rvg/ack/" + item.id, "POST"); return "duplicate"; }
+
+      var r = await call("/rvg/image/" + item.id);
+      if(!r.ok) throw new Error("Couldn't download the image (" + r.status + ")");
+      var dataUrl = await blobToDataUrl(await r.blob());
+      var date = itemDateIso(item);
+      var tooth = String(item.tooth || "");
+      var notes = [item.notes, "From RVG Imaging" + (item.source ? " (" + item.source + ")" : "")].filter(Boolean).join(" · ");
+      var ymd = date.slice(0, 10);
+      if(isPhoto){
+        await dbAdd("patientDocuments", {
+          id: uid("doc"), patientId: patient.id, category: "Intraoral Photo",
+          name: "Intraoral photo" + (tooth ? " - tooth " + tooth : "") + " - " + ymd + ".jpg",
+          mimeType: "image/jpeg", date: date, fileData: dataUrl, notes: notes,
+          source: "RVG Imaging", rvgImageId: key
+        });
+      }else{
+        await dbAdd("xrays", {
+          id: uid("xray"), patientId: patient.id, category: "IOPA", tooth: tooth,
+          date: date, imageData: dataUrl, notes: notes,
+          clinicId: (typeof currentUserRestrictedClinicId !== "undefined" && currentUserRestrictedClinicId) || patient.preferredClinicId || "",
+          source: "RVG Imaging", rvgImageId: key
+        });
+      }
+      await call("/rvg/ack/" + item.id, "POST");
+      try{ logActivity((isPhoto ? "Intraoral photo" : "X-ray") + " received from RVG Imaging for " + patient.name, { patientId: patient.id }); }catch(_){}
+      return "saved";
+    }catch(e){
+      try{ await call("/rvg/release/" + item.id, "POST"); }catch(_){}
+      throw e;
+    }
+  };
+
+  function signedIn(){
+    try{ return !!window.__fb && typeof fbCurrentUserEmail !== "undefined" && !!fbCurrentUserEmail; }catch(_){ return false; }
+  }
+
+  function refreshOpenFiles(patientId){
+    try{
+      if(typeof currentPage !== "undefined" && currentPage === "patientProfile" &&
+         typeof profilePatientId !== "undefined" && profilePatientId === patientId &&
+         typeof patientProfileTab !== "undefined" && patientProfileTab === "Files" &&
+         typeof renderPatientProfileSheet === "function"){
+        renderPatientProfileSheet(patientId);
+      }
+    }catch(_){}
+  }
+
+  // One round: fetch the outbox, file every matched item, keep unmatched ones for manual filing.
+  R.pollOnce = async function(){
+    if(R.busy || !R.key() || !signedIn()) return { skipped: true };
+    R.busy = true;
+    var result = { saved: 0, unmatched: 0, errors: 0 };
+    try{
+      var res = await call("/rvg/outbox");
+      if(res.status === 401){ R.connected = false; R.lastError = "The RVG link key is wrong - copy it again from RVG Imaging (Settings > This computer)."; return result; }
+      if(!res.ok){ R.connected = false; R.lastError = "RVG Imaging answered " + res.status; return result; }
+      R.connected = true; R.lastError = "";
+      var items = ((await res.json()).items) || [];
+      R.unmatched = [];
+      if(!items.length) return result;
+      var patients = await dbGetAll("patients");
+      var touched = {};
+      for(var i = 0; i < items.length; i++){
+        var it = items[i];
+        var p = R.matchPatient(it, patients);
+        if(!p){
+          R.unmatched.push(it); result.unmatched++;
+          if(!R.toldUnmatched[it.id]){
+            R.toldUnmatched[it.id] = true;
+            try{ showToast("RVG image for \"" + (it.patientName || "?") + "\" needs a patient - open the patient > Files > RVG Imaging"); }catch(_){}
+          }
+          continue;
+        }
+        try{
+          var how = await R.saveItem(it, p);
+          if(how === "saved"){
+            result.saved++; touched[p.id] = true;
+            try{ showToast((it.modality === "PHOTO" ? "Intraoral photo" : "X-ray") + " from RVG Imaging saved to " + p.name + " > Files"); }catch(_){}
+          }
+        }catch(e){ result.errors++; R.lastError = (e && e.message) || String(e); }
+      }
+      Object.keys(touched).forEach(refreshOpenFiles);
+      return result;
+    }catch(e){
+      R.connected = false;
+      R.lastError = "Can't reach RVG Imaging on this computer. Is it open? If Chrome asks to allow access to devices/apps on this computer or local network, click Allow.";
+      return result;
+    }finally{ R.busy = false; }
+  };
+
+  // Background loop: every 6 s while connected, every 30 s while RVG Imaging isn't reachable.
+  var timer = null;
+  function schedule(ms){ clearTimeout(timer); timer = setTimeout(loop, ms); }
+  async function loop(){
+    if(R.key() && signedIn()){ await R.pollOnce(); schedule(R.connected ? 6000 : 30000); }
+    else schedule(15000);
+  }
+  R.start = function(){ schedule(3000); };
+  if(typeof document !== "undefined" && document.addEventListener){
+    document.addEventListener("fbAuthChanged", function(e){ if(e.detail && e.detail.user) R.start(); });
+  }
+
+  // ---------- Files tab panel ----------
+  function esc(s){ return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){ return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+
+  R.renderPanel = function(body, patientId, patient){
+    if(!body || !body.insertAdjacentHTML) return;
+    var old = body.querySelector("#rvgPanel"); if(old) old.remove();
+    var linked = !!R.key();
+    body.insertAdjacentHTML("afterbegin",
+      '<div id="rvgPanel" class="list-card" style="padding:12px 14px;margin-bottom:16px;">' +
+        '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">' +
+          '<b style="flex:1;min-width:160px;">RVG Imaging</b>' +
+          '<span id="rvgStatus" style="font-size:12px;opacity:.8;">' + (linked ? "Checking..." : "Not linked") + '</span>' +
+          (linked ? '<button class="btn btn-outline" id="rvgGet">Get images now</button>' : '') +
+          '<button class="btn btn-outline" id="rvgLink">' + (linked ? "Link settings" : "Link RVG Imaging") + '</button>' +
+        '</div>' +
+        '<div id="rvgUnmatched"></div>' +
+      '</div>');
+    var statusEl = body.querySelector("#rvgStatus"), listEl = body.querySelector("#rvgUnmatched");
+
+    body.querySelector("#rvgLink").onclick = function(){
+      var k = prompt("Paste the PMS link key from RVG Imaging (Settings > This computer).\nLeave empty to unlink.", R.key());
+      if(k === null) return;
+      lsSet(LS_KEY, k.trim());
+      var p = prompt("RVG Imaging port (normally 50560):", String(R.port()));
+      if(p !== null && /^\d+$/.test(p.trim())) lsSet(LS_PORT, p.trim());
+      R.start();
+      R.renderPanel(body, patientId, patient);
+    };
+    if(!linked) return;
+
+    async function update(){
+      var r = await R.pollOnce();
+      if(!document.body.contains(statusEl)) return;
+      statusEl.textContent = R.connected
+        ? "Connected" + (r && r.saved ? " - " + r.saved + " new image(s) saved" : "") + (R.unmatched.length ? " - " + R.unmatched.length + " waiting for a patient" : "")
+        : (R.lastError || "Not connected");
+      statusEl.style.color = R.connected ? "" : "var(--red)";
+      listEl.innerHTML = R.unmatched.map(function(it){
+        return '<div class="list-row" style="gap:10px;">' +
+          '<img data-rvgthumb="' + esc(it.id) + '" style="width:56px;height:56px;object-fit:cover;border-radius:6px;background:#111;">' +
+          '<span class="txt">' + esc(it.modality === "PHOTO" ? "Photo" : "X-ray") + " for <b>" + esc(it.patientName || "?") + "</b>" +
+            (it.mobile ? " · " + esc(it.mobile) : "") + (it.tooth ? " · tooth " + esc(it.tooth) : "") + " · " + esc(it.examDate || "") + '</span>' +
+          '<button class="btn btn-primary" data-rvgadd="' + esc(it.id) + '">Add to this patient</button>' +
+        '</div>';
+      }).join("");
+      listEl.querySelectorAll("[data-rvgthumb]").forEach(async function(img){
+        try{ var b = await (await call("/rvg/image/" + img.dataset.rvgthumb)).blob(); img.src = URL.createObjectURL(b); }catch(_){}
+      });
+      listEl.querySelectorAll("[data-rvgadd]").forEach(function(btn){
+        btn.onclick = async function(){
+          var it = R.unmatched.find(function(x){ return x.id === btn.dataset.rvgadd; });
+          if(!it) return;
+          if(!confirm("Add this RVG image (sent for \"" + (it.patientName || "?") + "\") to " + patient.name + "'s Files?")) return;
+          btn.disabled = true;
+          try{
+            var how = await R.saveItem(it, patient);
+            showToast(how === "saved" ? "Saved to " + patient.name + " > Files" : how === "duplicate" ? "Already in this patient's Files" : "Already being saved in another tab");
+            if(typeof renderFilesTab === "function") renderFilesTab(body, patientId, patient);
+          }catch(e){ showToast("Couldn't save: " + ((e && e.message) || e)); btn.disabled = false; }
+        };
+      });
+    }
+    body.querySelector("#rvgGet").onclick = async function(){
+      await update();
+      if(typeof renderFilesTab === "function" && R.connected) renderFilesTab(body, patientId, patient);
+    };
+    update();
+  };
+})();
 </script>
 </body>
 </html>
