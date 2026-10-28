@@ -1606,9 +1606,21 @@
   // read when a record actually changes, whereas closing and re-opening one
   // after 30+ minutes makes Firebase charge for the whole list again.
 
+  // Firebase refuses to save a record that has any empty ("undefined") value,
+  // e.g. clinicId for a patient with no clinic set. Drop those fields (and
+  // turn undefined list items into null) so the save always goes through.
+  const fbClean = (v)=>{
+    if(Array.isArray(v)) return v.map(x=> x===undefined ? null : fbClean(x));
+    if(v && typeof v==="object" && Object.getPrototypeOf(v)===Object.prototype){
+      const o = {};
+      for(const k in v){ if(v[k]!==undefined && typeof v[k]!=="function") o[k] = fbClean(v[k]); }
+      return o;
+    }
+    return v;
+  };
   window.__fb = {
-    add: async (storeName, obj)=>{ await setDoc(doc(fbDb, storeName, obj.id), obj); return obj; },
-    put: async (storeName, obj)=>{ await setDoc(doc(fbDb, storeName, obj.id), obj); return obj; },
+    add: async (storeName, obj)=>{ await setDoc(doc(fbDb, storeName, obj.id), fbClean(obj)); return obj; },
+    put: async (storeName, obj)=>{ await setDoc(doc(fbDb, storeName, obj.id), fbClean(obj)); return obj; },
     getAll: async (storeName)=>{
       try{
         const e = liveCollection(storeName);
@@ -9523,7 +9535,7 @@ async function openLabCaseForm(id, prefillPatient){
     const updated = Object.assign({}, lc, {
       patientId: selectedPatientId,
       patientName,
-      clinicId: labCasePatient ? labCasePatient.preferredClinicId : (lc.clinicId||""),
+      clinicId: (labCasePatient && labCasePatient.preferredClinicId) || lc.clinicId || "",
       tooth: document.getElementById("lfTooth").value.trim(),
       shade: document.getElementById("lfShade").value,
       caseType: document.getElementById("lfCaseType").value,
