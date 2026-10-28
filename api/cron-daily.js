@@ -40,7 +40,10 @@
 import { activeBackend, notConfiguredError, sendWhatsAppTemplate } from "./_lib/whatsapp.js";
 import { emailConfigured, sendEmail } from "./_lib/email.js";
 import { initializeApp, cert, getApps } from "firebase-admin/app";
-import { getFirestore } from "firebase-admin/firestore";
+import { getFirestore, FieldValue } from "firebase-admin/firestore";
+// Every change is stamped with the server time (_ts) so the PMS computers,
+// which only download records changed since their last sync, pick it up.
+const TS = () => ({ _ts: FieldValue.serverTimestamp() });
 import { getAuth } from "firebase-admin/auth";
 
 function getDb() {
@@ -119,7 +122,7 @@ async function claim(db, ref, sentField) {
     if (d[sentField]) return false;
     const c = d[sentField + "Claim"];
     if (c && Date.now() - new Date(c).getTime() < 10 * 60 * 1000) return false;
-    t.update(ref, { [sentField + "Claim"]: new Date().toISOString() });
+    t.update(ref, { [sentField + "Claim"]: new Date().toISOString(), ...TS() });
     return true;
   });
 }
@@ -195,10 +198,10 @@ export default async function handler(req, res) {
           bodyValues: [v(appt.patientName || (patient && patient.name)), v(formatDateLong(today)), v(formatTime12h(appt.startTime))]
         });
         if (result.success) {
-          await ref.update({ reminderSentAt: new Date().toISOString(), reminderSentBy: "auto-9am" });
+          await ref.update({ reminderSentAt: new Date().toISOString(), reminderSentBy: "auto-9am", ...TS() });
           summary.appointmentReminders.sent++;
         } else {
-          await ref.update({ reminderSentAtClaim: null }).catch(() => {});
+          await ref.update({ reminderSentAtClaim: null, ...TS() }).catch(() => {});
           summary.appointmentReminders.failed++;
           summary.errors.push("Appointment reminder for " + (appt.patientName || appt.id) + ": " + result.error);
         }
@@ -251,10 +254,10 @@ export default async function handler(req, res) {
             text: lines.join("\n")
           });
           if (result.success) {
-            await ref.update({ emailReminderSentAt: new Date().toISOString() });
+            await ref.update({ emailReminderSentAt: new Date().toISOString(), ...TS() });
             summary.emailReminders.sent++;
           } else {
-            await ref.update({ emailReminderSentAtClaim: null }).catch(() => {});
+            await ref.update({ emailReminderSentAtClaim: null, ...TS() }).catch(() => {});
             summary.emailReminders.failed++;
             summary.errors.push("Email reminder for " + (name || appt.id) + ": " + result.error);
           }
@@ -283,7 +286,7 @@ export default async function handler(req, res) {
       const ref = db.collection("reminders").doc(rem.id);
       if (!(await claim(db, ref, "autoFollowUpSentAt"))) { summary.caseFollowUps.skipped++; continue; }
       const result = await sendWhatsAppTemplate({ phoneNumber: phone, templateName: "follow_up", bodyValues: [v(patient.name), v(rem.type || "your treatment")] });
-      if (result.success) { await ref.update({ autoFollowUpSentAt: new Date().toISOString() }); summary.caseFollowUps.sent++; }
+      if (result.success) { await ref.update({ autoFollowUpSentAt: new Date().toISOString(), ...TS() }); summary.caseFollowUps.sent++; }
       else { summary.caseFollowUps.failed++; summary.errors.push("Case follow-up (" + (rem.type || "") + ") for " + (patient.name || rem.patientId) + ": " + result.error); }
     }
   } catch (err) {
@@ -293,7 +296,11 @@ export default async function handler(req, res) {
   // ---------- 2 & 3. Birthdays and 6-month follow-ups (need all patients) ----------
   try {
     const [patients, appointments, plans, biannualActions] = await Promise.all([
-      getAllDocs(db, "patients"), getAllDocs(db, "appointments"),
+      getAllDocs(db, "patients"),
+      // Only appointments from the last ~7 months onward are needed here
+      // (last visit 172-193 days ago, or a future booking) - reading all of
+      // them every day wasted thousands of reads.
+      db.collection("appointments").where("date", ">=", dateKeyIST(new Date(Date.now() - 215 * 86400000))).get().then(s => s.docs.map(d => ({ id: d.id, ...d.data() }))),
       getAllDocs(db, "treatmentPlans"), getAllDocs(db, "biannualFollowUpActions")
     ]);
     const todayMonth = todayParts.month - 1, todayDate = todayParts.day, currentYear = todayParts.year;
@@ -305,7 +312,7 @@ export default async function handler(req, res) {
       const phone = patient.whatsappNumber || patient.mobile;
       if (!phone) { summary.birthdays.skipped++; continue; }
       const result = await sendWhatsAppTemplate({ phoneNumber: phone, templateName: "birthday_greeting", bodyValues: [v(patient.name)] });
-      if (result.success) { await db.collection("patients").doc(patient.id).update({ lastBirthdayGreetingYear: currentYear }); summary.birthdays.sent++; }
+      if (result.success) { await db.collection("patients").doc(patient.id).update({ lastBirthdayGreetingYear: currentYear, ...TS() }); summary.birthdays.sent++; }
       else { summary.birthdays.failed++; summary.errors.push("Birthday greeting for " + (patient.name || patient.id) + ": " + result.error); }
     }
 
@@ -338,7 +345,7 @@ export default async function handler(req, res) {
       if (!phone) { summary.sixMonthFollowUps.skipped++; continue; }
       const result = await sendWhatsAppTemplate({ phoneNumber: phone, templateName: "lead_qualification_checkup_reminder", bodyValues: [v(patient.name)] });
       if (result.success) {
-        await db.collection("biannualFollowUpActions").add({ patientId: patient.id, visitDate: visitDateKey, action: "Reminded", source: "auto-cron", createdAt: new Date().toISOString() });
+        await db.collection("biannualFollowUpActions").add({ patientId: patient.id, visitDate: visitDateKey, action: "Reminded", source: "auto-cron", createdAt: new Date().toISOString(), ...TS() });
         summary.sixMonthFollowUps.sent++;
       } else { summary.sixMonthFollowUps.failed++; summary.errors.push("6-month follow-up for " + (patient.name || patient.id) + ": " + result.error); }
     }
