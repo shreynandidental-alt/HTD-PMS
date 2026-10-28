@@ -1547,7 +1547,8 @@
   import {
     getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
     collection, doc, getDoc, getDocs, setDoc, deleteDoc, writeBatch,
-    enableIndexedDbPersistence, query, where, orderBy, onSnapshot
+    enableIndexedDbPersistence, query, where, orderBy, onSnapshot,
+    getDocsFromCache, getCountFromServer, serverTimestamp, Timestamp, CACHE_SIZE_UNLIMITED
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
   const firebaseConfig = {
@@ -1566,45 +1567,190 @@
   // first tab, so each extra tab re-downloaded everything).
   let fbDb;
   try{
-    fbDb = initializeFirestore(fbApp, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) });
+    // Unlimited size so this computer's copy of the records is never trimmed
+    // (a trimmed copy would have to be downloaded again).
+    fbDb = initializeFirestore(fbApp, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager(), cacheSizeBytes: CACHE_SIZE_UNLIMITED }) });
   }catch(e){
     console.warn("Shared offline cache unavailable, using the default:", e);
     fbDb = getFirestore(fbApp);
     enableIndexedDbPersistence(fbDb).catch(()=>{});
   }
 
-  // ---- Read saver ----
-  // Every screen calls getAll() for whole collections, often many times a
-  // minute. Reading them fresh from the server each time cost a full read of
-  // every document on every call (600k+ reads/day, far past Firebase's free
-  // 50k). Instead, each collection is kept live with one listener: the first
-  // call reads it once, after that only documents that actually change are
-  // read, and every getAll() is answered instantly from memory. Writes from
-  // this device and from other devices show up through the same listener.
-  const __live = {};
-  function liveCollection(storeName){
-    let e = __live[storeName];
-    if(e){ e.lastUsed = Date.now(); return e; }
-    e = { snap:null, lastUsed: Date.now(), settled:false, unsub:null };
-    e.ready = new Promise((resolve, reject)=>{
-      const settle = (ok, err)=>{ if(e.settled) return; e.settled = true; clearTimeout(t1); clearTimeout(t2); ok ? resolve() : reject(err); };
-      // Offline / slow network: fall back to whatever this device has cached.
-      const t1 = setTimeout(()=>{ if(e.snap) settle(true); }, 5000);
-      const t2 = setTimeout(()=>{ e.snap ? settle(true) : (delete __live[storeName], e.unsub && e.unsub(), settle(false, new Error("timeout"))); }, 15000);
-      e.unsub = onSnapshot(collection(fbDb, storeName), {includeMetadataChanges:true}, (snap)=>{
-        e.snap = snap;
-        if(!snap.metadata.fromCache) settle(true);
-      }, (err)=>{
-        if(__live[storeName]===e) delete __live[storeName];
-        settle(false, err);
-      });
+  // ---- Read saver v2: "only download what changed" ----
+  // Firebase's free plan allows 50,000 document reads a day. The PMS has
+  // ~27,000 records, and the old approach (one live listener per list)
+  // downloaded every list again each time a computer opened the PMS or woke
+  // up after 30+ minutes — 20+ full downloads a day, 300k-1M reads.
+  //
+  // Now every save stamps the record with the server time (_ts). Each
+  // computer keeps its own full copy (Firebase's offline cache on this
+  // computer, free to read) and only asks the server for records stamped
+  // after the newest one it already has. Deletions are recorded in
+  // "syncDeletes" so other computers drop them too. A cheap count check
+  // (1 read per 1000 records) catches anything that slipped through and
+  // re-downloads just that list.
+  const SYNC_KEY = "htdSync2:";
+  const MARGIN_MS = 5*60*1000;              // overlap so nothing is missed at the edges
+  const COUNT_CHECK_EVERY = 3*60*60*1000;   // per list, per computer
+  const TOMBS = "syncDeletes";
+  // Small lists written by outside pages (website booking form, consent
+  // page) without the time stamp: keep the plain live listener for these.
+  const FULL_LIVE = new Set(["onlineBookings","consentSubmissions","cronRuns"]);
+  // History logs are only ever added to, never edited, so a computer that
+  // already has them cached doesn't need to download them all again.
+  const APPEND_ONLY = new Set(["activityLog","notificationLog","commsLog","inventoryLog"]);
+  const __sync = {};
+  const __tombs = new Map();               // "store/id" -> deleted-at millis
+  const tsMs = (d)=>{ const t = d && d._ts; return t && typeof t.toMillis==="function" ? t.toMillis() : (typeof t==="number" ? t : null); };
+  const readMeta = (n)=>{ try{ return JSON.parse(localStorage.getItem(SYNC_KEY+n)||"null"); }catch(e){ return null; } };
+  const writeMeta = (n,m)=>{ try{ localStorage.setItem(SYNC_KEY+n, JSON.stringify(m)); }catch(e){} };
+  const isTombed = (store, id, docTs)=>{ const t = __tombs.get(store+"/"+id); return t!=null && (docTs==null || t >= docTs); };
+  const tombId = (store, id)=> (store+"__"+String(id)).replace(/\//g,"_");
+
+  function entryFromSnap(d){
+    const data = d.data({serverTimestamps:"estimate"});
+    return { snap: d, ts: tsMs(data), server: !d.metadata.hasPendingWrites };
+  }
+  function rowOut(store, id, en){
+    const data = en.snap ? en.snap.data({serverTimestamps:"estimate"}) : structuredClone(en.obj);
+    delete data._ts;
+    return Object.assign(data, {id});
+  }
+  function bump(e){ e.version = (e.version||0)+1; }
+
+  function applyDeltaSnap(e, snap){
+    e.lastDelta = snap;
+    let maxTs = 0;
+    snap.docChanges().forEach(ch=>{
+      const id = ch.doc.id;
+      if(ch.type==="removed"){
+        // A record leaves this list only when deleted. Ignore the brief
+        // "removed" that appears while our own save is still uploading.
+        if(!snap.metadata.hasPendingWrites) e.map.delete(id);
+        return;
+      }
+      const en = entryFromSnap(ch.doc);
+      if(e.name!==TOMBS && isTombed(e.name, id, en.ts)) { e.map.delete(id); return; }
+      e.map.set(id, en);
+      if(e.name===TOMBS){ const dd = ch.doc.data({serverTimestamps:"estimate"}); if(dd.store && dd.docId!=null) onTomb(dd.store, String(dd.docId), en.ts); }
     });
-    __live[storeName] = e;
+    if(!snap.metadata.fromCache){
+      snap.docs.forEach(d=>{ if(!d.metadata.hasPendingWrites){ const t = tsMs(d.data()); if(t && t>maxTs) maxTs = t; } });
+      if(maxTs){ const m = readMeta(e.name) || {}; if(m.full && maxTs > (m.w||0)){ m.w = maxTs; writeMeta(e.name, m); } }
+    }
+    bump(e);
+  }
+  function onTomb(store, id, ts){
+    const key = store+"/"+id, prev = __tombs.get(key);
+    __tombs.set(key, Math.max(prev||0, ts||Date.now()));
+    const e = __sync[store];
+    if(e && e.map){ const en = e.map.get(id); if(en && isTombed(store, id, en.ts)){ e.map.delete(id); bump(e); } }
+  }
+  function startDelta(e, fromMs){
+    if(e.unsub) e.unsub();
+    const q = query(collection(fbDb, e.name), where("_ts", ">", Timestamp.fromMillis(Math.max(0, fromMs))));
+    e.unsub = onSnapshot(q, (snap)=> applyDeltaSnap(e, snap), (err)=>{
+      console.warn("[sync] live updates stopped for "+e.name+":", err && (err.code||err.message));
+      e.unsub = null;
+      setTimeout(()=>{ if(!e.unsub) startDelta(e, ((readMeta(e.name)||{}).w||0) - MARGIN_MS); }, 5*60*1000);
+    });
+  }
+  // Downloads the whole list once from the server (first run on a computer,
+  // or when the count check finds a difference).
+  async function fullReload(e){
+    if(e.reloading) return e.reloading;
+    e.reloading = (async ()=>{
+      try{
+        const snap = await getDocs(collection(fbDb, e.name));
+        if(snap.metadata.fromCache) return false;      // offline / over quota: try later
+        const map = new Map(); let maxTs = 0;
+        snap.docs.forEach(d=>{ const en = entryFromSnap(d); map.set(d.id, en); if(en.ts && en.ts>maxTs) maxTs = en.ts; });
+        // keep newer changes that arrived while downloading, and unsent saves
+        if(e.lastDelta && !e.lastDelta.metadata.fromCache){
+          e.lastDelta.docs.forEach(d=>{ const en = entryFromSnap(d), f = map.get(d.id); if(!f || (en.ts && (!f.ts || en.ts > f.ts))) map.set(d.id, en); });
+        }
+        e.map.forEach((en, id)=>{ if(!en.server) map.set(id, en); });
+        if(e.name===TOMBS) map.forEach((en)=>{ const dd = en.snap ? en.snap.data({serverTimestamps:"estimate"}) : en.obj; if(dd && dd.store) onTomb(dd.store, String(dd.docId), en.ts); });
+        e.map = map; bump(e);
+        const old = readMeta(e.name) || {};
+        const w = Math.max(maxTs, old.w||0);
+        writeMeta(e.name, { full:true, w, checkedAt: Date.now(), count: snap.size });
+        startDelta(e, w - MARGIN_MS);   // from now on, only newer changes
+        return true;
+      }catch(err){
+        console.warn("[sync] full download failed for "+e.name+":", err && (err.code||err.message));
+        return false;
+      }finally{ e.reloading = null; }
+    })();
+    return e.reloading;
+  }
+  async function countCheck(e){
+    const m = readMeta(e.name);
+    if(!m || !m.full || (m.checkedAt && Date.now()-m.checkedAt < COUNT_CHECK_EVERY)) return;
+    try{
+      const c = (await getCountFromServer(collection(fbDb, e.name))).data().count;
+      const local = Array.from(e.map.values()).filter(en=>en.server).length;
+      const m2 = readMeta(e.name) || m;
+      m2.checkedAt = Date.now(); writeMeta(e.name, m2);
+      if(c !== local){
+        console.info("[sync] "+e.name+": server has "+c+", this computer "+local+" — re-downloading this list");
+        await fullReload(e);
+      }
+    }catch(err){ /* offline or over quota — try next time */ }
+  }
+  // Every 2 hours move each live list's starting point up to the newest
+  // record, so a reconnect after sleep only re-checks recent changes.
+  setInterval(()=>{
+    Object.values(__sync).forEach(e=>{
+      if(FULL_LIVE.has(e.name) || e.reloading) return;
+      const m = readMeta(e.name);
+      if(m && m.full) startDelta(e, (m.w||0) - MARGIN_MS);
+    });
+  }, 2*60*60*1000);
+  let countQueue = Promise.resolve(), fullQueue = Promise.resolve();
+  function syncStore(name){
+    let e = __sync[name];
+    if(e) return e;
+    e = __sync[name] = { name, map: new Map(), version: 0, unsub: null };
+    e.ready = (async ()=>{
+      if(name!==TOMBS) await syncStore(TOMBS).ready.catch(()=>{});
+      if(FULL_LIVE.has(name)){
+        await new Promise((resolve)=>{
+          let done = false; const fin = ()=>{ if(!done){ done = true; resolve(); } };
+          setTimeout(fin, 8000);
+          e.unsub = onSnapshot(collection(fbDb, name), {includeMetadataChanges:true}, (snap)=>{
+            const map = new Map(); snap.docs.forEach(d=> map.set(d.id, entryFromSnap(d)));
+            e.map = map; bump(e);
+            if(!snap.metadata.fromCache) fin();
+          }, (err)=>{ console.warn("[sync] "+name+":", err && (err.code||err.message)); e.unsub = null; delete __sync[name]; fin(); });
+        });
+        return;
+      }
+      // 1. Instant start from this computer's own copy (no server reads).
+      try{
+        const cached = await getDocsFromCache(collection(fbDb, name));
+        cached.docs.forEach(d=>{ const en = entryFromSnap(d); if(name===TOMBS || !isTombed(name, d.id, en.ts)) e.map.set(d.id, en); });
+        if(name===TOMBS) e.map.forEach((en)=>{ const dd = en.snap.data({serverTimestamps:"estimate"}); if(dd.store) onTomb(dd.store, String(dd.docId), en.ts); });
+      }catch(err){}
+      const meta = readMeta(name);
+      // 2. Live: only records changed since the newest one we have.
+      startDelta(e, meta && meta.full ? (meta.w||0) - MARGIN_MS : 0);
+      if((!meta || !meta.full) && APPEND_ONLY.has(name) && e.map.size){
+        writeMeta(name, { full:true, w:0, checkedAt: Date.now() });
+      }else if(!meta || !meta.full){
+        // First run on this computer: one full download (in the background
+        // if we already have a cached copy to show meanwhile). One list at a
+        // time; if Firebase's daily limit is used up, try again in an hour.
+        const attempt = ()=>{ const p = (fullQueue = fullQueue.then(()=> fullReload(e))); p.then(ok=>{ if(!ok) setTimeout(attempt, 60*60*1000); }); return p; };
+        const p = attempt();
+        if(!e.map.size) await p;
+      }else{
+        countQueue = countQueue.then(()=> new Promise(r=> setTimeout(r, 1500))).then(()=> countCheck(e));
+      }
+      bump(e);
+    })();
     return e;
   }
-  // Listeners stay open while the tab is open: once open they only cost a
-  // read when a record actually changes, whereas closing and re-opening one
-  // after 30+ minutes makes Firebase charge for the whole list again.
 
   // Firebase refuses to save a record that has any empty ("undefined") value,
   // e.g. clinicId for a patient with no clinic set. Drop those fields (and
@@ -1618,31 +1764,61 @@
     }
     return v;
   };
+  async function fbWrite(storeName, obj){
+    const clean = fbClean(obj); delete clean._ts;
+    const e = __sync[storeName];
+    if(e && e.map && !FULL_LIVE.has(storeName)){ e.map.set(String(obj.id), { obj: structuredClone(Object.assign({}, clean, {id: obj.id})), ts: Date.now(), server: false }); bump(e); }
+    clean._ts = serverTimestamp();
+    await setDoc(doc(fbDb, storeName, String(obj.id)), clean);
+    return obj;
+  }
+  async function fbRemove(storeName, id){
+    id = String(id);
+    const e = __sync[storeName];
+    if(e && e.map){ e.map.delete(id); bump(e); }
+    await deleteDoc(doc(fbDb, storeName, id));
+    if(!FULL_LIVE.has(storeName) && storeName!==TOMBS){
+      __tombs.set(storeName+"/"+id, Date.now());
+      setDoc(doc(fbDb, TOMBS, tombId(storeName, id)), { id: tombId(storeName, id), store: storeName, docId: id, _ts: serverTimestamp() })
+        .catch(err=> console.warn("[sync] couldn't record deletion:", err && (err.code||err.message)));
+    }
+    return true;
+  }
+  window.__fbSync = {
+    status: ()=> Object.fromEntries(Object.entries(__sync).map(([k,e])=>[k, {records: e.map.size, live: !!e.unsub, meta: readMeta(k)}])),
+    resync: async (name)=>{ const e = syncStore(name); await e.ready; return fullReload(e); }
+  };
+
   window.__fb = {
-    add: async (storeName, obj)=>{ await setDoc(doc(fbDb, storeName, obj.id), fbClean(obj)); return obj; },
-    put: async (storeName, obj)=>{ await setDoc(doc(fbDb, storeName, obj.id), fbClean(obj)); return obj; },
+    add: fbWrite,
+    put: fbWrite,
     getAll: async (storeName)=>{
       try{
-        const e = liveCollection(storeName);
+        const e = syncStore(storeName);
         await e.ready;
-        if(e.snap) return e.snap.docs.map(d=>({...d.data(), id: d.id}));
-      }catch(err){ console.warn("[read saver] live read failed for "+storeName+", reading directly:", err && (err.code||err.message)); }
+        if(__sync[storeName]===e){
+          const out = [];
+          e.map.forEach((en, id)=>{ try{ out.push(rowOut(storeName, id, en)); }catch(_){} });
+          return out;
+        }
+      }catch(err){ console.warn("[sync] read failed for "+storeName+", reading directly:", err && (err.code||err.message)); }
       const snap = await getDocs(collection(fbDb, storeName));
       // The document's real Firestore ID (d.id) is the source of truth —
       // not whatever "id" field (if any) happens to be inside its data.
-      // Documents created via addDoc() (like website widget submissions,
-      // which auto-generate their path ID rather than storing one as a
-      // field) would otherwise come back with id:undefined here, breaking
-      // every piece of app logic that identifies a record by its id.
-      return snap.docs.map(d=>({...d.data(), id: d.id}));
+      return snap.docs.map(d=>{ const x = Object.assign({}, d.data(), {id: d.id}); delete x._ts; return x; });
     },
-    delete: async (storeName, id)=>{ await deleteDoc(doc(fbDb, storeName, String(id))); return true; },
-    get: async (storeName, id)=>{ const d = await getDoc(doc(fbDb, storeName, String(id))); return d.exists() ? Object.assign({}, d.data(), {id: d.id}) : null; },
+    delete: fbRemove,
+    get: async (storeName, id)=>{
+      id = String(id);
+      const e = __sync[storeName];
+      if(e && e.map && e.map.size){ await e.ready; const en = e.map.get(id); if(en) return rowOut(storeName, id, en); if(!FULL_LIVE.has(storeName) && (readMeta(storeName)||{}).full) return null; }
+      const d = await getDoc(doc(fbDb, storeName, id));
+      if(!d.exists()) return null;
+      const x = Object.assign({}, d.data(), {id: d.id}); delete x._ts; return x;
+    },
     clear: async (storeName)=>{
-      const snap = await getDocs(collection(fbDb, storeName));
-      const batch = writeBatch(fbDb);
-      snap.docs.forEach(d=>batch.delete(d.ref));
-      await batch.commit();
+      const e = syncStore(storeName); await e.ready;
+      for(const id of Array.from(e.map.keys())) await fbRemove(storeName, id);
     },
     // Live-updates a callback whenever documents matching storeName+field==value
     // change, sorted by orderField. Returns an unsubscribe function. Used for
@@ -1652,12 +1828,38 @@
     listenQuery: (storeName, field, value, orderField, callback)=>{
       const q = query(collection(fbDb, storeName), where(field, "==", value));
       return onSnapshot(q, (snap)=>{
-        const rows = snap.docs.map(d=>d.data());
+        const rows = snap.docs.map(d=>{ const x = d.data(); delete x._ts; return x; });
         rows.sort((a,b)=> (a[orderField]||"") < (b[orderField]||"") ? -1 : (a[orderField]||"") > (b[orderField]||"") ? 1 : 0);
         callback(rows);
       }, (err)=>{ console.error("listenQuery error:", err); });
     }
   };
+
+  // ---- "New version available" bar ----
+  // Every 15 minutes, check whether a newer PMS has been published; if so,
+  // offer a one-tap refresh (never reloads by itself, so nothing typed is lost).
+  (function(){
+    let base = null, shown = false;
+    async function check(){
+      if(shown || !navigator.onLine) return;
+      try{
+        const r = await fetch(location.pathname + "?v=" + Date.now(), { method:"HEAD", cache:"no-store" });
+        const tag = r.headers.get("etag") || r.headers.get("last-modified");
+        if(!tag) return;
+        if(base===null){ base = tag; return; }
+        if(tag !== base){
+          shown = true;
+          const bar = document.createElement("div");
+          bar.style.cssText = "position:fixed;left:50%;transform:translateX(-50%);bottom:84px;z-index:9999;background:#0E6F5C;color:#fff;padding:10px 14px;border-radius:12px;font:600 13px Arial,sans-serif;box-shadow:0 6px 20px rgba(0,0,0,.3);display:flex;gap:10px;align-items:center;max-width:92vw;";
+          bar.innerHTML = '<span>A new version of the PMS is ready.</span><button style="background:#fff;color:#0E6F5C;border:0;border-radius:8px;padding:6px 10px;font-weight:700;cursor:pointer;">Refresh</button>';
+          bar.querySelector("button").onclick = ()=> location.reload();
+          document.body.appendChild(bar);
+        }
+      }catch(e){}
+    }
+    setTimeout(check, 20000);
+    setInterval(check, 15*60*1000);
+  })();
 
   window.__fbAuth = {
     getIdToken: async ()=> fbAuth.currentUser ? fbAuth.currentUser.getIdToken() : null,
