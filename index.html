@@ -1169,6 +1169,15 @@
     transition:transform .12s ease, opacity .2s ease, filter .2s ease;
   }
   .kiosk-submit:active{transform:scale(.97);filter:brightness(.92);}
+  .lab-qa-row{display:flex;gap:6px;flex-wrap:wrap;padding:0 14px 12px;margin-top:-4px;border-bottom:1px solid var(--grey-light,#eee);}
+  .lab-qa{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--grey-light,#ddd);background:var(--white,#fff);color:var(--charcoal-2,#333);border-radius:999px;padding:5px 10px;font-size:11.5px;font-weight:700;cursor:pointer;}
+  .lab-qa:active{transform:scale(.96);}
+  .lab-qa[data-labqa="received"]{color:var(--green);border-color:var(--green-light,#9bd3c2);}
+  .lab-qa[data-labqa="received"].on{background:var(--green);color:#fff;border-color:var(--green);}
+  .lab-qa[data-labqa="correction"]{color:#b45309;border-color:#f3c98b;}
+  .lab-qa[data-labqa="correction"].on{background:#b45309;color:#fff;border-color:#b45309;}
+  .lab-qa[data-labqa="delivered"]{color:#1d4ed8;border-color:#a9c0f5;}
+  .lab-qa.busy{opacity:.55;pointer-events:none;}
   /* After a tap: button locks, shows a spinner + "please wait" so patients
      know it worked and can't submit twice. */
   .is-busy{pointer-events:none !important;opacity:.9;filter:saturate(.85);}
@@ -7044,7 +7053,7 @@ const ASSIST_QUICK_CHIPS = [
   {cat:"Send Estimate", ico:"receipt"},
 ];
 const LAB_CASE_TYPES = ["Zirconia","PFM","DMLS","e.max","Veneer","Implant Crown","Implant Bridge","Denture","Other"];
-const LAB_CASE_STATUSES = ["Sent to Lab","In Progress","Received","Trial Pending","Ready","Delivered to Patient","Remake","Delayed"];
+const LAB_CASE_STATUSES = ["Sent to Lab","In Progress","Received","Trial Pending","Ready","Sent Back for Correction","Delivered to Patient","Remake","Delayed"];
 const VITA_SHADES = ["A1","A2","A3","A3.5","A4","B1","B2","B3","B4","C1","C2","C3","C4","D2","D3","D4"];
 
 let assistView = "Today";
@@ -8782,8 +8791,9 @@ async function renderAllLabCasesList(body, outerBody){
           <div class="name">${escapeHtml(lc.patientName||"—")} ${lc.tooth? '· Tooth '+escapeHtml(lc.tooth):''}</div>
           <div class="addr">${escapeHtml(lc.caseType||"")} — ${escapeHtml(lc.labName||"No lab set")}</div>
         </div>
-        <span class="status-pill st-${lc.status==='Delivered to Patient'?'Completed':(lc.status==='Delayed'?'Cancelled':'Confirmed')}">${escapeHtml(lc.status||"In Progress")}</span>
+        <span class="status-pill st-${labStatusPillClass(lc.status)}">${escapeHtml(lc.status||"In Progress")}</span>
       </div>
+      ${labQuickActionsHtml(lc)}
     `).join("")}</div>
     ${paginationBarHtml("labCase", cases.length, labCasePage)}
     ` : `<div class="empty-card"><b>No lab cases found</b>${(labCaseSearchQuery||labCaseDateFrom||labCaseDateTo)? "Try a different search or date range." : "Track lab commitments before you promise patients a date."}</div>`}
@@ -8794,7 +8804,70 @@ async function renderAllLabCasesList(body, outerBody){
   document.getElementById("labCaseDateFromInput").onchange = (e)=>{ labCaseDateFrom = e.target.value; labCasePage=1; renderAllLabCasesList(body, outerBody); };
   document.getElementById("labCaseDateToInput").onchange = (e)=>{ labCaseDateTo = e.target.value; labCasePage=1; renderAllLabCasesList(body, outerBody); };
   body.querySelectorAll("[data-lab]").forEach(el=> el.onclick = ()=>openLabCaseActionMenu(el.dataset.lab));
+  wireLabQuickActions(body, ()=> renderAllLabCasesList(body, outerBody));
   wirePaginationBar("labCase", cases.length, labCasePage, PAGE_SIZE, (newPage)=>{ labCasePage = newPage; renderAllLabCasesList(body, outerBody); });
+}
+
+// ---- One-tap status buttons on lab case rows ----
+// Received -> shows in Prosthesis Ready to Deliver; Sent Back for
+// Correction -> back with the lab; Delivered -> closes the case and updates
+// the matching clinical crown / prosthesis record, as the full form does.
+function labStatusPillClass(status){
+  return status==="Delivered to Patient" ? "Completed" : ((status==="Delayed" || status==="Sent Back for Correction" || status==="Remake") ? "Cancelled" : "Confirmed");
+}
+function labQuickActionsHtml(lc){
+  if(lc.status==="Delivered to Patient") return "";
+  const b = (act, ico, label, on)=> `<button type="button" class="lab-qa${on?' on':''}" data-labqa="${act}" data-id="${lc.id}" title="${label}" aria-label="${label}">${icon(ico,14)}<span>${label}</span></button>`;
+  return `<div class="lab-qa-row">
+    ${b("received","check","Received", lc.status==="Received" || lc.status==="Ready")}
+    ${b("correction","refresh","Sent Back for Correction", lc.status==="Sent Back for Correction")}
+    ${b("delivered","tooth","Delivered to Patient", false)}
+  </div>`;
+}
+async function applyLabQuickAction(caseId, action){
+  const lc = (await dbGetAll("labCases")).find(x=>x.id===caseId);
+  if(!lc){ showToast("Lab case not found"); return false; }
+  const now = nowIso();
+  if(action==="received"){
+    lc.status = "Received"; lc.readyToDeliver = true; lc.archivedFromReadyTab = false; lc.receivedDate = now;
+  }else if(action==="correction"){
+    if(!confirm("Mark this case as sent back to "+(lc.labName||"the lab")+" for correction?")) return false;
+    lc.status = "Sent Back for Correction"; lc.readyToDeliver = false;
+    lc.corrections = (lc.corrections||[]).concat([{sentAt: now}]);
+  }else if(action==="delivered"){
+    if(!confirm("Mark "+(lc.patientName||"this case")+" as delivered to the patient?")) return false;
+    lc.status = "Delivered to Patient"; lc.readyToDeliver = false;
+    lc.deliveryDate = toDateKey(new Date());
+  }else return false;
+  lc.updatedAt = now;
+  await dbPut("labCases", lc);
+  if(action==="delivered"){
+    try{ await syncDeliveryToClinicalCase(lc); }catch(e){ console.warn(e); }
+    try{ await syncLabCaseToCrownCase(lc); }catch(e){ console.warn(e); }
+    try{ await syncLabWarrantyToCrownCase(lc); }catch(e){ console.warn(e); }
+  }
+  // Close the pending lab follow-up reminder once the case is back or delivered.
+  if(action==="received" || action==="delivered"){
+    try{
+      const rems = (await dbGetAll("reminders")).filter(r=> r.caseId===lc.id && r.type==="Lab Case" && r.status==="Pending");
+      for(const r of rems){ r.status = "Completed"; await dbPut("reminders", r); }
+    }catch(e){}
+  }
+  logActivity("Lab case "+(action==="received"?"received from lab":action==="correction"?"sent back for correction":"delivered to patient")+": "+(lc.patientName||""), {patientId: lc.patientId});
+  showToast(action==="received" ? "Marked received — now in Prosthesis Ready to Deliver" : action==="correction" ? "Marked sent back for correction" : "Marked delivered to patient");
+  return true;
+}
+function wireLabQuickActions(root, rerender){
+  root.querySelectorAll("[data-labqa]").forEach(btn=>{
+    btn.onclick = async (e)=>{
+      e.stopPropagation();
+      if(btn.dataset.busy==="1") return;
+      btn.dataset.busy = "1"; btn.classList.add("busy");
+      const changed = await applyLabQuickAction(btn.dataset.id, btn.dataset.labqa).catch(err=>{ console.error(err); showToast("Couldn't update: "+(err.message||err)); return false; });
+      btn.dataset.busy = ""; btn.classList.remove("busy");
+      if(changed && rerender) rerender();
+    };
+  });
 }
 
 // Cases land here once a Lab Case follow-up reminder gets marked Done —
@@ -8807,7 +8880,7 @@ async function renderProsthesisReadyTab(body, outerBody){
   let cases = (await dbGetAll("labCases")).filter(lc=> lc.readyToDeliver && lc.status!=="Delivered to Patient").sort((a,b)=> new Date(b.createdAt||0)-new Date(a.createdAt||0));
   if(selectedClinicId!=="ALL"){ cases = cases.filter(lc=> !lc.clinicId || lc.clinicId===selectedClinicId); }
   body.innerHTML = `
-    <p style="margin:0 0 12px;color:var(--grey);font-size:12.5px;">Cases marked Done from a Lab Case follow-up reminder land here, ready to hand back to the patient.</p>
+    <p style="margin:0 0 12px;color:var(--grey);font-size:12.5px;">Cases marked Received (from the lab case list, the lab case form, or a Lab Case reminder) land here, ready to hand back to the patient.</p>
     ${cases.length? `<div class="list-card">${cases.map(lc=>`
       <div class="note-card" data-prcase="${lc.id}">
         <div class="note-head"><b>${escapeHtml(lc.patientName||"—")}${lc.tooth? " · Tooth "+escapeHtml(lc.tooth):""}</b></div>
@@ -8817,7 +8890,7 @@ async function renderProsthesisReadyTab(body, outerBody){
           <button class="btn btn-outline btn-sm" data-pract="archive" data-id="${lc.id}">${icon('box',14)} Archive</button>
         </div>
       </div>
-    `).join("")}</div>` : `<div class="empty-card"><b>Nothing waiting right now</b>Mark a Lab Case reminder Done to move it here once the case is back from the lab.</div>`}
+    `).join("")}</div>` : `<div class="empty-card"><b>Nothing waiting right now</b>Tap "Received" on a lab case when it comes back from the lab to move it here.</div>`}
   `;
   body.querySelectorAll("[data-pract]").forEach(btn=>{
     btn.onclick = async ()=>{
@@ -9469,8 +9542,14 @@ async function openLabCaseForm(id, prefillPatient){
       warrantyAttachments: labWarrantyAttachments,
       updatedAt: nowIso()
     });
-    if(updated.status==="Ready"){
-      updated.readyToDeliver = true;
+    // Back from the lab (Received / Ready) = waiting to be fitted, so it
+    // shows in Prosthesis Ready to Deliver. Sent back for correction = not ready.
+    if(updated.status==="Ready" || updated.status==="Received"){
+      if(!updated.readyToDeliver){ updated.readyToDeliver = true; updated.archivedFromReadyTab = false; }
+      if(!updated.receivedDate) updated.receivedDate = nowIso();
+    }
+    if(updated.status==="Sent Back for Correction" || updated.status==="Remake" || updated.status==="Sent to Lab"){
+      updated.readyToDeliver = false;
     }
     if(updated.status==="Delivered to Patient"){
       updated.readyToDeliver = false;
@@ -9506,6 +9585,7 @@ async function offerNotifyLabForNewCase(lc){
   const labs = await dbGetAll("labs");
   const lab = labs.find(x=>x.id===lc.labId) || labs.find(x=>x.name===lc.labName);
   const labEmail = lab ? lab.email : "";
+  if(!lc.labContact && lab && lab.phone){ lc.labContact = lab.phone; await dbPut("labCases", lc).catch(()=>{}); }
   closeSheet();
   if(!lc.labContact && !labEmail){
     showToast("Lab case saved");
@@ -9652,12 +9732,14 @@ async function renderPatientLabCasesTab(body, patientId, patient){
           <div class="name">${escapeHtml(lc.caseType||"")}${lc.tooth? ' · Tooth '+escapeHtml(lc.tooth):''}</div>
           <div class="addr">${escapeHtml(lc.labName||"No lab set")}${lc.labPromisedDate? ' · Promised '+new Date(lc.labPromisedDate).toLocaleDateString():''}</div>
         </div>
-        <span class="status-pill st-${lc.status==='Delivered to Patient'?'Completed':(lc.status==='Delayed'?'Cancelled':'Confirmed')}">${escapeHtml(lc.status||"In Progress")}</span>
+        <span class="status-pill st-${labStatusPillClass(lc.status)}">${escapeHtml(lc.status||"In Progress")}</span>
       </div>
+      ${labQuickActionsHtml(lc)}
     `).join("")}</div>` : `<div class="empty-card"><b>No lab cases for this patient yet</b>Track crowns, bridges, dentures and other lab work here.</div>`}
   `;
   document.getElementById("btnAddPatientLabCase").onclick = ()=> openLabCaseForm(null, patient);
   body.querySelectorAll("[data-lab]").forEach(el=> el.onclick = ()=> openLabCaseForm(el.dataset.lab, patient));
+  wireLabQuickActions(body, ()=> renderPatientLabCasesTab(body, patientId, patient));
 }
 
 // ---- Remind Assistant (real WhatsApp deep link — opens compose, never auto-sends) ----
@@ -11797,7 +11879,12 @@ function openWhatsAppComposer(opts){
     if(!result.success){
       btn.disabled = false;
       const provider = await CommunicationService.getActiveProvider();
-      showToast(provider.label + ": " + (result.error||"Couldn't send"));
+      const errText = provider.label + ": " + (result.error||"Couldn't send");
+      showToast(errText);
+      let errBox = document.getElementById("waComposerErr");
+      if(!errBox){ errBox = document.createElement("div"); errBox.id = "waComposerErr"; btn.insertAdjacentElement("beforebegin", errBox); }
+      errBox.style.cssText = "background:#fdecec;border:1px solid #f5c2c2;color:#b42318;border-radius:10px;padding:10px 12px;font-size:12.5px;margin:0 0 10px;";
+      errBox.textContent = "Not sent — " + errText + (opts.templateName? " (template: "+opts.templateName+")" : "") + ". You can use \"Open in WhatsApp Business App\" below instead.";
       return;
     }
     logActivity(`WhatsApp opened for ${opts.toName||opts.toNumber}`, opts.patientId?{patientId:opts.patientId}:{});
@@ -25995,7 +26082,7 @@ function openImageViewer(src, shareOpts){
     if(shareOpts.onPrint){
       wrap.querySelector("#imgViewerPrint").onclick = (e)=>{ e.stopPropagation(); shareOpts.onPrint(); };
     }
-    wrap.querySelector("#imgViewerWa").onclick = (e)=>{ e.stopPropagation(); shareFileToChannel(src, shareOpts, "whatsapp"); };
+    wrap.querySelector("#imgViewerWa").onclick = (e)=>{ e.stopPropagation(); if(shareOpts && shareOpts.patient) sendFileLinkOnWhatsApp(src, shareOpts); else shareFileToChannel(src, shareOpts, "whatsapp"); };
     wrap.querySelector("#imgViewerEmail").onclick = (e)=>{ e.stopPropagation(); shareFileToChannel(src, shareOpts, "email"); };
   }
   document.body.appendChild(wrap);
@@ -26432,6 +26519,48 @@ function openXrayAnnotationTool(xrayId, patient, tabBody){
 // Where file-sharing isn't available (most desktop browsers), it falls back
 // to downloading the file and opening the composer with a note to attach it
 // manually — still opens the right chat/email, just can't skip that one tap.
+// WhatsApp for X-rays / photos / documents: the image is published as a
+// view-and-download page (doc.html, same as prescription links) and sent with
+// the approved "document_message" template: {{1}} patient name, {{2}} link.
+async function sendFileLinkOnWhatsApp(src, opts){
+  const patient = opts && opts.patient;
+  if(!patient){ return shareFileToChannel(src, opts, "whatsapp"); }
+  const number = patient.whatsappNumber || patient.mobile;
+  if(!number){ showToast("This patient has no mobile number on file"); return; }
+  const baseLabel = String(opts.label || "").replace(/\s+/g," ").trim();
+  const label = opts.xrayId ? ("X-ray" + (baseLabel && !/x-?ray/i.test(baseLabel) ? " ("+baseLabel+")" : "")) : (baseLabel || "Document");
+  showToast("Preparing link…");
+  try{
+    let imgSrc = src;
+    // Big embedded images go to Cloud Storage first so the page stays small.
+    if(/^data:/.test(imgSrc) && imgSrc.length > 450000){
+      try{ imgSrc = await uploadDataUrlToStorage(`pms/shared/${String(patient.id).replace(/[^\w-]/g,"_")}/${uid("f")}.jpg`, imgSrc); }catch(e){ console.warn("Storage upload failed:", e); }
+    }
+    const clinics = await dbGetAll("clinics");
+    const clinic = clinics.find(c=>c.id===patient.preferredClinicId) || clinics.find(c=>c.isDefault) || clinics[0] || {};
+    const isPdf = /^data:application\/pdf/i.test(imgSrc) || /\.pdf(\?|$)/i.test(String(imgSrc).split("#")[0]);
+    const bodyHtml = isPdf
+      ? `<p style="font-size:13.5px;">Your ${escapeHtml(label)} is ready. <a href="${escapeAttr(imgSrc)}" target="_blank" rel="noopener">Open / download the PDF</a>.</p>`
+      : `<div style="text-align:center;margin:6px 0 10px;"><img src="${escapeAttr(imgSrc)}" style="max-width:100%;max-height:980px;object-fit:contain;border:1px solid #ddd;border-radius:6px;background:#000;"></div>`;
+    const html = await captureDocHtml(()=> printDocument({ title: label, patient, clinic, docDate: new Date().toLocaleDateString(), bodyHtml, signHtml: "" }));
+    if(!html) throw new Error("couldn't prepare the page");
+    if(html.length > 880000) throw new Error("the image is too large to share as a link (turn on Cloud Storage)");
+    const link = await publishDocLink(html, {title: label, patientName: patient.name});
+    if(!link) return;
+    openWhatsAppComposer({
+      title: "Send "+label+" (link)",
+      toName: patient.name, toNumber: number, patientId: patient.id, recipientType: "Patient",
+      message: `Hi ${patient.name}, your ${label} from Healing Touch Dental is ready. View or download it here: ${link}`,
+      templateName: "document_message",
+      templateParams: [patient.name||"Patient", link],
+      onSent: ()=> logActivity("Sent "+label+" link to "+patient.name, {patientId: patient.id})
+    });
+  }catch(err){
+    console.error("sendFileLinkOnWhatsApp:", err);
+    showToast("Couldn't create the link ("+((err&&err.message)||"error")+") — sharing the file instead");
+    shareFileToChannel(src, opts, "whatsapp");
+  }
+}
 async function shareFileToChannel(dataUrl, opts, channel){
   const { patient, fileName, label } = opts;
   let file = null;
