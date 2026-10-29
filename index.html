@@ -1177,6 +1177,8 @@
   .lab-qa[data-labqa="correction"]{color:#b45309;border-color:#f3c98b;}
   .lab-qa[data-labqa="correction"].on{background:#b45309;color:#fff;border-color:#b45309;}
   .lab-qa[data-labqa="delivered"]{color:#1d4ed8;border-color:#a9c0f5;}
+  .lab-qa[data-labqa="jobcard"]{color:#128C7E;border-color:#9fd8cf;}
+  .lab-qa[data-labqa="remind"]{color:#7c3aed;border-color:#cdb8f7;}
   .lab-qa.busy{opacity:.55;pointer-events:none;}
   /* After a tap: button locks, shows a spinner + "please wait" so patients
      know it worked and can't submit twice. */
@@ -9036,11 +9038,52 @@ function labQuickActionsHtml(lc){
     ${b("received","check","Received", lc.status==="Received" || lc.status==="Ready")}
     ${b("correction","refresh","Sent Back for Correction", lc.status==="Sent Back for Correction")}
     ${b("delivered","tooth","Delivered to Patient", false)}
+    ${b("jobcard","message","Send Job Card", false)}
+    ${b("remind","bell","Send Reminder", false)}
   </div>`;
+}
+// The lab's WhatsApp number: the one saved on the case, else the lab's own.
+async function labCaseLabAndPhone(lc){
+  const labs = await dbGetAll("labs");
+  const lab = (lc.labId && labs.find(l=>l.id===lc.labId)) || labs.find(l=> normalizeStr(l.name)===normalizeStr(lc.labName||"")) || null;
+  return { lab, phone: lc.labContact || (lab && lab.phone) || "" };
+}
+// "Send Job Card": the new-case details to the lab ("lab_case" template:
+// patient, date promised to patient, shade, work).
+async function sendLabJobCardWhatsApp(lc){
+  const { lab, phone } = await labCaseLabAndPhone(lc);
+  if(!phone){ showToast("No WhatsApp number on file for "+(lc.labName||"this lab")+" — add one in the lab case or Manage Labs"); return; }
+  openWhatsAppComposer({
+    title: "Job Card — "+(lc.labName||(lab&&lab.name)||"Lab"),
+    toName: lc.labName || (lab&&lab.name) || "Lab", toNumber: phone,
+    message: labCaseSummaryText(lc),
+    patientId: lc.patientId, recipientType: "Lab",
+    templateName: "lab_case",
+    templateParams: [lc.patientName||"Patient", labCasePatientPromisedDateText(lc), lc.shade||"Not specified", lc.caseType||"Lab work"],
+    onSent: ()=> logActivity("Sent job card to "+(lc.labName||"lab")+" for "+(lc.patientName||""), {patientId: lc.patientId})
+  });
+}
+// "Send Reminder": asks the lab for an update ("lab_remind" template:
+// patient, work, date sent).
+async function sendLabReminderWhatsApp(lc){
+  const { lab, phone } = await labCaseLabAndPhone(lc);
+  if(!phone){ showToast("No WhatsApp number on file for "+(lc.labName||"this lab")+" — add one in the lab case or Manage Labs"); return; }
+  const patient = (lc.patientId && (await dbGetAll("patients")).find(p=>p.id===lc.patientId)) || { name: lc.patientName||"" };
+  const { message } = await buildLabStatusCheckMessage([lc], patient);
+  openWhatsAppComposer({
+    title: "Lab Reminder — "+(lc.labName||(lab&&lab.name)||"Lab"),
+    toName: lc.labName || (lab&&lab.name) || "Lab", toNumber: phone,
+    message, patientId: null, recipientType: "Lab",
+    templateName: "lab_remind",
+    templateParams: [patient.name||lc.patientName||"Patient", lc.caseType||"the case", lc.dateSent? new Date(lc.dateSent).toLocaleDateString() : "-"],
+    onSent: ()=> logActivity("Sent reminder to "+(lc.labName||"lab")+" for "+(lc.patientName||""), {patientId: lc.patientId})
+  });
 }
 async function applyLabQuickAction(caseId, action){
   const lc = (await dbGetAll("labCases")).find(x=>x.id===caseId);
   if(!lc){ showToast("Lab case not found"); return false; }
+  if(action==="jobcard"){ await sendLabJobCardWhatsApp(lc); return false; }
+  if(action==="remind"){ await sendLabReminderWhatsApp(lc); return false; }
   const now = nowIso();
   if(action==="received"){
     lc.status = "Received"; lc.readyToDeliver = true; lc.archivedFromReadyTab = false; lc.receivedDate = now;
