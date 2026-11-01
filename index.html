@@ -502,6 +502,28 @@
   .quick-icon-row{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin:12px 0 4px;}
   .qbtn{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:7px 3px;border-radius:9px;background:var(--white);border:1px solid var(--grey-light);font-size:9px;font-weight:600;color:var(--charcoal-2);cursor:pointer;text-align:center;line-height:1.15;min-height:52px;}
 
+  /* ---------- Success tick (showSuccessTick) */
+  #htdSuccessTick{ position:fixed; inset:0; z-index:100000; display:flex; align-items:center; justify-content:center; pointer-events:none; }
+  #htdSuccessTick .st-card{ background:var(--white,#fff); border-radius:22px; padding:22px 26px 18px; min-width:190px; max-width:80vw; text-align:center;
+    box-shadow:0 18px 50px rgba(0,0,0,.28); animation:htdStPop .42s cubic-bezier(.34,1.56,.64,1) both; }
+  #htdSuccessTick.st-out .st-card{ animation:htdStOut .35s ease both; }
+  #htdSuccessTick .st-svg{ width:74px; height:74px; display:block; margin:0 auto 10px; }
+  #htdSuccessTick .st-circle{ fill:none; stroke:var(--green,#0E6F5C); stroke-width:3; stroke-dasharray:146; stroke-dashoffset:146; stroke-linecap:round;
+    transform-origin:50% 50%; transform:rotate(-90deg); animation:htdStStroke .55s cubic-bezier(.65,0,.45,1) .08s forwards, htdStFill .35s ease .55s forwards; }
+  #htdSuccessTick .st-check{ fill:none; stroke:var(--green,#0E6F5C); stroke-width:4; stroke-linecap:round; stroke-linejoin:round; stroke-dasharray:36; stroke-dashoffset:36;
+    animation:htdStStroke .35s cubic-bezier(.65,0,.45,1) .55s forwards, htdStCheckWhite .2s ease .62s forwards; }
+  #htdSuccessTick .st-title{ font-weight:800; font-size:15.5px; color:var(--charcoal,#14171A); }
+  #htdSuccessTick .st-sub{ font-size:12.5px; color:var(--grey,#5b6470); margin-top:3px; }
+  #htdSuccessTick .st-sub:empty{ display:none; }
+  @keyframes htdStPop{ 0%{opacity:0; transform:scale(.6);} 100%{opacity:1; transform:scale(1);} }
+  @keyframes htdStOut{ to{opacity:0; transform:scale(.9) translateY(8px);} }
+  @keyframes htdStStroke{ to{ stroke-dashoffset:0; } }
+  @keyframes htdStFill{ to{ fill:var(--green,#0E6F5C); } }
+  @keyframes htdStCheckWhite{ to{ stroke:#fff; } }
+  @media (prefers-reduced-motion: reduce){
+    #htdSuccessTick .st-card, #htdSuccessTick .st-circle, #htdSuccessTick .st-check{ animation-duration:.01s !important; animation-delay:0s !important; }
+  }
+
   /* ---------- Patient profile shortcuts (scoped to .profile-shortcuts so
      the many OTHER .qbtn rows in the app are untouched). Each tile has
      its own colour (--c1 / --c2), pops in with a staggered spring, lifts
@@ -511,7 +533,10 @@
   .profile-shortcuts{
     display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin:16px 0 8px;
   }
-  @media (min-width:560px){ .profile-shortcuts{ grid-template-columns:repeat(6,1fr); } }
+  /* 16 shortcuts: 4 x 4 on phones and tablets, 8 x 2 on wide screens, so
+     every row is full and the grid stays symmetrical. */
+  @media (min-width:860px){ .profile-shortcuts{ grid-template-columns:repeat(8,1fr); } }
+  .profile-shortcuts .qbtn{ height:100%; }
   .profile-shortcuts .qbtn{
     --c1:var(--green); --c2:var(--green-light);
     position:relative; overflow:hidden; isolation:isolate;
@@ -2543,7 +2568,37 @@ function logActivity(text, extra){
   }, extra||{})).catch(()=>{});
 }
 
+// ---- Success tick ----
+// A green tick that draws itself in a pop-up card, to confirm a record was
+// saved (examination, treatment, prescription, invoice, receipt, lab case,
+// delivery...). It never blocks the screen: taps go straight through.
+function showSuccessTick(title, sub){
+  try{
+    let el = document.getElementById("htdSuccessTick");
+    if(el) el.remove();
+    el = document.createElement("div");
+    el.id = "htdSuccessTick";
+    el.setAttribute("role","status"); el.setAttribute("aria-live","polite");
+    el.innerHTML = `<div class="st-card">
+      <svg class="st-svg" viewBox="0 0 52 52" aria-hidden="true"><circle class="st-circle" cx="26" cy="26" r="23"/><path class="st-check" d="M15 27.5l7.2 7.2L37.5 19"/></svg>
+      <div class="st-title"></div><div class="st-sub"></div></div>`;
+    el.querySelector(".st-title").textContent = title || "Saved";
+    el.querySelector(".st-sub").textContent = sub || "";
+    document.body.appendChild(el);
+    if(navigator.vibrate) try{ navigator.vibrate(18); }catch(e){}
+    clearTimeout(showSuccessTick._t);
+    showSuccessTick._t = setTimeout(()=>{ el.classList.add("st-out"); setTimeout(()=> el.remove(), 380); }, 1500);
+  }catch(e){}
+}
+// Record-entry confirmations get the tick instead of the plain toast.
+const SUCCESS_TICK_RE = /^(examination saved|treatment plan saved|treatment saved|treatment updated|treatment added|\d+ treatments added|treatment added, invoice|prescription saved|invoice saved|payment recorded|payment updated|refund recorded|bill saved|bill updated|quick bill generated|lab case saved|appointment saved|patient saved|implant case saved|aligner case saved|braces case saved|case saved|consent signed and saved|acknowledgment signed and saved|x-ray saved|sitting added|sitting updated|visit entry updated|follow-up entry updated|marked delivered|marked received|coupon \S+ created|emi plan created|addendum added)/i;
 function showToast(msg){
+  if(SUCCESS_TICK_RE.test(String(msg||""))){
+    const m = String(msg);
+    const cut = m.search(/\s[—-]\s|,\s/);
+    showSuccessTick(cut>0 ? m.slice(0,cut) : m, cut>0 ? m.slice(cut).replace(/^[\s—,-]+/,"") : "");
+    return;
+  }
   const t = document.getElementById("toast");
   t.textContent = msg;
   t.classList.add("show");
@@ -4953,20 +5008,22 @@ async function renderPatientProfileSheet(id){
         ${tabs.map(t=>`<div class="tab-btn ${patientProfileTab===t?'active':''}" data-tab="${t}">${t}</div>`).join("")}
       </div>
       <div class="quick-icon-row profile-shortcuts" id="profileShortcuts">
-        <button class="qbtn sc-edit" id="qEdit" style="animation-delay:0ms"><span class="qi-ico">${icon('edit',20)}</span><span class="qi-lbl">Edit</span></button>
-        <button class="qbtn sc-clinical" id="qClinical" style="animation-delay:40ms"><span class="qi-ico">${icon('tooth',20)}</span><span class="qi-lbl">Clinical</span></button>
-        <button class="qbtn sc-ai" id="qAiSummary" style="animation-delay:60ms"><span class="qi-ico">${icon('sparkle',20)}</span><span class="qi-lbl">AI Summary</span></button>
-        <button class="qbtn sc-appt" id="qAppt" style="animation-delay:80ms"><span class="qi-ico">${icon('calendar',20)}</span><span class="qi-lbl">New Appt</span></button>
-        <button class="qbtn sc-call" id="qCall" style="animation-delay:120ms"><span class="qi-ico">${icon('phone',20)}</span><span class="qi-lbl">Call</span></button>
-        <button class="qbtn sc-wa" id="qWhatsapp" style="animation-delay:160ms"><span class="qi-ico">${icon('message',20)}</span><span class="qi-lbl">WhatsApp</span></button>
-        <button class="qbtn sc-wa" id="qReview" style="animation-delay:180ms"><span class="qi-ico">${icon('star',20)}</span><span class="qi-lbl">Review Link</span></button>
-        <button class="qbtn sc-email" id="qEmail" style="animation-delay:200ms"><span class="qi-ico">${icon('mail',20)}</span><span class="qi-lbl">Send Email</span></button>
-        <button class="qbtn sc-instr" id="qInstructions" style="animation-delay:240ms"><span class="qi-ico">${icon('assist',20)}</span><span class="qi-lbl">Send Instructions</span></button>
-        <button class="qbtn sc-print" id="qPrint" style="animation-delay:280ms"><span class="qi-ico">${icon('print',20)}</span><span class="qi-lbl">Print</span></button>
-        <button class="qbtn sc-notes" id="qNotes" style="animation-delay:320ms"><span class="qi-ico">${icon('note',20)}</span><span class="qi-lbl">Notes</span></button>
-        <button class="qbtn sc-consent" id="qConsent" style="animation-delay:360ms"><span class="qi-ico">${icon('file',20)}</span><span class="qi-lbl">Consent Forms</span></button>
-        <button class="qbtn sc-pay" id="qPaymentDue" style="animation-delay:400ms"><span class="qi-ico">${icon('wallet',20)}</span><span class="qi-lbl">Payment to be Made</span></button>
-        <button class="qbtn danger sc-archive" id="qArchive" style="animation-delay:440ms"><span class="qi-ico">${icon('trash',20)}</span><span class="qi-lbl">${p.status==="Archived"?"Restore":"Archive"}</span></button>
+        <button style="animation-delay:0ms" class="qbtn sc-edit" id="qEdit"><span class="qi-ico">${icon('edit',20)}</span><span class="qi-lbl">Edit</span></button>
+        <button style="animation-delay:30ms" class="qbtn sc-clinical" id="qClinical"><span class="qi-ico">${icon('tooth',20)}</span><span class="qi-lbl">Clinical</span></button>
+        <button style="animation-delay:60ms" class="qbtn sc-appt" id="qAppt"><span class="qi-ico">${icon('calendar',20)}</span><span class="qi-lbl">New Appt</span></button>
+        <button style="animation-delay:90ms" class="qbtn sc-ai" id="qAiSummary"><span class="qi-ico">${icon('sparkle',20)}</span><span class="qi-lbl">AI Summary</span></button>
+        <button style="animation-delay:120ms" class="qbtn sc-call" id="qCall"><span class="qi-ico">${icon('phone',20)}</span><span class="qi-lbl">Call</span></button>
+        <button style="animation-delay:150ms" class="qbtn sc-wa" id="qWhatsapp"><span class="qi-ico">${icon('message',20)}</span><span class="qi-lbl">WhatsApp</span></button>
+        <button style="animation-delay:180ms" class="qbtn sc-email" id="qEmail"><span class="qi-ico">${icon('mail',20)}</span><span class="qi-lbl">Send Email</span></button>
+        <button style="animation-delay:210ms" class="qbtn sc-wa" id="qReview"><span class="qi-ico">${icon('star',20)}</span><span class="qi-lbl">Review Link</span></button>
+        <button style="animation-delay:240ms" class="qbtn sc-instr" id="qInstructions"><span class="qi-ico">${icon('assist',20)}</span><span class="qi-lbl">Send Instructions</span></button>
+        <button style="animation-delay:270ms" class="qbtn sc-consent" id="qConsent"><span class="qi-ico">${icon('file',20)}</span><span class="qi-lbl">Consent Forms</span></button>
+        <button style="animation-delay:300ms" class="qbtn sc-print" id="qPrint"><span class="qi-ico">${icon('print',20)}</span><span class="qi-lbl">Print</span></button>
+        <button style="animation-delay:330ms" class="qbtn sc-notes" id="qNotes"><span class="qi-ico">${icon('note',20)}</span><span class="qi-lbl">Notes</span></button>
+        <button style="animation-delay:360ms" class="qbtn sc-lab" id="qLabCase"><span class="qi-ico">${icon('flask',20)}</span><span class="qi-lbl">New Lab Case</span></button>
+        <button style="animation-delay:390ms" class="qbtn sc-consent" id="qCoupon"><span class="qi-ico">${icon('ticket',20)}</span><span class="qi-lbl">Coupon</span></button>
+        <button style="animation-delay:420ms" class="qbtn sc-pay" id="qPaymentDue"><span class="qi-ico">${icon('wallet',20)}</span><span class="qi-lbl">Payment to be Made</span></button>
+        <button style="animation-delay:450ms" class="qbtn danger sc-archive" id="qArchive"><span class="qi-ico">${icon('trash',20)}</span><span class="qi-lbl">${p.status==="Archived"?"Restore":"Archive"}</span></button>
       </div>
       <div id="profileTabBody"></div>
     </div>
@@ -4996,6 +5053,8 @@ async function renderPatientProfileSheet(id){
   document.getElementById("qPrint").onclick = ()=> openPrintCenterSheet(p);
   document.getElementById("qNotes").onclick = ()=> openPatientNotesSheet(p);
   document.getElementById("qConsent").onclick = ()=> openConsentFormsListSheet(p);
+  document.getElementById("qCoupon").onclick = ()=> openCouponSheet(p);
+  document.getElementById("qLabCase").onclick = ()=> openLabCaseForm(null, p);
   document.getElementById("qEmail").onclick = ()=> openPatientEmailSheet(p);
   document.getElementById("qInstructions").onclick = ()=> openSendInstructionsSheet(p);
   document.getElementById("qPaymentDue").onclick = ()=> openPaymentDueListSheet(p);
@@ -5519,7 +5578,9 @@ function wireApptMouseDragReschedule(root){
 // reasons noted above. Completely independent of the mouse function
 // above; nothing here runs on non-touch devices. ----------
 function wireApptTouchReschedule(root){
-  let dragging = false, ghost = null, apptId = null, startX = 0, startY = 0, origBlock = null;
+  // Long press: hold still and lift = edit the appointment; hold and move
+  // = drag it to a new time.
+  let dragging = false, ghost = null, apptId = null, startX = 0, startY = 0, origBlock = null, movedWhileDragging = false;
   let longPressTimer = null, longPressArmed = false, cancelledAsScroll = false, lockedScrollEl = null;
 
   function startGhost(){
@@ -5551,6 +5612,7 @@ function wireApptTouchReschedule(root){
       return; // never preventDefault here - a scroll-in-progress stays a scroll
     }
     ev.preventDefault();
+    if(Math.abs(t.clientX-startX)>CAL_TAP_MOVE_TOLERANCE*2 || Math.abs(t.clientY-startY)>CAL_TAP_MOVE_TOLERANCE*2) movedWhileDragging = true;
     ghost.style.left = (t.clientX - 24)+"px";
     ghost.style.top = (t.clientY - 12)+"px";
     root.querySelectorAll(".cal-slot-row").forEach(row=>{
@@ -5580,8 +5642,15 @@ function wireApptTouchReschedule(root){
     }
     if(lockedScrollEl){ lockedScrollEl.style.touchAction = ""; lockedScrollEl = null; }
     const draggedApptId = apptId, tappedEl = origBlock;
-    dragging = false; apptId = null; origBlock = null; longPressArmed = false;
+    const heldStill = wasDragging && !movedWhileDragging;
+    dragging = false; apptId = null; origBlock = null; longPressArmed = false; movedWhileDragging = false;
 
+    if(heldStill && tappedEl){
+      // Long press without moving: open the appointment to edit.
+      if(tappedEl.dataset.status==="Reserved") openReserveSlotForm(draggedApptId);
+      else openAppointmentForm(draggedApptId);
+      return;
+    }
     if(wasDragging){
       if(targetRow){
         const newDate = targetRow.dataset.date;
@@ -5623,10 +5692,23 @@ function wireApptTouchReschedule(root){
   }
 
   root.querySelectorAll(".cal-appt-block[data-appt]").forEach(el=>{
-    if(el.dataset.status==="Cancelled" || el.dataset.status==="Completed") return;
+    if(el.dataset.status==="Cancelled" || el.dataset.status==="Completed"){
+      // Can't be moved, but a long press still opens them for editing.
+      let t0 = null, sx = 0, sy = 0;
+      el.addEventListener("touchstart", (ev)=>{
+        const t = ev.touches[0]; if(!t) return;
+        sx = t.clientX; sy = t.clientY;
+        t0 = setTimeout(()=>{ t0 = null; if(navigator.vibrate) navigator.vibrate(12); el.dataset.lpFired = "1"; openAppointmentForm(el.dataset.appt); }, CAL_LONGPRESS_MS+180);
+      }, {passive:true});
+      el.addEventListener("touchmove", (ev)=>{ const t = ev.touches[0]; if(t0 && t && (Math.abs(t.clientX-sx)>CAL_TAP_MOVE_TOLERANCE || Math.abs(t.clientY-sy)>CAL_TAP_MOVE_TOLERANCE)){ clearTimeout(t0); t0 = null; } }, {passive:true});
+      el.addEventListener("touchend", (ev)=>{ if(t0){ clearTimeout(t0); t0 = null; } if(el.dataset.lpFired==="1"){ el.dataset.lpFired = ""; ev.preventDefault(); } });
+      el.addEventListener("touchcancel", ()=>{ if(t0){ clearTimeout(t0); t0 = null; } });
+      return;
+    }
     el.addEventListener("touchstart", (ev)=>{
       const t = ev.touches[0]; if(!t) return;
       dragging = false;
+      movedWhileDragging = false;
       cancelledAsScroll = false;
       apptId = el.dataset.appt;
       origBlock = el;
@@ -7269,6 +7351,19 @@ const ASSIST_QUICK_CHIPS = [
   {cat:"Send Estimate", ico:"receipt"},
 ];
 const LAB_CASE_TYPES = ["Zirconia","PFM","DMLS","e.max","Veneer","Implant Crown","Implant Bridge","Denture","Other"];
+// Case Type / Work Done list for lab cases: editable in Settings → Manage
+// Labs (saved in settings.labCaseTypes); the built-in list until then.
+async function getLabCaseTypes(){
+  const st = (await dbGetAll("settings"))[0] || {};
+  const list = Array.isArray(st.labCaseTypes) ? st.labCaseTypes.filter(Boolean) : [];
+  return list.length ? list : LAB_CASE_TYPES.slice();
+}
+async function saveLabCaseTypes(list){
+  const all = await dbGetAll("settings");
+  const st = all[0] || { id: "settings" };
+  st.labCaseTypes = list; st.updatedAt = nowIso();
+  await dbPut("settings", st);
+}
 const LAB_CASE_STATUSES = ["Sent to Lab","In Progress","Received","Trial Pending","Ready","Sent Back for Correction","Delivered to Patient","Remake","Delayed"];
 const VITA_SHADES = ["A1","A2","A3","A3.5","A4","B1","B2","B3","B4","C1","C2","C3","C4","D2","D3","D4"];
 
@@ -8744,6 +8839,7 @@ async function openManageLabsSheet(){
   const all = (await dbGetAll("labs")).sort((a,b)=> (a.name||"").localeCompare(b.name||""));
   const labs = all.filter(l=>!isAlignerLab(l));
   const aLabs = all.filter(isAlignerLab);
+  const caseTypes = await getLabCaseTypes();
   const rowsHtml = (list)=> `<div class="list-card">${list.map(l=>`
       <div class="clinic-row">
         <div><div class="name">${escapeHtml(l.name)}</div><div class="addr">${escapeHtml(l.phone||"")}</div></div>
@@ -8758,12 +8854,39 @@ async function openManageLabsSheet(){
     <p style="margin-bottom:10px;">Preset your labs here — they'll show up as quick options when creating a lab case, and enable automatic WhatsApp updates to the right number.</p>
     <button class="btn btn-primary btn-block" id="btnAddLab" style="margin-bottom:14px;">+ Add Lab</button>
     ${labs.length? rowsHtml(labs) : `<div class="empty-card">No labs added yet</div>`}
+    <div class="section-title" style="margin-top:18px;">Case Types / Work Done</div>
+    <p style="margin-top:-6px;margin-bottom:10px;">These appear in the "Case Type / Work Done" list of the New Lab Case form.</p>
+    <div id="labTypeChips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;">${caseTypes.map((t,i)=>`
+      <span class="filter-chip active" style="display:inline-flex;align-items:center;gap:6px;cursor:default;">${escapeHtml(t)}<button type="button" data-deltype="${i}" title="Remove" aria-label="Remove ${escapeAttr(t)}" style="border:0;background:none;color:inherit;cursor:pointer;padding:0;line-height:1;display:inline-flex;">${icon('close',13)}</button></span>`).join("")}
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:6px;">
+      <input id="labTypeNew" placeholder="e.g. Zirconia Bridge, Night Guard, Flipper" style="flex:1;">
+      <button type="button" class="btn btn-outline btn-sm" id="btnAddLabType">+ Add</button>
+    </div>
     <div class="section-title" style="margin-top:18px;">Aligner Labs</div>
     <p style="margin-top:-6px;margin-bottom:10px;">Aligner companies your aligner cases go to (e.g. Invisalign, Spark, Illusion). Pick one when adding an aligner case.</p>
     <button class="btn btn-outline btn-block" id="btnAddAlignerLab" style="margin-bottom:14px;">+ Add Aligner Lab</button>
     ${aLabs.length? rowsHtml(aLabs) : `<div class="empty-card">No aligner labs added yet</div>`}
   `);
   document.getElementById("btnAddLab").onclick = ()=> openLabContactForm(null);
+  const addType = async ()=>{
+    const v = document.getElementById("labTypeNew").value.trim();
+    if(!v) return;
+    if(caseTypes.some(t=> normalizeStr(t)===normalizeStr(v))){ showToast("\""+v+"\" is already in the list"); return; }
+    await saveLabCaseTypes(caseTypes.concat([v]));
+    showToast("Added \""+v+"\"");
+    openManageLabsSheet();
+  };
+  document.getElementById("btnAddLabType").onclick = addType;
+  document.getElementById("labTypeNew").addEventListener("keydown", (e)=>{ if(e.key==="Enter"){ e.preventDefault(); addType(); } });
+  document.querySelectorAll("[data-deltype]").forEach(b=> b.onclick = async ()=>{
+    const t = caseTypes[parseInt(b.dataset.deltype)];
+    if(caseTypes.length<=1){ showToast("Keep at least one case type"); return; }
+    if(!confirm("Remove \""+t+"\" from the case type list? Existing lab cases keep it.")) return;
+    await saveLabCaseTypes(caseTypes.filter((x,i)=> i!==parseInt(b.dataset.deltype)));
+    showToast("Removed");
+    openManageLabsSheet();
+  });
   document.getElementById("btnAddAlignerLab").onclick = ()=> openLabContactForm(null, "aligner");
   document.querySelectorAll("[data-editlab]").forEach(b=> b.onclick=()=> openLabContactForm(b.dataset.editlab));
   document.querySelectorAll("[data-dellab]").forEach(b=> b.onclick= async ()=>{
@@ -9158,11 +9281,19 @@ async function renderProsthesisReadyTab(body, outerBody){
       if(!lc) return;
       if(action==="delivered"){
         lc.status = "Delivered to Patient";
-        lc.deliveryDate = nowIso();
+        lc.deliveryDate = toDateKey(new Date());
         lc.readyToDeliver = false;
+        lc.updatedAt = nowIso();
         await dbPut("labCases", lc);
-        await syncDeliveryToClinicalCase(lc);
-        showToast("Marked delivered");
+        try{ await syncDeliveryToClinicalCase(lc); }catch(e){ console.warn(e); }
+        try{ await syncLabCaseToCrownCase(lc); }catch(e){ console.warn(e); }
+        try{ await syncLabWarrantyToCrownCase(lc); }catch(e){ console.warn(e); }
+        try{
+          const rems = (await dbGetAll("reminders")).filter(r=> r.caseId===lc.id && r.type==="Lab Case" && r.status==="Pending");
+          for(const r of rems){ r.status = "Completed"; await dbPut("reminders", r); }
+        }catch(e){}
+        logActivity("Lab case delivered to patient: "+(lc.patientName||""), {patientId: lc.patientId});
+        showSuccessTick("Delivered", (lc.patientName||"")+(lc.caseType? " · "+lc.caseType : ""));
       }else if(action==="archive"){
         lc.readyToDeliver = false;
         lc.archivedFromReadyTab = true;
@@ -9660,6 +9791,9 @@ async function openLabCaseForm(id, prefillPatient){
     };
   }
   const isEdit = !!id;
+  const caseTypeOpts = await getLabCaseTypes();
+  if(!isEdit && !caseTypeOpts.includes(lc.caseType)) lc.caseType = caseTypeOpts[0];
+  if(lc.caseType && !caseTypeOpts.includes(lc.caseType)) caseTypeOpts.push(lc.caseType);
   const labWarrantyAttachments = lc.warrantyAttachments ? JSON.parse(JSON.stringify(lc.warrantyAttachments)) : [];
   openSheet(`
     <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
@@ -9679,7 +9813,7 @@ async function openLabCaseForm(id, prefillPatient){
       </div>
     </div>
     <div class="field"><label>Case Type / Work Done</label>
-      <select id="lfCaseType">${LAB_CASE_TYPES.map(t=>`<option value="${t}" ${lc.caseType===t?'selected':''}>${t}</option>`).join("")}</select>
+      <select id="lfCaseType">${caseTypeOpts.map(t=>`<option value="${escapeAttr(t)}" ${lc.caseType===t?'selected':''}>${escapeHtml(t)}</option>`).join("")}</select>
     </div>
     <div class="field"><label>Lab</label>
       <select id="lfLab">
@@ -9743,7 +9877,7 @@ async function openLabCaseForm(id, prefillPatient){
     const item = lab? (lab.workItems||[]).find(w=>w.id===e.target.value) : null;
     if(item){
       document.getElementById("lfLabCharges").value = item.price;
-      const matchType = LAB_CASE_TYPES.find(t=> item.name.toLowerCase().includes(t.toLowerCase()));
+      const matchType = caseTypeOpts.find(t=> item.name.toLowerCase().includes(t.toLowerCase()));
       if(matchType) document.getElementById("lfCaseType").value = matchType;
       const notesEl = document.getElementById("lfNotes");
       if(notesEl && !notesEl.value.includes(item.name)) notesEl.value = (notesEl.value? notesEl.value+" · ":"") + "Work: "+item.name;
@@ -9816,7 +9950,7 @@ async function openLabCaseForm(id, prefillPatient){
       updated,
       {id: selectedPatientId, name: patientName},
       "Lab Case",
-      updated.patientPromisedDate ? new Date(updated.patientPromisedDate).toISOString() : null,
+      updated.patientPromisedDate ? labPromisedAt(updated.patientPromisedDate).toISOString() : null,
       1
     );
     await dbPut("labCases", updated);
@@ -13882,6 +14016,30 @@ async function createLoggedNotification(notif){
 // Checks Inventory and Pharmacy stock levels and fires a bell notification for
 // anything below its low-stock threshold — at most once per item per day, so it
 // doesn't spam while something stays low, but re-notifies daily if still unresolved.
+// Patient promised date of a lab case = that day at 10 AM (clinic opening),
+// so the reminder is due exactly 24 hours earlier, at 10 AM the day before.
+function labPromisedAt(dateKey){ const d = fromDateKey(String(dateKey).slice(0,10)); d.setHours(10,0,0,0); return d; }
+// Bell notification 24 hours before a lab case's patient promised date, if
+// the work isn't back from the lab yet — once per case per promised date.
+async function checkLabCaseDueNotifications(){
+  const now = Date.now();
+  const cases = (await dbGetAll("labCases")).filter(lc=> lc.patientPromisedDate && !["Received","Ready","Delivered to Patient"].includes(lc.status));
+  let firedAny = false;
+  for(const lc of cases){
+    const at = labPromisedAt(lc.patientPromisedDate).getTime();
+    if(isNaN(at) || now < at - 24*3600*1000 || now > at + 12*3600*1000) continue;
+    const key = String(lc.patientPromisedDate).slice(0,10);
+    if(await wasNotificationLogged("lab_due", lc.id, key)) continue;
+    await createLoggedNotification({
+      id: uid("notif"), type:"lab_due", relatedId: lc.id, monthKey: key,
+      title: "Lab case due "+(toDateKey(new Date())===key? "today" : "tomorrow")+": "+(lc.patientName||"Patient"),
+      message: (lc.caseType||"Lab work")+(lc.tooth? " (tooth "+lc.tooth+")" : "")+" from "+(lc.labName||"the lab")+" was promised to "+(lc.patientName||"the patient")+" for "+new Date(key+"T00:00:00").toLocaleDateString()+" and isn't marked received yet ("+(lc.status||"In Progress")+"). Check with the lab.",
+      read:false, createdAt: nowIso()
+    });
+    firedAny = true;
+  }
+  if(firedAny) refreshNotificationBell();
+}
 async function checkLowStockNotifications(){
   const dayKey = toDateKey(new Date());
   let firedAny = false;
@@ -18461,6 +18619,7 @@ function toothDisplayHtml(value, dataAttr){
   return `<div class="kiosk-select-display" ${dataAttr} style="margin-bottom:8px;">${value? escapeHtml(value) : "Tap Add Tooth to select"}</div>`;
 }
 
+let planCouponDraft = null;   // coupon applied in the plan form, marked used on save
 async function openTreatmentPlanForm(planId, patient){
   const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived);
   let plan;
@@ -18476,6 +18635,7 @@ async function openTreatmentPlanForm(planId, patient){
     };
   }
   planItemsDraft = (plan.items||[]).map(it=>Object.assign({}, it));
+  planCouponDraft = null;
   const doctors = await dbGetAll("users");
   renderPlanFormSheet(plan, clinics, !!planId, patient, doctors);
 }
@@ -18509,6 +18669,7 @@ function renderPlanFormSheet(plan, clinics, isEdit, patient, doctors){
         </select>
       </div>
     </div>
+    ${couponApplyRowHtml("tp")}
     <div class="plan-totals" id="planTotalsBox">
       <div class="row"><span>Gross Total</span><span>${totals.grossStr}</span></div>
       <div class="row"><span>Item Discounts</span><span>${totals.itemDiscountStr}</span></div>
@@ -18526,6 +18687,28 @@ function renderPlanFormSheet(plan, clinics, isEdit, patient, doctors){
   renderPlanItems();
   document.getElementById("tpOverallDiscount").addEventListener("input", updateTotalsDisplay);
   document.getElementById("tpOverallDiscountType").addEventListener("change", updateTotalsDisplay);
+  if(plan.couponCode) setCouponMsg("tp", true, "Coupon "+plan.couponCode+" was applied to this plan.");
+  document.getElementById("tpCouponApply").onclick = async ()=>{
+    const r = await findCouponForPatient(document.getElementById("tpCouponCode").value, patient);
+    if(r.error){ setCouponMsg("tp", false, r.error); return; }
+    const c = r.coupon;
+    let where;
+    if(couponIsAll(c)){
+      document.getElementById("tpOverallDiscount").value = c.discountValue;
+      document.getElementById("tpOverallDiscountType").value = c.discountType;
+      where = "the whole plan (Overall Discount)";
+    }else{
+      const idxs = planItemsDraft.map((it,i)=> couponMatchesTreatment(c, it.treatment) ? i : -1).filter(i=>i>=0);
+      if(!idxs.length){ setCouponMsg("tp", false, "This coupon is for "+couponTreatmentsText(c)+" — add that treatment to the plan first"); return; }
+      const use = c.discountType==="percent" ? idxs : [idxs[0]];
+      use.forEach(i=>{ planItemsDraft[i].discount = Number(c.discountValue)||0; planItemsDraft[i].discountType = c.discountType; planItemsDraft[i].couponCode = c.code; });
+      renderPlanItems();
+      where = use.map(i=> planItemsDraft[i].treatment).join(", ");
+    }
+    planCouponDraft = c;
+    updateTotalsDisplay();
+    setCouponMsg("tp", true, "✓ "+c.code+" applied: "+couponDiscountText(c)+" on "+where+". It's marked as used when you save.");
+  };
   document.getElementById("btnAddPlanItem").onclick = ()=>{
     planItemsDraft.push({id:uid("planitem"), tooth:"", diagnosis:"", treatment:"", qty:1, fee:0, discount:0, discountType:"flat", priority:"Normal", status:"Proposed"});
     renderPlanItems();
@@ -18660,7 +18843,10 @@ async function saveTreatmentPlan(plan, patient, goBack){
     overallDiscountType: document.getElementById("tpOverallDiscountType").value,
     updatedAt: nowIso()
   });
+  const appliedCoupon = planCouponDraft;
+  if(appliedCoupon){ updated.couponCode = appliedCoupon.code; updated.couponId = appliedCoupon.id; }
   await dbPut("treatmentPlans", updated);
+  if(appliedCoupon){ await markCouponUsed(appliedCoupon.id, {planId: updated.id, patientId: patient.id}); planCouponDraft = null; }
   for(const it of newlyCompleted){
     await syncToothChartForCompletedTreatment(patient, it.treatment, it.tooth, it.treatmentDate||updated.createdDate);
   }
@@ -19690,16 +19876,22 @@ async function upsertFollowupReminder(caseObj, patient, moduleLabel, followupDat
   const due = new Date(followupDateIso);
   due.setDate(due.getDate() - daysBefore);
   const reminderId = caseObj.followupReminderId || uid("rem");
+  // Re-saving the case without changing the date keeps the reminder's
+  // status (a reminder already marked done doesn't pop up again).
+  const prev = caseObj.followupReminderId ? (await dbGetAll("reminders")).find(r=>r.id===reminderId) : null;
+  const sameDate = prev && prev.followupDate===followupDateIso;
   await dbPut("reminders", {
     id: reminderId,
     patientId: patient.id,
-    title: moduleLabel+" follow-up due for "+patient.name,
+    title: moduleLabel==="Lab Case"
+      ? "Lab case for "+patient.name+" is promised for "+new Date(followupDateIso).toLocaleDateString()+" — check with the lab"
+      : moduleLabel+" follow-up due for "+patient.name,
     type: moduleLabel,
     caseId: caseObj.id,
     followupDate: followupDateIso,
     dueDate: due.toISOString(),
-    status: "Pending",
-    createdAt: nowIso()
+    status: sameDate ? (prev.status||"Pending") : "Pending",
+    createdAt: (prev && prev.createdAt) || nowIso()
   });
   caseObj.followupReminderId = reminderId;
 }
@@ -25089,6 +25281,7 @@ async function openNewTreatmentSheet(patient, tabBody, patientId, prefill, templ
         <div class="field"><label>Discount Type</label><select id="ntOverallDiscountType"><option value="flat" selected>₹ Flat Amount</option><option value="percent">% Percent</option></select></div>
       </div>
     </div>
+    ${couponApplyRowHtml("nt")}
     <div class="nt-total" id="ntTotal" style="display:none;flex-direction:column;align-items:stretch;gap:4px;">
       <div style="display:flex;justify-content:space-between;"><span id="ntTotalLbl"></span><span id="ntSubVal"></span></div>
       <div id="ntOdRow" style="display:none;justify-content:space-between;color:var(--red);"><span>Overall Discount</span><span id="ntOdVal"></span></div>
@@ -25163,6 +25356,31 @@ async function openNewTreatmentSheet(patient, tabBody, patientId, prefill, templ
   document.getElementById("ntOverallDiscountType").addEventListener("change", ()=>refreshBlocks());
   wireBlock(blocksEl.querySelector(".nt-block"));
   refreshBlocks();
+  let ntCoupon = null;
+  document.getElementById("ntCouponApply").onclick = async ()=>{
+    const r = await findCouponForPatient(document.getElementById("ntCouponCode").value, patient);
+    if(r.error){ setCouponMsg("nt", false, r.error); return; }
+    const c = r.coupon;
+    const blocks = [...blocksEl.querySelectorAll(".nt-block:not(.removing)")];
+    const setBlk = (blk)=>{ blk.querySelector(".nt-discount").value = Number(c.discountValue)||0; blk.querySelector(".nt-discount-type").value = c.discountType; blk.dataset.coupon = c.code; };
+    let where;
+    if(couponIsAll(c)){
+      if(blocks.length>1){
+        document.getElementById("ntOverallDiscount").value = c.discountValue;
+        document.getElementById("ntOverallDiscountType").value = c.discountType;
+        where = "all treatments (Overall Discount)";
+      }else{ setBlk(blocks[0]); where = blocks[0].querySelector(".nt-treatment").value.trim() || "this treatment"; }
+    }else{
+      const match = blocks.filter(b=> couponMatchesTreatment(c, b.querySelector(".nt-treatment").value));
+      if(!match.length){ setCouponMsg("nt", false, "This coupon is for "+couponTreatmentsText(c)+" — enter that treatment first"); return; }
+      const use = c.discountType==="percent" ? match : [match[0]];
+      use.forEach(setBlk);
+      where = use.map(b=> b.querySelector(".nt-treatment").value.trim()).join(", ");
+    }
+    ntCoupon = c;
+    refreshBlocks();
+    setCouponMsg("nt", true, "✓ "+c.code+" applied: "+couponDiscountText(c)+" on "+where+". It's marked as used when you save.");
+  };
   document.getElementById("btnNtAddAnother").onclick = ()=>{
     const tmp = document.createElement("div");
     tmp.innerHTML = blockHtml("", "");
@@ -25207,7 +25425,8 @@ async function openNewTreatmentSheet(patient, tabBody, patientId, prefill, templ
         priority: blk.querySelector(".nt-priority").value,
         status: blk.querySelector(".nt-status").value,
         performedBy,
-        notes: blk.querySelector(".nt-notes").value.trim()
+        notes: blk.querySelector(".nt-notes").value.trim(),
+        couponCode: blk.dataset.coupon || (ntCoupon && couponIsAll(ntCoupon) ? ntCoupon.code : undefined)
       }));
       // Overall discount (2+ treatments): shared out across the treatments in
       // proportion to their amounts and added to each one's own discount,
@@ -25235,6 +25454,7 @@ async function openNewTreatmentSheet(patient, tabBody, patientId, prefill, templ
         };
       }
       await dbPut("treatmentPlans", plan);
+      if(ntCoupon){ await markCouponUsed(ntCoupon.id, {planId: plan.id, patientId: patient.id}); ntCoupon = null; }
       logActivity((items.length>1? "Added "+items.length+" treatments" : "Added a treatment")+" for "+patient.name, {patientId: patient.id});
       return {item: items[0], items, plan};
     }finally{ saving = false; }
@@ -26865,6 +27085,296 @@ async function shareFileToChannel(dataUrl, opts, channel){
   }, 400);
 }
 
+// ---- Patient Coupons ----
+const COUPON_LOGO = "data:image/jpeg;base64,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";
+// A personalised discount coupon for one patient: discount (₹ or %), valid
+// till, the treatment(s) it applies to and a unique code. It can be sent as a
+// digital coupon (WhatsApp link / email PDF) and redeemed by typing the code
+// in the discount section of a treatment plan or a new treatment.
+const COUPON_ALL = "All Treatments";
+function couponIsAll(c){ const t = (c.treatments||[]).filter(Boolean); return !t.length || t.some(x=> normalizeStr(x)===normalizeStr(COUPON_ALL)); }
+function couponTreatmentsText(c){ return couponIsAll(c) ? COUPON_ALL : (c.treatments||[]).join(", "); }
+function couponDiscountText(c){
+  return c.discountType==="percent" ? (Number(c.discountValue)||0)+"% OFF" : "₹"+(Number(c.discountValue)||0).toLocaleString("en-IN")+" OFF";
+}
+function couponStatus(c){
+  if(c.status==="Cancelled") return "Cancelled";
+  if(c.status==="Used" && !c.reusable) return "Used";
+  if(c.validTill && c.validTill < toDateKey(new Date())) return "Expired";
+  return "Active";
+}
+function couponMatchesTreatment(c, name){
+  if(couponIsAll(c)) return true;
+  const n = normalizeStr(name);
+  if(!n) return false;
+  return (c.treatments||[]).some(t=>{ const x = normalizeStr(t); return x && (n.includes(x) || x.includes(n)); });
+}
+async function generateCouponCode(patient){
+  const initials = String(patient.name||"").split(/\s+/).filter(Boolean).map(w=>w[0]).join("").toUpperCase().replace(/[^A-Z]/g,"").slice(0,3) || "PT";
+  const chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+  const existing = new Set((await dbGetAll("coupons")).map(c=> String(c.code||"").toUpperCase()));
+  for(let i=0;i<50;i++){
+    let r = ""; for(let k=0;k<4;k++) r += chars[Math.floor(Math.random()*chars.length)];
+    const code = "HTD-"+initials+r;
+    if(!existing.has(code)) return code;
+  }
+  return "HTD-"+Date.now().toString(36).toUpperCase();
+}
+// Checks a typed code for this patient. Returns {coupon} or {error}.
+async function findCouponForPatient(code, patient){
+  code = String(code||"").trim().toUpperCase();
+  if(!code) return {error:"Enter a coupon code"};
+  const c = (await dbGetAll("coupons")).find(x=> String(x.code||"").toUpperCase()===code);
+  if(!c) return {error:"No coupon found with code "+code};
+  if(c.patientId && patient && c.patientId!==patient.id) return {error:"This coupon belongs to "+(c.patientName||"another patient")};
+  const st = couponStatus(c);
+  if(st==="Cancelled") return {error:"This coupon has been cancelled"};
+  if(st==="Used") return {error:"This coupon was already used"+(c.usedAt? " on "+new Date(c.usedAt).toLocaleDateString() : "")};
+  if(st==="Expired") return {error:"This coupon expired on "+new Date(c.validTill+"T00:00:00").toLocaleDateString()};
+  return {coupon:c};
+}
+async function markCouponUsed(couponId, info){
+  try{
+    const c = (await dbGetAll("coupons")).find(x=>x.id===couponId);
+    if(!c) return;
+    c.status = "Used"; c.usedAt = nowIso();
+    c.uses = (c.uses||[]).concat([Object.assign({at: c.usedAt}, info||{})]);
+    c.updatedAt = nowIso();
+    await dbPut("coupons", c);
+    logActivity("Coupon "+c.code+" redeemed for "+(c.patientName||""), {patientId: c.patientId});
+  }catch(e){ console.warn("markCouponUsed:", e); }
+}
+// Small "Coupon code [Apply]" row used in the discount sections.
+function couponApplyRowHtml(prefix){
+  return `<div class="field" style="margin-bottom:10px;"><label>Coupon Code</label>
+    <div style="display:flex;gap:8px;">
+      <input id="${prefix}CouponCode" placeholder="e.g. HTD-AS7K3Q" autocomplete="off" style="flex:1;text-transform:uppercase;">
+      <button type="button" class="btn btn-outline btn-sm" id="${prefix}CouponApply" style="white-space:nowrap;">${icon('ticket',14)} Apply</button>
+    </div>
+    <div id="${prefix}CouponMsg" style="font-size:12px;margin-top:5px;"></div>
+  </div>`;
+}
+function setCouponMsg(prefix, ok, text){
+  const el = document.getElementById(prefix+"CouponMsg");
+  if(el){ el.style.color = ok ? "var(--green)" : "var(--red)"; el.textContent = text; }
+}
+
+// ---- The digital coupon (one self-contained page, also used for the PDF) ----
+async function couponClinicFor(patient){
+  const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived);
+  return clinics.find(c=>c.id===(patient&&patient.preferredClinicId)) || clinics.find(c=>c.isDefault) || clinics[0] || {};
+}
+function buildCouponHtml(c, clinic){
+  const e = escapeHtml;
+  const valid = c.validTill ? new Date(c.validTill+"T00:00:00").toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"}) : "—";
+  const big = c.discountType==="percent" ? `${Number(c.discountValue)||0}<span class="u">%</span>` : `<span class="u">₹</span>${(Number(c.discountValue)||0).toLocaleString("en-IN")}`;
+  const phone = [clinic.phone, "WhatsApp 7827168138"].filter(Boolean).join(" · ");
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Coupon ${e(c.code)} — Healing Touch Dental</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:Arial,Helvetica,sans-serif;background:#eef2f1;color:#14171A;padding:24px 12px;}
+  .cp{max-width:640px;margin:0 auto;background:#fff;border-radius:18px;overflow:hidden;box-shadow:0 8px 28px rgba(0,0,0,.15);}
+  .top{background:#000;padding:22px 20px 18px;text-align:center;}
+  .top img{width:190px;height:auto;display:inline-block;}
+  .tag{display:inline-block;margin-top:12px;color:#6fd3b0;font-size:12px;letter-spacing:3px;font-weight:700;}
+  .mid{padding:26px 22px 8px;text-align:center;}
+  .for{font-size:14px;color:#5b6470;}
+  .name{font-size:22px;font-weight:700;margin:4px 0 16px;}
+  .off{font-size:64px;font-weight:800;color:#0E6F5C;line-height:1;}
+  .off .u{font-size:34px;vertical-align:top;margin:0 2px;}
+  .offl{font-size:18px;font-weight:700;letter-spacing:4px;color:#0E6F5C;margin-top:4px;}
+  .on{font-size:15px;margin-top:14px;}
+  .on b{color:#14171A;}
+  .cut{position:relative;height:30px;margin:18px 0 0;}
+  .cut:before{content:"";position:absolute;left:24px;right:24px;top:14px;border-top:2px dashed #cfd6d4;}
+  .cut .l,.cut .r{position:absolute;top:0;width:30px;height:30px;border-radius:50%;background:#eef2f1;}
+  .cut .l{left:-15px;} .cut .r{right:-15px;}
+  .bot{padding:6px 22px 22px;text-align:center;}
+  .codel{font-size:11px;letter-spacing:2px;color:#5b6470;font-weight:700;}
+  .code{display:inline-block;margin:8px 0 14px;padding:12px 26px;border:2px dashed #0E6F5C;border-radius:12px;background:#f1faf7;font-size:26px;font-weight:800;letter-spacing:3px;color:#0E6F5C;}
+  .meta{display:flex;justify-content:center;gap:28px;flex-wrap:wrap;font-size:13px;margin-bottom:14px;}
+  .meta div span{display:block;font-size:10.5px;letter-spacing:1.5px;color:#5b6470;font-weight:700;margin-bottom:3px;}
+  .terms{font-size:11.5px;color:#5b6470;line-height:1.55;border-top:1px solid #e6eaea;padding-top:12px;}
+  .clinic{background:#000;color:#cfe9e0;text-align:center;font-size:12px;line-height:1.6;padding:12px 16px;}
+  .clinic b{color:#fff;}
+</style></head><body>
+<div class="cp">
+  <div class="top"><img src="${COUPON_LOGO}" alt="Healing Touch Dental"><div class="tag">EXCLUSIVE PATIENT COUPON</div></div>
+  <div class="mid">
+    <div class="for">Specially for</div>
+    <div class="name">${e(c.patientName||"Our Patient")}</div>
+    <div class="off">${big}</div>
+    <div class="offl">OFF</div>
+    <div class="on">on <b>${e(couponTreatmentsText(c))}</b></div>
+  </div>
+  <div class="cut"><span class="l"></span><span class="r"></span></div>
+  <div class="bot">
+    <div class="codel">YOUR COUPON CODE</div>
+    <div class="code">${e(c.code)}</div>
+    <div class="meta"><div><span>VALID TILL</span><b>${e(valid)}</b></div>${c.reusable? `<div><span>USE</span><b>Multiple visits</b></div>` : `<div><span>USE</span><b>One time</b></div>`}</div>
+    <div class="terms">${e(c.terms || "Show this coupon or quote the code at the reception. Valid only for the patient named above, till the date shown. Cannot be exchanged for cash or combined with other offers.")}</div>
+  </div>
+  <div class="clinic"><b>Healing Touch Dental</b>${clinic.address? "<br>"+e(clinic.address) : ""}${phone? "<br>"+e(phone) : ""}</div>
+</div>
+</body></html>`;
+}
+async function openCouponPrint(c, patient){
+  const html = buildCouponHtml(c, await couponClinicFor(patient));
+  const w = window.open("", "_blank");
+  if(!w){ showToast("Please allow pop-ups to print or save the coupon"); return; }
+  w.document.open(); w.document.write(html); w.document.close();
+  setTimeout(()=>{ try{ w.focus(); w.print(); }catch(e){} }, 700);
+}
+async function sendCouponOnWhatsApp(c, patient){
+  const number = patient.whatsappNumber || patient.mobile;
+  if(!number){ showToast("This patient has no mobile number on file"); return; }
+  showToast("Preparing coupon link…");
+  const html = buildCouponHtml(c, await couponClinicFor(patient));
+  const link = await publishDocLink(html, {title: "Coupon "+c.code, patientName: patient.name});
+  if(!link) return;
+  openWhatsAppComposer({
+    title: "Send Coupon "+c.code,
+    toName: patient.name, toNumber: number, patientId: patient.id, recipientType: "Patient",
+    message: `Hi ${patient.name}, here is your exclusive coupon from Healing Touch Dental: ${couponDiscountText(c)} on ${couponTreatmentsText(c)}. Code: ${c.code}, valid till ${new Date(c.validTill+"T00:00:00").toLocaleDateString()}. View it here: ${link}`,
+    templateName: "document_message",
+    templateParams: [patient.name||"Patient", link],
+    onSent: async ()=>{
+      logActivity("Sent coupon "+c.code+" to "+patient.name+" on WhatsApp", {patientId: patient.id});
+      try{ const x = (await dbGetAll("coupons")).find(y=>y.id===c.id); if(x){ x.sentWhatsAppAt = nowIso(); await dbPut("coupons", x); } }catch(e){}
+    }
+  });
+}
+async function sendCouponByEmail(c, patient){
+  if(!patient.email){ showToast("This patient has no email on file — add it in Edit"); return; }
+  const html = buildCouponHtml(c, await couponClinicFor(patient));
+  const base = {
+    title: "Email Coupon "+c.code, toName: patient.name, toEmail: patient.email,
+    subject: "Your exclusive coupon — Healing Touch Dental", patientId: patient.id, recipientType: "Patient"
+  };
+  const msg = `Hi ${patient.name},\n\nWe're happy to share an exclusive coupon with you: ${couponDiscountText(c)} on ${couponTreatmentsText(c)}.\n\nCoupon code: ${c.code}\nValid till: ${new Date(c.validTill+"T00:00:00").toLocaleDateString()}\n\nJust quote the code at the reception on your next visit.`;
+  const sign = "\n\nWarm regards,\nHealing Touch Dental";
+  const api = await emailApiStatus();
+  if(api.configured){
+    showToast("Preparing coupon PDF…");
+    const b64 = await htmlToPdfBase64(html);
+    if(b64){
+      openMailComposer(Object.assign(base, { message: msg+"\n\nYour coupon is attached (PDF)."+sign,
+        attachments: [{filename: ("Coupon "+c.code+" - "+(patient.name||"")).replace(/[^\w\- ]+/g,"").trim()+".pdf", contentType:"application/pdf", contentBase64: b64}] }));
+      return;
+    }
+  }
+  const link = await publishDocLink(html, {title: "Coupon "+c.code, patientName: patient.name});
+  openMailComposer(Object.assign(base, { message: msg + (link? "\n\nView or download your coupon here:\n"+link : "") + sign }));
+}
+
+async function openCouponSheet(patient){
+  const coupons = (await dbGetAll("coupons")).filter(c=>c.patientId===patient.id).sort((a,b)=> String(b.createdAt||"").localeCompare(String(a.createdAt||"")));
+  const presets = await dbGetAll("treatmentPresets");
+  const code = await generateCouponCode(patient);
+  const in30 = toDateKey(new Date(Date.now()+30*86400000));
+  const pill = (st)=> `<span class="status-pill st-${st==="Active"?"Confirmed":st==="Used"?"Completed":"Cancelled"}">${st}</span>`;
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>Coupon — ${escapeHtml(patient.name)}</h2>
+    <div class="field-row">
+      <div class="field"><label>Discount *</label><input id="cpValue" type="number" min="0" step="0.01" placeholder="e.g. 20"></div>
+      <div class="field"><label>Type</label><select id="cpType"><option value="percent">% Percent</option><option value="flat">₹ Flat Amount</option></select></div>
+    </div>
+    <div class="field"><label>Valid Till *</label><input id="cpValid" type="date" value="${in30}" min="${toDateKey(new Date())}"></div>
+    <div class="field"><label>Applicable Treatment</label>
+      <input id="cpTreat" list="cpTreatList" value="${COUPON_ALL}" placeholder="${COUPON_ALL}">
+      <datalist id="cpTreatList"><option value="${COUPON_ALL}">${presets.map(p=>`<option value="${escapeAttr(p.name)}">`).join("")}</datalist>
+      <div style="font-size:11.5px;color:var(--grey);margin-top:4px;">Pick from the list or type. For more than one, separate with commas.</div>
+    </div>
+    <div class="field"><label>Coupon Code</label>
+      <div style="display:flex;gap:8px;"><input id="cpCode" value="${code}" style="flex:1;text-transform:uppercase;font-weight:700;letter-spacing:1px;"><button type="button" class="btn btn-outline btn-sm" id="cpRegen">New Code</button></div>
+    </div>
+    <label class="ai-crs-check" style="margin-bottom:10px;"><input type="checkbox" id="cpReusable"> Can be used on more than one visit (till expiry)</label>
+    <div class="field"><label>Terms (optional)</label><textarea id="cpTerms" rows="2" placeholder="Leave blank for the standard terms"></textarea></div>
+    <button class="btn btn-primary btn-block" id="cpCreate">${icon('ticket',16)} Create Coupon</button>
+    <div class="section-title" style="margin-top:18px;">Coupons for ${escapeHtml(patient.name)}</div>
+    ${coupons.length? `<div class="list-card">${coupons.map(c=>{ const st = couponStatus(c); return `
+      <div class="clinic-row" style="flex-wrap:wrap;gap:8px;">
+        <div style="flex:1;min-width:160px;">
+          <div class="name">${escapeHtml(c.code)} · ${escapeHtml(couponDiscountText(c))}</div>
+          <div class="addr">${escapeHtml(couponTreatmentsText(c))} · till ${new Date(c.validTill+"T00:00:00").toLocaleDateString()}${c.usedAt? " · used "+new Date(c.usedAt).toLocaleDateString() : ""}</div>
+        </div>
+        ${pill(st)}
+        <div style="display:flex;gap:6px;flex-wrap:wrap;width:100%;">
+          <button class="btn btn-outline btn-sm" data-cpview="${c.id}">${icon('ticket',13)} View</button>
+          ${st==="Active"? `<button class="btn btn-outline btn-sm" data-cpwa="${c.id}">${icon('message',13)} WhatsApp</button>
+          <button class="btn btn-outline btn-sm" data-cpmail="${c.id}">${icon('mail',13)} Email</button>
+          <button class="btn btn-outline btn-sm" data-cpcancel="${c.id}" style="color:var(--red);">Cancel</button>` : ""}
+        </div>
+      </div>`; }).join("")}</div>` : `<div class="empty-card"><b>No coupons yet</b>Create one above — it can be sent on WhatsApp or email.</div>`}
+  `);
+  document.getElementById("cpRegen").onclick = async ()=>{ document.getElementById("cpCode").value = await generateCouponCode(patient); };
+  const byId = (id)=> coupons.find(c=>c.id===id);
+  document.querySelectorAll("[data-cpview]").forEach(b=> b.onclick = ()=> openCouponPreviewSheet(byId(b.dataset.cpview), patient));
+  document.querySelectorAll("[data-cpwa]").forEach(b=> b.onclick = ()=> sendCouponOnWhatsApp(byId(b.dataset.cpwa), patient));
+  document.querySelectorAll("[data-cpmail]").forEach(b=> b.onclick = ()=> sendCouponByEmail(byId(b.dataset.cpmail), patient));
+  document.querySelectorAll("[data-cpcancel]").forEach(b=> b.onclick = async ()=>{
+    const c = byId(b.dataset.cpcancel);
+    if(!confirm("Cancel coupon "+c.code+"? It can no longer be used.")) return;
+    c.status = "Cancelled"; c.updatedAt = nowIso();
+    await dbPut("coupons", c);
+    logActivity("Cancelled coupon "+c.code+" for "+patient.name, {patientId: patient.id});
+    showToast("Coupon cancelled");
+    openCouponSheet(patient);
+  });
+  let creating = false;
+  document.getElementById("cpCreate").onclick = async ()=>{
+    if(creating) return;
+    const value = parseFloat(document.getElementById("cpValue").value)||0;
+    const type = document.getElementById("cpType").value;
+    const validTill = document.getElementById("cpValid").value;
+    const codeVal = document.getElementById("cpCode").value.trim().toUpperCase().replace(/\s+/g,"");
+    if(value<=0){ showToast("Enter the discount"); return; }
+    if(type==="percent" && value>100){ showToast("Percent discount can't be more than 100"); return; }
+    if(!validTill){ showToast("Choose the valid-till date"); return; }
+    if(!/^[A-Z0-9-]{4,24}$/.test(codeVal)){ showToast("Coupon code: 4–24 letters, numbers or -"); return; }
+    creating = true;
+    try{
+      const all = await dbGetAll("coupons");
+      if(all.some(c=> String(c.code||"").toUpperCase()===codeVal)){ showToast("That code is already used — tap New Code"); return; }
+      const treatments = document.getElementById("cpTreat").value.split(",").map(s=>s.trim()).filter(Boolean);
+      const c = {
+        id: uid("coupon"), code: codeVal, patientId: patient.id, patientName: patient.name,
+        discountType: type, discountValue: value, validTill,
+        treatments: treatments.length? treatments : [COUPON_ALL],
+        reusable: document.getElementById("cpReusable").checked,
+        terms: document.getElementById("cpTerms").value.trim(),
+        status: "Active", createdAt: nowIso(), createdBy: (typeof fbCurrentUserEmail!=="undefined" && fbCurrentUserEmail) || ""
+      };
+      await dbPut("coupons", c);
+      logActivity("Created coupon "+c.code+" ("+couponDiscountText(c)+") for "+patient.name, {patientId: patient.id});
+      showToast("Coupon "+c.code+" created");
+      openCouponPreviewSheet(c, patient);
+    }finally{ creating = false; }
+  };
+}
+async function openCouponPreviewSheet(c, patient){
+  if(!c) return;
+  const html = buildCouponHtml(c, await couponClinicFor(patient));
+  const st = couponStatus(c);
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>Coupon ${escapeHtml(c.code)}</h2>
+    <iframe id="cpPreview" style="width:100%;height:560px;border:0;border-radius:12px;background:#eef2f1;"></iframe>
+    ${st==="Active"? `
+    <button class="btn btn-primary btn-block" id="cpSendWa" style="margin-top:10px;">${icon('message',16)} Send on WhatsApp</button>
+    <button class="btn btn-outline btn-block" id="cpSendMail" style="margin-top:8px;">${icon('mail',16)} Send by Email</button>` : `<p style="margin-top:10px;color:var(--grey);">This coupon is ${st.toLowerCase()}.</p>`}
+    <button class="btn btn-outline btn-block" id="cpPrint" style="margin-top:8px;">${icon('print',16)} Print / Save PDF</button>
+    <button class="btn btn-outline btn-block" id="cpBack" style="margin-top:8px;">All Coupons</button>
+  `);
+  document.getElementById("cpPreview").srcdoc = html;
+  const wa = document.getElementById("cpSendWa"); if(wa) wa.onclick = ()=> sendCouponOnWhatsApp(c, patient);
+  const ml = document.getElementById("cpSendMail"); if(ml) ml.onclick = ()=> sendCouponByEmail(c, patient);
+  document.getElementById("cpPrint").onclick = ()=> openCouponPrint(c, patient);
+  document.getElementById("cpBack").onclick = ()=> openCouponSheet(patient);
+}
+
 // ---- Consent Forms (patient profile) ----
 function patientAgeStr(patient){
   return patient.dob ? (new Date().getFullYear()-new Date(patient.dob).getFullYear())+" yrs" : "—";
@@ -27136,6 +27646,7 @@ let billingInvoicePage = 1;
 let billingReceiptPage = 1;
 
 async function renderBillingTab(body, patientId, patient){
+  invoiceBillToPreset = false;
   const cur = await finCurrency();
   body.innerHTML = `
     <div class="filter-row" id="billingSubTabs">
@@ -27160,11 +27671,12 @@ async function renderBillingTab(body, patientId, patient){
         <button class="btn btn-primary btn-block" id="btnNewInvoice" style="margin:0;">+ New Invoice</button>
         <button class="icon-btn" id="btnPrintInvoicesMulti" title="Print selected invoices" style="background:var(--off-white);color:var(--charcoal-2);flex-shrink:0;">${icon('print',16)}</button>
       </div>
+      <button class="btn btn-outline btn-block" id="btnNewInvoiceOtherName" style="margin:-4px 0 12px;" title="The bill is made out to someone else; the treatment stays on this patient">${icon('user',15)} New Invoice in Another Name</button>
       ${invoices.length? `<div class="list-card">${shownInvoices.map(inv=>{
         const isPartial = !inv.refunded && inv.balance>0 && (inv.amountPaid||0)>0;
         return `
         <div class="clinic-row" data-invoice="${inv.id}" style="cursor:pointer;">
-          <div><div class="name">${escapeHtml(inv.invoiceNumber||inv.id)}</div><div class="addr">${new Date(inv.date).toLocaleDateString()} · ${finMoney(inv.totalNet||0,cur)}</div></div>
+          <div><div class="name">${escapeHtml(inv.invoiceNumber||inv.id)}</div><div class="addr">${new Date(inv.date).toLocaleDateString()} · ${finMoney(inv.totalNet||0,cur)}${invoiceBillTo(inv)? ' · <b>Billed to '+escapeHtml(inv.billTo.name)+'</b>' : ''}</div></div>
           <div style="display:flex;align-items:center;gap:8px;">
             <div style="text-align:right;">
               <span class="status-pill ${inv.refunded?'st-Cancelled':(inv.balance<=0?'st-Completed':((inv.amountPaid||0)>0?'st-Confirmed':'st-Cancelled'))}">${inv.refunded?'Refunded':(inv.balance<=0?'Paid':((inv.amountPaid||0)>0?'Partially Paid':'Unpaid'))}</span>
@@ -27177,7 +27689,8 @@ async function renderBillingTab(body, patientId, patient){
       ${paginationBarHtml("billingInv", invoices.length, billingInvoicePage)}
       ` : `<div class="empty-card"><b>No invoices yet</b>Create one to bill this patient for treatment.</div>`}
     `;
-    document.getElementById("btnNewInvoice").onclick = ()=>{ returnToPatientProfile = patientId; openNewInvoiceTreatmentPicker(patient); };
+    document.getElementById("btnNewInvoice").onclick = ()=>{ returnToPatientProfile = patientId; invoiceBillToPreset = false; openNewInvoiceTreatmentPicker(patient); };
+    document.getElementById("btnNewInvoiceOtherName").onclick = ()=>{ returnToPatientProfile = patientId; invoiceBillToPreset = true; openNewInvoiceTreatmentPicker(patient); };
     document.getElementById("btnPrintInvoicesMulti").onclick = ()=> openMultiSelectPrintSheet(
       "Print Invoices",
       invoices.map(inv=>({label: (inv.invoiceNumber||"Invoice")+" — "+new Date(inv.date).toLocaleDateString(), sublabel: finMoney(inv.totalNet||0,cur), record: inv})),
@@ -27311,6 +27824,19 @@ async function renderBillingTab(body, patientId, patient){
 }
 
 let invoiceItemsDraft = [];
+// "Bill in another name": the treatment stays on the patient's record, but
+// the invoice / receipts are made out to someone else (inv.billTo).
+let invoiceBillToPreset = false;
+function invoiceBillTo(inv){ return inv && inv.billTo && String(inv.billTo.name||"").trim() ? inv.billTo : null; }
+function billedPatient(patient, inv){
+  const b = invoiceBillTo(inv);
+  if(!b || !patient) return patient;
+  return {
+    id: patient.id, name: String(b.name).trim(), mobile: b.phone||"", whatsappNumber: b.phone||"",
+    age: b.age||"", gender: b.sex||"", preferredClinicId: patient.preferredClinicId,
+    treatingDoctor: patient.treatingDoctor, email: patient.email, billedFor: patient.name
+  };
+}
 
 async function openInvoiceActionMenu(invoiceId, patient, tabBody, patientId, cur){
   const inv = (await dbGetAll("invoices")).find(x=>x.id===invoiceId);
@@ -28361,6 +28887,9 @@ function computeInvoiceTotals(items, taxPercent, cur){
 
 function renderInvoiceFormSheet(inv, clinics, isEdit, patient, cur){
   const totals = computeInvoiceTotals(invoiceItemsDraft, inv.taxPercent, cur);
+  const billTo = inv.billTo || {};
+  const billToOn = !!invoiceBillTo(inv) || (!isEdit && invoiceBillToPreset);
+  invoiceBillToPreset = false;
   const balance = totals.net - (Number(inv.amountPaid)||0);
   const goBack = ()=> renderPatientProfileSheet(patient.id);
   renderFormAsPage(`
@@ -28368,6 +28897,15 @@ function renderInvoiceFormSheet(inv, clinics, isEdit, patient, cur){
     <div class="field-row">
       <div class="field"><label>Clinic</label><select id="invClinic">${clinics.map(c=>`<option value="${c.id}" ${inv.clinicId===c.id?'selected':''}>${escapeHtml(c.name.replace('Healing Touch Dental – ',''))}</option>`).join("")}</select></div>
       <div class="field"><label>Date</label><input id="invDate" type="date" value="${toDateKey(new Date(inv.date))}"></div>
+    </div>
+    <label class="ai-crs-check" style="margin:4px 0 8px;"><input type="checkbox" id="invBillOther" ${billToOn?"checked":""}> Bill in another name <span style="color:var(--grey);font-weight:400;">(treatment stays on ${escapeHtml(patient.name)})</span></label>
+    <div id="invBillToBox" style="display:${billToOn?"block":"none"};background:var(--off-white);border-radius:12px;padding:10px 12px 2px;margin-bottom:12px;">
+      <div class="field"><label>Bill To — Name *</label><input id="invBillName" value="${escapeAttr(billTo.name||"")}" placeholder="Name to print on the bill"></div>
+      <div class="field-row">
+        <div class="field"><label>Phone</label><input id="invBillPhone" inputmode="tel" value="${escapeAttr(billTo.phone||"")}"></div>
+        <div class="field"><label>Age</label><input id="invBillAge" type="number" min="0" max="120" value="${escapeAttr(billTo.age||"")}"></div>
+        <div class="field"><label>Sex</label><select id="invBillSex"><option value="">—</option>${["Male","Female","Other"].map(x=>`<option value="${x}" ${billTo.sex===x?"selected":""}>${x}</option>`).join("")}</select></div>
+      </div>
     </div>
     <div class="section-title" style="margin-top:6px;">Items</div>
     <div id="invItemsWrap"></div>
@@ -28398,6 +28936,12 @@ function renderInvoiceFormSheet(inv, clinics, isEdit, patient, cur){
   `);
   wireFormBack(goBack);
   renderInvItems();
+  document.getElementById("invBillOther").onchange = (e)=>{
+    document.getElementById("invBillToBox").style.display = e.target.checked ? "block" : "none";
+    if(e.target.checked) setTimeout(()=> document.getElementById("invBillName").focus(), 50);
+  };
+  // Printing / sending before saving uses what's typed in the Bill To box.
+  const liveInv = ()=> Object.assign({}, inv, { billTo: readInvoiceBillTo() });
   document.getElementById("btnAddInvItemRow").onclick = ()=>{
     invoiceItemsDraft.push({id:uid("invitem"), description:"", qty:1, unitPrice:0, discount:0, discountType:"flat"});
     renderInvItems();
@@ -28419,11 +28963,11 @@ function renderInvoiceFormSheet(inv, clinics, isEdit, patient, cur){
   document.getElementById("invTax").addEventListener("input", updateTotals);
   document.getElementById("btnSaveInvoice").onclick = ()=> saveInvoice(inv, patient, cur, goBack);
   document.getElementById("btnSaveInvoiceAndPay").onclick = ()=> saveInvoice(inv, patient, cur, (savedInv)=> openRecordPaymentSheet(savedInv, patient, cur));
-  document.getElementById("btnPrintInvoice").onclick = ()=> printInvoice(inv, patient, clinics, cur);
-  document.getElementById("btnWaPdfInvoice").onclick = ()=> sendPdfOnWhatsApp(patient, ()=>printInvoice(inv, patient, clinics, cur), "Invoice");
-  document.getElementById("btnMailPdfInvoice").onclick = ()=> sendPdfByEmail(patient, ()=>printInvoice(inv, patient, clinics, cur), "Invoice");
+  document.getElementById("btnPrintInvoice").onclick = ()=> printInvoice(liveInv(), patient, clinics, cur);
+  document.getElementById("btnWaPdfInvoice").onclick = ()=> sendPdfOnWhatsApp(patient, ()=>printInvoice(liveInv(), patient, clinics, cur), "Invoice");
+  document.getElementById("btnMailPdfInvoice").onclick = ()=> sendPdfByEmail(patient, ()=>printInvoice(liveInv(), patient, clinics, cur), "Invoice");
   const printBillPaymentBtn = document.getElementById("btnPrintBillPayment");
-  if(printBillPaymentBtn) printBillPaymentBtn.onclick = ()=> printBillPayment(inv, patient, clinics, cur);
+  if(printBillPaymentBtn) printBillPaymentBtn.onclick = ()=> printBillPayment(liveInv(), patient, clinics, cur);
   const delBtn = document.getElementById("btnDeleteInvoice");
   if(delBtn) delBtn.onclick = async ()=>{
     if(!confirm("Delete this invoice?")) return;
@@ -28590,8 +29134,17 @@ function openPayInstallmentSheet(inv, installmentId, patient, cur, onSaved){
   };
 }
 
+function readInvoiceBillTo(){
+  const on = document.getElementById("invBillOther");
+  if(!on || !on.checked) return null;
+  const name = document.getElementById("invBillName").value.trim();
+  if(!name) return null;
+  return { name, phone: document.getElementById("invBillPhone").value.trim(), age: document.getElementById("invBillAge").value.trim(), sex: document.getElementById("invBillSex").value };
+}
 async function saveInvoice(inv, patient, cur, goBack){
   if(invoiceItemsDraft.length===0){ showToast("Add at least one item"); return; }
+  const billOn = document.getElementById("invBillOther");
+  if(billOn && billOn.checked && !document.getElementById("invBillName").value.trim()){ showToast("Enter the name the bill should be made out to"); document.getElementById("invBillName").focus(); return; }
   const taxPercent = parseFloat(document.getElementById("invTax").value)||0;
   const totals = computeInvoiceTotals(invoiceItemsDraft, taxPercent, cur);
   const updated = Object.assign({}, inv, {
@@ -28604,6 +29157,7 @@ async function saveInvoice(inv, patient, cur, goBack){
     balance: totals.net-(inv.amountPaid||0),
     notes: document.getElementById("invNotes").value.trim(),
     notesPrint: document.getElementById("invNotesPrint").checked,
+    billTo: readInvoiceBillTo(),
     updatedAt: nowIso()
   });
   await dbPut("invoices", updated);
@@ -28762,6 +29316,7 @@ async function openAddNewPaymentSheet(patient, cur){
 }
 
 async function printInvoice(inv, patient, clinics, cur){
+  patient = billedPatient(patient, inv);
   const items = invoiceItemsDraft.length? invoiceItemsDraft : (inv.items||[]);
   const taxPercent = document.getElementById("invTax")? document.getElementById("invTax").value : inv.taxPercent;
   const totals = computeInvoiceTotals(items, taxPercent, cur);
@@ -28805,6 +29360,7 @@ async function printInvoice(inv, patient, clinics, cur){
 }
 
 async function printBillPayment(inv, patient, clinics, cur){
+  patient = billedPatient(patient, inv);
   const clinic = clinics.find(c=>c.id===inv.clinicId) || clinics.find(c=>c.id===patient.preferredClinicId);
   const items = inv.items || [];
   const payments = (await dbGetAll("payments")).filter(p=>p.invoiceId===inv.id).sort((a,b)=> new Date(a.date)-new Date(b.date));
@@ -29105,6 +29661,7 @@ async function openReceiptLinkComposer(payments, patient, cur, extra){
 }
 
 async function printReceipt(payment, invoice, patient, cur, claim){
+  patient = billedPatient(patient, invoice);
   const clinics = await dbGetAll("clinics");
   const clinic = clinics.find(c=>c.id===(invoice&&invoice.clinicId)) || clinics.find(c=>c.id===patient.preferredClinicId);
   const title = patient.gender==="Female" ? "Ms." : patient.gender==="Male" ? "Mr." : "";
@@ -29914,6 +30471,9 @@ async function printSelectedPrescriptions(selected, patient){
 }
 
 async function printSelectedInvoices(selected, patient){
+  // All selected bills made out to the same other person: print in that name.
+  const names = new Set(selected.map(i=> invoiceBillTo(i) ? normalizeStr(i.billTo.name) : ""));
+  if(names.size===1 && !names.has("")) patient = billedPatient(patient, selected[0]);
   const clinics = await dbGetAll("clinics");
   const clinic = clinics.find(c=>c.id===patient.preferredClinicId);
   const cur = await finCurrency();
@@ -34621,6 +35181,7 @@ const ICON_PATHS = {
   message: `<path d="M4 5.5h16v11.2a1.4 1.4 0 0 1-1.4 1.4H8.3L4 21.5V5.5Z"/>`,
   edit: `<path d="M4.5 19.5h4l10-10a2 2 0 0 0 0-2.8l-1.2-1.2a2 2 0 0 0-2.8 0l-10 10v4Z"/><path d="M13 6.5 17.5 11"/>`,
   check: `<path d="M5 13l4.5 4.5L19 8"/>`,
+  ticket: `<path d="M3.5 7.5A1.5 1.5 0 0 1 5 6h14a1.5 1.5 0 0 1 1.5 1.5V10a2 2 0 0 0 0 4v2.5A1.5 1.5 0 0 1 19 18H5a1.5 1.5 0 0 1-1.5-1.5V14a2 2 0 0 0 0-4Z"/><path d="M14.5 6v12" stroke-dasharray="1.6 1.8"/><path d="M7.5 10.5h4M7.5 13.5h3"/>`,
   xcircle: `<circle cx="12" cy="12" r="8.4"/><path d="M9.3 9.3l5.4 5.4M14.7 9.3l-5.4 5.4"/>`,
   alert: `<path d="M12 3.5 21.5 20h-19L12 3.5Z"/><path d="M12 10v4.2"/><circle cx="12" cy="17.3" r="0.9" fill="currentColor" stroke="none"/>`,
   share: `<circle cx="6" cy="12" r="2.3"/><circle cx="18" cy="6" r="2.3"/><circle cx="18" cy="18" r="2.3"/><path d="M8 10.8l8-3.6M8 13.2l8 3.6"/>`,
@@ -34736,6 +35297,7 @@ setupLogin(async function boot(){
     await refreshNotificationBell();
     await checkPaymentDueReminders();
     await checkLowStockNotifications();
+    await checkLabCaseDueNotifications().catch(e=>console.warn(e));
     await checkForNewOnlineBookings();
     setTimeout(()=>{ autoMoveFilesToStorageOnce().catch(e=>console.warn("Auto file move:", e)); }, 30000);
     await checkChecklistNotifications();
@@ -34761,6 +35323,7 @@ setupLogin(async function boot(){
       }
       await checkPaymentDueReminders();
       await checkLowStockNotifications();
+      await checkLabCaseDueNotifications().catch(e=>console.warn(e));
       await checkForNewOnlineBookings();
       await checkChecklistNotifications();
       await cleanupOldCompletedCommitments();
