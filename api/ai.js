@@ -1,4 +1,13 @@
-// AI features for the PMS, powered by Claude (Anthropic API).
+// AI features for the PMS. Two providers:
+//   - Cloudflare Workers AI (free daily allowance, open models)
+//   - Claude (Anthropic API, paid)
+// Admin -> AI Provider in the PMS chooses: Cloudflare, Claude, or Mix
+// (clinical tasks on Claude, everyday writing on Cloudflare).
+//
+// Cloudflare setup: Vercel -> Settings -> Environment Variables:
+//   CF_AI_TOKEN   = a Cloudflare API token with "Workers AI" permission
+//   CF_ACCOUNT_ID = (optional) Cloudflare account ID; defaults to the clinic's
+//   CF_AI_MODEL   = (optional) model, default @cf/openai/gpt-oss-120b
 //
 // The PMS calls THIS endpoint (/api/ai), never Anthropic directly, so the
 // API key stays on the server. Every request must carry the signed-in
@@ -22,6 +31,60 @@ import { initializeApp, cert, getApps } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 
 const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5-5";
+const CF_ACCOUNT = (process.env.CF_ACCOUNT_ID || "5c5dd2eef8759859f9d6c007d0212e1b").trim();
+const CF_MODEL = (process.env.CF_AI_MODEL || "@cf/openai/gpt-oss-120b").trim();
+const cfReady = () => !!(process.env.CF_AI_TOKEN && CF_ACCOUNT);
+const claudeReady = () => !!process.env.ANTHROPIC_API_KEY;
+// Tasks where accuracy matters most go to Claude in "mix" mode.
+const CLINICAL_TASKS = new Set(["clinical_notes", "patient_summary", "rx_check"]);
+
+function pickProvider(requested, task) {
+  const cf = cfReady(), cl = claudeReady();
+  let want;
+  if (requested === "claude") want = "claude";
+  else if (requested === "cloudflare") want = "cloudflare";
+  else if (requested === "mix") want = CLINICAL_TASKS.has(task) ? "claude" : "cloudflare";
+  else want = cf ? "cloudflare" : "claude"; // auto
+  if (want === "cloudflare" && !cf) want = cl ? "claude" : null;
+  if (want === "claude" && !cl) want = cf ? "cloudflare" : null;
+  return want;
+}
+
+async function runClaude(def, userText) {
+  const r = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+    body: JSON.stringify({ model: MODEL, max_tokens: def.max, system: def.system, messages: [{ role: "user", content: userText }] })
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw Object.assign(new Error((data && data.error && data.error.message) || ("Claude request failed (HTTP " + r.status + ")")), { status: 502 });
+  return (data.content || []).filter(b => b.type === "text").map(b => b.text).join("");
+}
+
+async function runCloudflare(def, userText) {
+  const r = await fetch("https://api.cloudflare.com/client/v4/accounts/" + CF_ACCOUNT + "/ai/run/" + CF_MODEL, {
+    method: "POST",
+    headers: { "Authorization": "Bearer " + process.env.CF_AI_TOKEN, "content-type": "application/json" },
+    body: JSON.stringify({
+      messages: [{ role: "system", content: def.system }, { role: "user", content: userText }],
+      // reasoning models think before answering, so allow extra room
+      max_tokens: Math.max(def.max * 2, 2048)
+    })
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok || data.success === false) {
+    const e = (data.errors && data.errors[0]) || {};
+    let msg = e.message || ("Cloudflare AI request failed (HTTP " + r.status + ")");
+    if (r.status === 429 || /neuron|daily|limit|quota|capacity/i.test(msg)) msg = "Today's free Cloudflare AI allowance is used up (or the service is busy). Try again later, or switch Admin → AI Provider to Claude.";
+    else if (r.status === 401 || r.status === 403 || e.code === 10000) msg = "Cloudflare refused the AI token. Check CF_AI_TOKEN in Vercel (it needs Workers AI permission).";
+    throw Object.assign(new Error(msg), { status: 502 });
+  }
+  const res = data.result || {};
+  if (typeof res.response === "string") return res.response;
+  if (res.response && typeof res.response === "object") return JSON.stringify(res.response);
+  const ch = res.choices && res.choices[0] && res.choices[0].message;
+  return (ch && ch.content) || "";
+}
 
 function adminAuth() {
   if (!getApps().length) {
@@ -140,9 +203,11 @@ function extractJson(text) {
 }
 
 export default async function handler(req, res) {
+  // GET: which providers are set up (no secrets returned).
+  if (req.method === "GET") return res.status(200).json({ cloudflare: cfReady(), claude: claudeReady(), cloudflareModel: CF_MODEL, claudeModel: MODEL });
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
-  if (!process.env.ANTHROPIC_API_KEY) {
-    return res.status(500).json({ error: "AI isn't set up yet: add ANTHROPIC_API_KEY in Vercel -> Project -> Settings -> Environment Variables, then redeploy." });
+  if (!cfReady() && !claudeReady()) {
+    return res.status(500).json({ error: "AI isn't set up yet: add CF_AI_TOKEN (free Cloudflare Workers AI) or ANTHROPIC_API_KEY in Vercel -> Project -> Settings -> Environment Variables, then redeploy." });
   }
 
   // Only signed-in clinic staff may use the clinic's AI key.
@@ -155,40 +220,23 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: "Your session couldn't be verified — please sign out and sign in again. (" + (err.message || "auth error") + ")" });
   }
 
-  const { task, input } = req.body || {};
+  const { task, input, provider } = req.body || {};
   const def = TASKS[task];
   if (!def) return res.status(400).json({ error: "Unknown AI task" });
 
   const userText = def.user(input || {});
   if (userText.length > 60000) return res.status(413).json({ error: "Too much data for one AI request" });
 
+  const use = pickProvider(String(provider || "auto"), task);
+  if (!use) return res.status(500).json({ error: "The chosen AI provider isn't set up in Vercel." });
   try {
-    const r = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": process.env.ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json"
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: def.max,
-        system: def.system,
-        messages: [{ role: "user", content: userText }]
-      })
-    });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) {
-      const msg = (data && data.error && data.error.message) || ("AI request failed (HTTP " + r.status + ")");
-      console.error("[ai] " + task + " failed: " + msg);
-      return res.status(502).json({ error: msg });
-    }
-    const text = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("");
+    const text = use === "cloudflare" ? await runCloudflare(def, userText) : await runClaude(def, userText);
     const result = extractJson(text);
     if (!result) return res.status(502).json({ error: "The AI reply couldn't be read — please try again." });
-    return res.status(200).json({ success: true, result });
+    return res.status(200).json({ success: true, result, provider: use, model: use === "cloudflare" ? CF_MODEL : MODEL });
   } catch (err) {
-    console.error("[ai] " + task + " crashed: " + (err && err.stack || err));
+    console.error("[ai] " + task + " (" + use + ") failed: " + (err && err.message || err));
+    if (err && err.status) return res.status(err.status).json({ error: err.message });
     return res.status(500).json({ error: (err && err.message) || "AI request failed" });
   }
 }
