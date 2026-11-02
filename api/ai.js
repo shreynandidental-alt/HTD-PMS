@@ -8,6 +8,8 @@
 //   CF_AI_TOKEN   = a Cloudflare API token with "Workers AI" permission
 //   CF_ACCOUNT_ID = (optional) Cloudflare account ID; defaults to the clinic's
 //   CF_AI_MODEL   = (optional) model, default @cf/openai/gpt-oss-120b
+// After adding or changing a variable, the site must be deployed again
+// (any new commit does it) before the server can see it.
 //
 // The PMS calls THIS endpoint (/api/ai), never Anthropic directly, so the
 // API key stays on the server. Every request must carry the signed-in
