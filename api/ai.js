@@ -81,7 +81,13 @@ async function runCloudflare(def, userText) {
     const e = (data.errors && data.errors[0]) || {};
     let msg = e.message || ("Cloudflare AI request failed (HTTP " + r.status + ")");
     if (r.status === 429 || /neuron|daily|limit|quota|capacity/i.test(msg)) msg = "Today's free Cloudflare AI allowance is used up (or the service is busy). Try again later, or switch Admin → AI Provider to Claude.";
-    else if (r.status === 401 || r.status === 403 || e.code === 10000) msg = "Cloudflare refused the AI token (" + (e.code ? e.code + ": " : "") + (e.message || "HTTP " + r.status) + "). Check CF_AI_TOKEN in Vercel: it must be the token value itself (about 40 characters), from a token with Workers AI permission.";
+    else if (r.status === 401 || r.status === 403 || e.code === 10000) {
+      // Safe diagnostics only: never the token itself, just its shape.
+      const t = cfToken();
+      let verify = "?";
+      try { const v = await fetch("https://api.cloudflare.com/client/v4/user/tokens/verify", { headers: { "Authorization": "Bearer " + t } }).then(x => x.json()); verify = v && v.success ? ((v.result && v.result.status) || "valid") : "not recognised by Cloudflare"; } catch (_) {}
+      msg = "Cloudflare refused the AI token (" + (e.code ? e.code + ": " : "") + (e.message || "HTTP " + r.status) + "). The saved CF_AI_TOKEN is " + t.length + " characters" + (/^[A-Za-z0-9_\-]+$/.test(t) ? "" : " and contains spaces or unusual characters") + "; Cloudflare says the token is: " + verify + ". It should be the ~40-character value shown once after Create/Roll.";
+    }
     throw Object.assign(new Error(msg), { status: 502 });
   }
   const res = data.result || {};
