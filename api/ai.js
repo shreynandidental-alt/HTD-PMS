@@ -10,7 +10,7 @@
 //   CF_AI_MODEL   = (optional) model, default @cf/openai/gpt-oss-120b
 // After adding or changing a variable, the site must be deployed again
 // (any new commit does it) before the server can see it.
-// Last token update: 2 Nov 2026.
+// Last token update: 2 Nov 2026 (10:56).
 //
 // The PMS calls THIS endpoint (/api/ai), never Anthropic directly, so the
 // API key stays on the server. Every request must carry the signed-in
