@@ -35,7 +35,9 @@ import { getAuth } from "firebase-admin/auth";
 const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5-5";
 const CF_ACCOUNT = (process.env.CF_ACCOUNT_ID || "5c5dd2eef8759859f9d6c007d0212e1b").trim();
 const CF_MODEL = (process.env.CF_AI_MODEL || "@cf/openai/gpt-oss-120b").trim();
-const cfReady = () => !!(process.env.CF_AI_TOKEN && CF_ACCOUNT);
+// Tolerates a token pasted with spaces, quotes or a "Bearer " prefix.
+const cfToken = () => String(process.env.CF_AI_TOKEN || "").trim().replace(/^["']|["']$/g, "").replace(/^Bearer\s+/i, "").trim();
+const cfReady = () => !!(cfToken() && CF_ACCOUNT);
 const claudeReady = () => !!process.env.ANTHROPIC_API_KEY;
 // Tasks where accuracy matters most go to Claude in "mix" mode.
 const CLINICAL_TASKS = new Set(["clinical_notes", "patient_summary", "rx_check"]);
@@ -66,7 +68,7 @@ async function runClaude(def, userText) {
 async function runCloudflare(def, userText) {
   const r = await fetch("https://api.cloudflare.com/client/v4/accounts/" + CF_ACCOUNT + "/ai/run/" + CF_MODEL, {
     method: "POST",
-    headers: { "Authorization": "Bearer " + process.env.CF_AI_TOKEN, "content-type": "application/json" },
+    headers: { "Authorization": "Bearer " + cfToken(), "content-type": "application/json" },
     body: JSON.stringify({
       messages: [{ role: "system", content: def.system }, { role: "user", content: userText }],
       // reasoning models think before answering, so allow extra room
@@ -78,7 +80,7 @@ async function runCloudflare(def, userText) {
     const e = (data.errors && data.errors[0]) || {};
     let msg = e.message || ("Cloudflare AI request failed (HTTP " + r.status + ")");
     if (r.status === 429 || /neuron|daily|limit|quota|capacity/i.test(msg)) msg = "Today's free Cloudflare AI allowance is used up (or the service is busy). Try again later, or switch Admin → AI Provider to Claude.";
-    else if (r.status === 401 || r.status === 403 || e.code === 10000) msg = "Cloudflare refused the AI token. Check CF_AI_TOKEN in Vercel (it needs Workers AI permission).";
+    else if (r.status === 401 || r.status === 403 || e.code === 10000) msg = "Cloudflare refused the AI token (" + (e.code ? e.code + ": " : "") + (e.message || "HTTP " + r.status) + "). Check CF_AI_TOKEN in Vercel: it must be the token value itself (about 40 characters), from a token with Workers AI permission.";
     throw Object.assign(new Error(msg), { status: 502 });
   }
   const res = data.result || {};
