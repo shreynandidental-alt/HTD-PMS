@@ -24179,16 +24179,68 @@ async function openExamActionMenu(examId, patient, tabBody, patientId){
 // signed-in staff member and holds the API key. Every AI result is shown
 // for the doctor to review/edit before anything is saved or sent.
 // =========================================================
+// Admin → AI Provider: free Cloudflare Workers AI, Claude, or a mix.
+async function openAiProviderSheet(){
+  const st = (await dbGetAll("settings"))[0] || {};
+  let status = {};
+  try{ status = await fetch("/api/ai", {cache:"no-store"}).then(r=>r.json()); }catch(e){}
+  const cur = st.aiProvider || "auto";
+  const opt = (v, title, desc)=> `<label class="clinic-row" style="cursor:pointer;align-items:flex-start;gap:10px;">
+      <input type="radio" name="aiProv" value="${v}" ${cur===v?"checked":""} style="width:18px;height:18px;margin-top:3px;flex-shrink:0;">
+      <div style="flex:1;"><div class="name">${title}</div><div class="addr">${desc}</div></div></label>`;
+  const badge = (ok)=> ok ? `<span class="status-pill st-Completed">Set up</span>` : `<span class="status-pill st-Cancelled">Not set up</span>`;
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>AI Provider</h2>
+    <div class="list-card" style="margin-bottom:12px;">
+      <div class="clinic-row"><div><div class="name">Cloudflare Workers AI (free)</div><div class="addr">${escapeHtml(status.cloudflareModel||"")} · free daily allowance</div></div>${badge(status.cloudflare)}</div>
+      <div class="clinic-row"><div><div class="name">Claude (Anthropic)</div><div class="addr">${escapeHtml(status.claudeModel||"")} · paid per use</div></div>${badge(status.claude)}</div>
+    </div>
+    <div class="list-card">
+      ${opt("cloudflare","Cloudflare only (free)","All AI features use the free open model. Best for cost; review clinical output carefully.")}
+      ${opt("mix","Mix (recommended)","Clinical notes, AI Summary and Rx check on Claude; message rewrites, plan explanations and instructions on Cloudflare (free).")}
+      ${opt("claude","Claude only","Best quality for everything; paid per use.")}
+      ${opt("auto","Automatic","Cloudflare when it's set up, otherwise Claude.")}
+    </div>
+    <p style="font-size:12px;color:var(--grey);margin:10px 0;">If the chosen provider isn't set up, the other one is used. If neither is, AI buttons show a setup message.</p>
+    <button class="btn btn-primary btn-block" id="aiProvSave">Save</button>
+    <button class="btn btn-outline btn-block" id="aiProvTest" style="margin-top:8px;">${icon('sparkle',15)} Test AI</button>
+    <div id="aiProvTestOut" style="font-size:12.5px;margin-top:10px;white-space:pre-wrap;"></div>
+  `);
+  const pick = ()=> (document.querySelector('input[name="aiProv"]:checked')||{}).value || "auto";
+  document.getElementById("aiProvSave").onclick = async ()=>{
+    const all = await dbGetAll("settings"); const s = all[0] || {id:"settings"};
+    s.aiProvider = pick(); s.updatedAt = nowIso();
+    await dbPut("settings", s);
+    showToast("AI provider saved");
+  };
+  document.getElementById("aiProvTest").onclick = async ()=>{
+    const out = document.getElementById("aiProvTestOut"), btn = document.getElementById("aiProvTest");
+    const all = await dbGetAll("settings"); const s = all[0] || {id:"settings"};
+    if(s.aiProvider !== pick()){ s.aiProvider = pick(); s.updatedAt = nowIso(); await dbPut("settings", s); }
+    aiSetBusy(btn, true, "Testing…"); out.style.color = "var(--grey)"; out.textContent = "";
+    const t0 = Date.now();
+    try{
+      const r = await aiRequest("rewrite_message", {style:"hinglish", text:"Your appointment at Healing Touch Dental is on 5 Nov at 11 AM. Please arrive 10 minutes early."});
+      out.style.color = "var(--green)";
+      out.textContent = "✓ Working ("+((Date.now()-t0)/1000).toFixed(1)+" s"+(aiRequest.last? " · "+aiRequest.last : "")+")\n\n"+(r && r.text || JSON.stringify(r));
+    }catch(e){ out.style.color = "var(--red)"; out.textContent = e.message; }
+    aiSetBusy(btn, false);
+  };
+}
 async function aiRequest(task, input){
   let token = null;
   try{ token = window.__fbAuth && window.__fbAuth.getIdToken ? await window.__fbAuth.getIdToken() : null; }catch(e){}
   if(!token) throw new Error("Please sign in to use AI features");
   let res, data;
   try{
-    res = await fetch("/api/ai", { method:"POST", headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+token }, body: JSON.stringify({task, input}) });
+    let provider = "auto";
+    try{ provider = ((await dbGetAll("settings"))[0]||{}).aiProvider || "auto"; }catch(e){}
+    res = await fetch("/api/ai", { method:"POST", headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+token }, body: JSON.stringify({task, input, provider}) });
     data = await res.json().catch(()=>({}));
   }catch(e){ throw new Error("Couldn't reach the AI service — check your internet connection"); }
   if(!res.ok || !data.success) throw new Error((data && data.error) || ("AI request failed (HTTP "+res.status+")"));
+  aiRequest.last = data.provider ? (data.provider==="cloudflare" ? "Cloudflare " : "Claude ") + (data.model||"") : "";
   return data.result;
 }
 function aiBtnHtml(id, label, extraStyle){
@@ -30837,6 +30889,7 @@ async function renderAdminPanel(){
       { label:"Import Patient Data Request", icon:"backup", action: null },
       { label:"Print Setting", icon:"print", action: openPrintSettingsSheet },
       { label:"Personalize Setting", icon:"settings", action: openSettingsSheet },
+      { label:"AI Provider", icon:"sparkle", action: openAiProviderSheet },
       { label:"Recycle Bin", icon:"trash", action: openTrashSheet },
       { label:"Move Files to Cloud Storage", icon:"backup", action: openMoveFilesToStorageSheet },
       { label:"Dynamic Consent Form", icon:"file", action: openConsentTemplatesSheet },
