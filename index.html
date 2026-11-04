@@ -502,6 +502,15 @@
   .quick-icon-row{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin:12px 0 4px;}
   .qbtn{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:7px 3px;border-radius:9px;background:var(--white);border:1px solid var(--grey-light);font-size:9px;font-weight:600;color:var(--charcoal-2);cursor:pointer;text-align:center;line-height:1.15;min-height:52px;}
 
+  /* ---------- Monthly consolidated report table */
+  .mr-table{width:100%;border-collapse:collapse;font-size:12.5px;min-width:860px;}
+  .mr-table th{background:var(--off-white);color:var(--grey);font-weight:700;font-size:11px;text-align:right;padding:8px 8px;white-space:nowrap;}
+  .mr-table th:first-child, .mr-table td:first-child{text-align:left;position:sticky;left:0;background:var(--white);}
+  .mr-table th:first-child{background:var(--off-white);}
+  .mr-table td{padding:8px;border-top:1px solid var(--off-white);white-space:nowrap;}
+  .mr-table tr.sel td{background:color-mix(in srgb, var(--green) 9%, var(--white));}
+  .mr-table tfoot td{border-top:2px solid var(--grey-light,#ddd);}
+
   /* ---------- Success tick (showSuccessTick) */
   #htdSuccessTick{ position:fixed; inset:0; z-index:100000; display:flex; align-items:center; justify-content:center; pointer-events:none; }
   #htdSuccessTick .st-card{ background:var(--white,#fff); border-radius:22px; padding:22px 26px 18px; min-width:190px; max-width:80vw; text-align:center;
@@ -1204,6 +1213,8 @@
   .lab-qa[data-labqa="delivered"]{color:#1d4ed8;border-color:#a9c0f5;}
   .lab-qa[data-labqa="jobcard"]{color:#128C7E;border-color:#9fd8cf;}
   .lab-qa[data-labqa="remind"]{color:#7c3aed;border-color:#cdb8f7;}
+  .lab-qa.lab-qa-w{color:#9a3412;border-color:#f5c9a8;}
+  .lab-qa.lab-qa-w.on{background:#9a3412;color:#fff;border-color:#9a3412;}
   .lab-qa.busy{opacity:.55;pointer-events:none;}
   /* After a tap: button locks, shows a spinner + "please wait" so patients
      know it worked and can't submit twice. */
@@ -3267,6 +3278,7 @@ async function renderHome(){
         <div id="autoRemStatus"></div>
         <div id="todayList"></div>
 
+        <div id="homeLabDue"></div>
         <div id="homeMaintDue"></div>
 
         <div class="section-title">Birthdays Today</div>
@@ -3326,6 +3338,7 @@ async function renderHome(){
     el.onclick = ()=> openStatDetailSheet(el.dataset.stat);
   });
   animateStatNumbers(statGrid);
+  renderHomeLabDue();
   renderHomeMaintenanceDue();
 
   const todayList = document.getElementById("todayList");
@@ -8641,6 +8654,49 @@ function wireMaintDue(root, items, after){
 }
 
 // ---- Home page: items whose reminder date has arrived ----
+// Home: crowns / caps / prostheses due from the lab - promised to the patient
+// for today or tomorrow (or already late) and not yet received. These lab
+// follow-ups are for the clinic only; nothing is sent to the patient.
+async function renderHomeLabDue(){
+  const wrap = document.getElementById("homeLabDue");
+  if(!wrap) return;
+  try{
+    const todayKey = toDateKey(new Date());
+    const tomorrowKey = toDateKey(new Date(Date.now()+86400000));
+    const oldest = toDateKey(new Date(Date.now()-14*86400000));
+    let cases = (await dbGetAll("labCases")).filter(lc=>{
+      const d = String(lc.patientPromisedDate||"").slice(0,10);
+      return d && d>=oldest && d<=tomorrowKey && !["Received","Ready","Delivered to Patient"].includes(lc.status);
+    });
+    if(selectedClinicId && selectedClinicId!=="ALL") cases = cases.filter(lc=> !lc.clinicId || lc.clinicId===selectedClinicId);
+    if(!document.getElementById("homeLabDue")) return;
+    if(!cases.length){ wrap.innerHTML = ""; return; }
+    cases.sort((a,b)=> String(a.patientPromisedDate).localeCompare(String(b.patientPromisedDate)));
+    const when = (d)=>{ d = String(d).slice(0,10); if(d===todayKey) return "Due today"; if(d===tomorrowKey) return "Due tomorrow"; const days = Math.round((fromDateKey(todayKey)-fromDateKey(d))/86400000); return days+" day"+(days>1?"s":"")+" late"; };
+    wrap.innerHTML = `
+      <div class="section-title">Lab Work Due (Cap / Crown Delivery) <span class="section-link" id="homeLabOpen">Lab Cases</span></div>
+      <div class="list-card">${cases.map(lc=>{ const w = when(lc.patientPromisedDate); const late = /late/.test(w); return `
+        <div class="clinic-row" data-hlab="${lc.id}" style="cursor:pointer;flex-wrap:wrap;gap:8px;">
+          <div style="flex:1;min-width:170px;">
+            <div class="name">${escapeHtml(lc.patientName||"—")}${lc.tooth? " · Tooth "+escapeHtml(lc.tooth):""}</div>
+            <div class="addr">${escapeHtml(lc.caseType||"Lab work")} · ${escapeHtml(lc.labName||"No lab set")} · ${escapeHtml(lc.status||"In Progress")}</div>
+          </div>
+          <span class="status-pill ${late?"st-Cancelled":"st-Scheduled"}">${w}</span>
+          <div style="display:flex;gap:6px;width:100%;">
+            <button type="button" class="lab-qa" data-hlabremind="${lc.id}">${icon('bell',14)}<span>Remind Lab</span></button>
+            <button type="button" class="lab-qa" data-labqa="received" data-id="${lc.id}">${icon('check',14)}<span>Received</span></button>
+          </div>
+        </div>`; }).join("")}</div>`;
+    document.getElementById("homeLabOpen").onclick = ()=> goTo("labcases");
+    wrap.querySelectorAll("[data-hlab]").forEach(el=> el.onclick = ()=> openLabCaseForm(el.dataset.hlab));
+    wrap.querySelectorAll("[data-hlabremind]").forEach(b=> b.onclick = async (e)=>{
+      e.stopPropagation();
+      const lc = cases.find(x=>x.id===b.dataset.hlabremind);
+      if(lc) sendLabReminderWhatsApp(lc);
+    });
+    wireLabQuickActions(wrap, ()=> renderHomeLabDue());
+  }catch(e){ console.warn("Lab work due on Home:", e); wrap.innerHTML = ""; }
+}
 async function renderHomeMaintenanceDue(){
   const wrap = document.getElementById("homeMaintDue");
   if(!wrap) return;
@@ -9155,15 +9211,103 @@ function labStatusPillClass(status){
   return status==="Delivered to Patient" ? "Completed" : ((status==="Delayed" || status==="Sent Back for Correction" || status==="Remake") ? "Cancelled" : "Confirmed");
 }
 function labQuickActionsHtml(lc){
-  if(lc.status==="Delivered to Patient") return "";
-  const b = (act, ico, label, on)=> `<button type="button" class="lab-qa${on?' on':''}" data-labqa="${act}" data-id="${lc.id}" title="${label}" aria-label="${label}">${icon(ico,14)}<span>${label}</span></button>`;
+  const b = (act, ico, label, on, cls)=> `<button type="button" class="lab-qa${on?' on':''}${cls?' '+cls:''}" data-labqa="${act}" data-id="${lc.id}" title="${label}" aria-label="${label}">${icon(ico,14)}<span>${label}</span></button>`;
+  const nW = (lc.warrantyAttachments||[]).length;
+  // Warranty card: attach (pin), then send to the patient on WhatsApp / email.
+  const warranty = `
+    ${b("wupload","clip", nW? "Warranty ("+nW+")" : "Attach Warranty", nW>0, "lab-qa-w")}
+    ${nW? b("wwa","message","Warranty on WhatsApp", false, "lab-qa-w") + b("wmail","mail","Warranty by Email", false, "lab-qa-w") : ""}`;
+  if(lc.status==="Delivered to Patient") return `<div class="lab-qa-row">${warranty}</div>`;
   return `<div class="lab-qa-row">
     ${b("received","check","Received", lc.status==="Received" || lc.status==="Ready")}
     ${b("correction","refresh","Sent Back for Correction", lc.status==="Sent Back for Correction")}
     ${b("delivered","tooth","Delivered to Patient", false)}
     ${b("jobcard","message","Send Job Card", false)}
     ${b("remind","bell","Send Reminder", false)}
+    ${warranty}
   </div>`;
+}
+// ---- Warranty card from the lab case list ----
+async function openLabWarrantySheet(caseId, onDone){
+  const lc = (await dbGetAll("labCases")).find(x=>x.id===caseId);
+  if(!lc){ showToast("Lab case not found"); return; }
+  const atts = JSON.parse(JSON.stringify(lc.warrantyAttachments||[]));
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>${icon('clip',18)} Warranty Card — ${escapeHtml(lc.patientName||"")}</h2>
+    <p style="margin:-4px 0 10px;color:var(--grey);font-size:12.5px;">${escapeHtml(lc.caseType||"")}${lc.tooth? " · Tooth "+escapeHtml(lc.tooth):""} · ${escapeHtml(lc.labName||"")}. Also shows in Clinical → Prosthodontics for this tooth.</p>
+    ${warrantyUploadBlockHtml('lqw','Warranty Card (photo or PDF)')}
+    <button class="btn btn-primary btn-block" id="lqwSave">Save Warranty Card</button>
+  `);
+  wireWarrantyUpload('lqw', atts);
+  document.getElementById("lqwSave").onclick = async ()=>{
+    const fresh = (await dbGetAll("labCases")).find(x=>x.id===caseId) || lc;
+    fresh.warrantyAttachments = atts; fresh.updatedAt = nowIso();
+    await dbPut("labCases", fresh);
+    await syncLabWarrantyToCrownCase(fresh).catch(e=> console.warn("Warranty card sync:", e));
+    logActivity("Saved warranty card for "+(fresh.patientName||""), {patientId: fresh.patientId});
+    closeSheet();
+    showSuccessTick("Warranty card saved", fresh.patientName||"");
+    if(onDone) onDone();
+  };
+}
+async function labCasePatient(lc){
+  const p = lc.patientId ? (await dbGetAll("patients")).find(x=>x.id===lc.patientId) : null;
+  if(!p){ showToast("Patient record not found for this lab case"); return null; }
+  return p;
+}
+// One page with every warranty card (images shown, PDFs downloadable),
+// published as a link and sent with the approved "document_message" template.
+async function sendLabWarrantyWhatsApp(lc){
+  const atts = lc.warrantyAttachments||[];
+  if(!atts.length){ showToast("Attach the warranty card first"); return; }
+  const patient = await labCasePatient(lc); if(!patient) return;
+  const number = patient.whatsappNumber || patient.mobile;
+  if(!number){ showToast("This patient has no mobile number on file"); return; }
+  showToast("Preparing warranty card link…");
+  const clinics = await dbGetAll("clinics");
+  const clinic = clinics.find(c=>c.id===patient.preferredClinicId) || clinics.find(c=>c.isDefault) || clinics[0] || {};
+  const label = "Warranty Card"+(lc.caseType? " ("+lc.caseType+(lc.tooth? ", tooth "+lc.tooth : "")+")" : "");
+  const bodyHtml = atts.map((a,i)=> isPdfAttachment(a)
+    ? `<p style="margin:10px 0;font-size:13.5px;"><a href="${escapeAttr(a.fileData||"")}" download="${escapeAttr(a.name||"warranty-card.pdf")}" target="_blank" rel="noopener">Download warranty card ${atts.length>1? (i+1)+" " : ""}(PDF)</a></p>`
+    : `<div style="text-align:center;margin:8px 0 12px;"><img src="${escapeAttr(a.imageData||"")}" style="max-width:100%;max-height:980px;object-fit:contain;border:1px solid #ddd;border-radius:6px;"></div>`).join("");
+  const html = await captureDocHtml(()=> printDocument({ title: label, patient, clinic, docDate: new Date().toLocaleDateString(), bodyHtml, signHtml: "" }));
+  if(!html){ showToast("Couldn't prepare the warranty card page"); return; }
+  const link = await publishDocLink(html, {title: label, patientName: patient.name});
+  if(!link) return;
+  openWhatsAppComposer({
+    title: "Send "+label, toName: patient.name, toNumber: number, patientId: patient.id, recipientType: "Patient",
+    message: `Hi ${patient.name}, here is the warranty card for your ${lc.caseType||"dental prosthesis"} from Healing Touch Dental. Please keep it safe: ${link}`,
+    templateName: "document_message",
+    templateParams: [patient.name||"Patient", link],
+    onSent: ()=> logActivity("Sent warranty card to "+patient.name+" on WhatsApp", {patientId: patient.id})
+  });
+}
+async function sendLabWarrantyEmail(lc){
+  const atts = lc.warrantyAttachments||[];
+  if(!atts.length){ showToast("Attach the warranty card first"); return; }
+  const patient = await labCasePatient(lc); if(!patient) return;
+  if(!patient.email){ showToast("This patient has no email on file — add it in Edit"); return; }
+  const safe = (s)=> String(s||"").replace(/[^\w\- .]+/g,"").trim();
+  const attachments = [];
+  for(let i=0;i<atts.length;i++){
+    const a = atts[i];
+    let data = isPdfAttachment(a) ? (a.fileData||"") : (a.imageData||"");
+    if(/^https?:/i.test(data)){
+      try{ const blob = await fetch(data).then(r=>r.blob()); data = await new Promise((res)=>{ const fr = new FileReader(); fr.onload = ()=>res(fr.result); fr.readAsDataURL(blob); }); }catch(e){ continue; }
+    }
+    const m = /^data:([^;,]+)?(?:;[^,]*)?,(.*)$/.exec(data);
+    if(!m) continue;
+    const pdf = isPdfAttachment(a);
+    attachments.push({ filename: safe(a.name) || ("Warranty card "+(i+1)+(pdf? ".pdf" : ".jpg")), contentType: pdf? "application/pdf" : (m[1]||"image/jpeg"), contentBase64: m[2] });
+  }
+  if(!attachments.length){ showToast("Couldn't read the warranty card file"); return; }
+  openMailComposer({
+    title: "Email Warranty Card", toName: patient.name, toEmail: patient.email, patientId: patient.id, recipientType: "Patient",
+    subject: "Your warranty card — Healing Touch Dental",
+    message: `Hi ${patient.name},\n\nPlease find attached the warranty card for your ${lc.caseType||"dental prosthesis"}${lc.tooth? " (tooth "+lc.tooth+")" : ""}. Please keep it safe for future reference.\n\nWarm regards,\nHealing Touch Dental`,
+    attachments
+  });
 }
 // The lab's WhatsApp number: the one saved on the case, else the lab's own.
 async function labCaseLabAndPhone(lc){
@@ -9206,6 +9350,9 @@ async function applyLabQuickAction(caseId, action){
   const lc = (await dbGetAll("labCases")).find(x=>x.id===caseId);
   if(!lc){ showToast("Lab case not found"); return false; }
   if(action==="jobcard"){ await sendLabJobCardWhatsApp(lc); return false; }
+  if(action==="wupload"){ await openLabWarrantySheet(lc.id, ()=>{ if(applyLabQuickAction._rerender) applyLabQuickAction._rerender(); }); return false; }
+  if(action==="wwa"){ await sendLabWarrantyWhatsApp(lc); return false; }
+  if(action==="wmail"){ await sendLabWarrantyEmail(lc); return false; }
   if(action==="remind"){ await sendLabReminderWhatsApp(lc); return false; }
   const now = nowIso();
   if(action==="received"){
@@ -9243,6 +9390,7 @@ function wireLabQuickActions(root, rerender){
       e.stopPropagation();
       if(btn.dataset.busy==="1") return;
       btn.dataset.busy = "1"; btn.classList.add("busy");
+      applyLabQuickAction._rerender = rerender;
       const changed = await applyLabQuickAction(btn.dataset.id, btn.dataset.labqa).catch(err=>{ console.error(err); showToast("Couldn't update: "+(err.message||err)); return false; });
       btn.dataset.busy = ""; btn.classList.remove("busy");
       if(changed && rerender) rerender();
@@ -14202,6 +14350,7 @@ async function renderFinReports(body){
         ${clinics.filter(c=>!c.archived).map(c=>`<option value="${c.id}" ${finReportFilter.clinicId===c.id?'selected':''}>${escapeHtml(c.name.replace('Healing Touch Dental – ',''))}</option>`).join("")}
       </select>
     </div>
+    <button class="btn btn-primary btn-block" id="btnMonthlyConsolidated" style="margin-bottom:14px;">${icon('reports',15)} Monthly Consolidated Report — Treatment Done, Invoices, Receipts &amp; Collections</button>
     ${finPeriodFilterHtml('finReport', finReportFilter.period, finReportFilter.customStart, finReportFilter.customEnd)}
     <div class="section-title">Summary — ${escapeHtml(periodLabel)}</div>
     <div class="list-card" style="padding:14px;">
@@ -14220,6 +14369,7 @@ async function renderFinReports(body){
     </div>
   `;
   document.getElementById("finReportClinic").onchange = (e)=>{ finReportFilter.clinicId = e.target.value; renderFinReports(body); };
+  document.getElementById("btnMonthlyConsolidated").onclick = ()=>{ monthlyRptState.clinicId = finReportFilter.clinicId || ""; openMonthlyConsolidatedReport(); };
   document.getElementById("finReportPeriod").onchange = (e)=>{ finReportFilter.period = e.target.value; renderFinReports(body); };
   const startEl = document.getElementById("finReportCustomStart");
   const endEl = document.getElementById("finReportCustomEnd");
@@ -14227,6 +14377,166 @@ async function renderFinReports(body){
   if(endEl) endEl.onchange = (e)=>{ finReportFilter.customEnd = e.target.value; renderFinReports(body); };
   document.getElementById("btnExportFinCsv").onclick = ()=> exportFinanceCSV(all);
   document.getElementById("btnGoBackupFin").onclick = ()=>{ goTo("more"); setTimeout(openBackupSheet, 150); };
+}
+
+// ---- Monthly Consolidated Report (Billing & Finance → Reports) ----
+// Treatment done (doctor-wise), invoices, receipts, "Payment to be Made"
+// collections, refunds and pharmacy - month by month - so the total money
+// collected is visible even for treatments that never got an invoice.
+let monthlyRptState = { year: new Date().getFullYear(), month: "", clinicId: "" };
+function rptMonthKey(v){
+  if(!v) return "";
+  const s = String(v);
+  if(/^\d{4}-\d{2}/.test(s) && s.length<=10) return s.slice(0,7);
+  const d = new Date(v);
+  if(isNaN(d)) return "";
+  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");
+}
+function rptItemNet(it){
+  const g = (Number(it.fee)||0)*(Number(it.qty)||1);
+  const d = it.discountType==="flat" ? Math.min(g, Number(it.discount)||0) : g*((Number(it.discount)||0)/100);
+  return Math.max(0, g-d);
+}
+async function buildMonthlyConsolidated(year, clinicId){
+  const [plans, invoices, payments, dues, refunds, sales, patients] = await Promise.all([
+    dbGetAll("treatmentPlans"), dbGetAll("invoices"), dbGetAll("payments"), dbGetAll("paymentsDue"),
+    dbGetAll("refunds"), dbGetAll("pharmacySales").catch(()=>[]), dbGetAll("patients")
+  ]);
+  const pClinic = {}; patients.forEach(p=> pClinic[p.id] = p.preferredClinicId||"");
+  const inClinic = (cid, pid)=> !clinicId || (cid||pClinic[pid]||"")===clinicId;
+  const months = Array.from({length:12}, (_,i)=> year+"-"+String(i+1).padStart(2,"0"));
+  const M = {}; months.forEach(k=> M[k] = { treat:0, treatCount:0, invoiced:0, invCount:0, receipts:0, rcptCount:0, dueColl:0, dueCount:0, refunds:0, pharmacy:0, newPatients:0, byDoctor:{}, byMode:{}, byTreatment:{} });
+  const addMode = (m, mode, amt)=>{ const k = mode||"Not recorded"; m.byMode[k] = (m.byMode[k]||0)+amt; };
+  for(const pl of plans){
+    for(const it of (pl.items||[])){
+      if(it.status!=="Completed") continue;
+      const k = rptMonthKey(it.treatmentDate || pl.createdDate); const m = M[k];
+      if(!m || !inClinic(pl.clinicId, pl.patientId)) continue;
+      const net = rptItemNet(it);
+      m.treat += net; m.treatCount++;
+      const doc = (it.performedBy || pl.doctor || "Not assigned").trim() || "Not assigned";
+      const dd = m.byDoctor[doc] = m.byDoctor[doc] || {amount:0, count:0};
+      dd.amount += net; dd.count++;
+      const tn = (it.treatment||"Other").trim() || "Other";
+      const tt = m.byTreatment[tn] = m.byTreatment[tn] || {amount:0, count:0};
+      tt.amount += net; tt.count++;
+    }
+  }
+  for(const inv of invoices){
+    const m = M[rptMonthKey(inv.date)]; if(!m || !inClinic(inv.clinicId, inv.patientId)) continue;
+    m.invoiced += Number(inv.totalNet)||0; m.invCount++;
+  }
+  for(const p of payments){
+    const m = M[rptMonthKey(p.date)]; if(!m || !inClinic(p.clinicId, p.patientId)) continue;
+    const a = Number(p.amount)||0;
+    m.receipts += a; m.rcptCount++; addMode(m, p.mode, a);
+  }
+  for(const d of dues){
+    for(const p of (d.payments||[])){
+      const m = M[rptMonthKey(p.date)]; if(!m || !inClinic(d.clinicId, d.patientId)) continue;
+      const a = Number(p.amount)||0;
+      m.dueColl += a; m.dueCount++; addMode(m, p.mode, a);
+    }
+  }
+  for(const r of refunds){
+    const m = M[rptMonthKey(r.date)]; if(!m || !inClinic(r.clinicId, r.patientId)) continue;
+    m.refunds += Number(r.amount)||0;
+  }
+  for(const s of sales){
+    const m = M[rptMonthKey(s.date)]; if(!m || !inClinic(s.clinicId, s.patientId)) continue;
+    m.pharmacy += Number(s.totalAmount)||0;
+  }
+  for(const p of patients){
+    const m = M[rptMonthKey(p.registrationDate || p.createdAt)]; if(!m || (clinicId && (p.preferredClinicId||"")!==clinicId)) continue;
+    m.newPatients++;
+  }
+  months.forEach(k=>{ const m = M[k]; m.collection = m.receipts + m.dueColl - m.refunds; m.unbilled = Math.max(0, m.treat - m.invoiced); });
+  return { months, M };
+}
+async function openMonthlyConsolidatedReport(){
+  const cur = await finCurrency();
+  const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived);
+  const st = monthlyRptState;
+  const { months, M } = await buildMonthlyConsolidated(st.year, st.clinicId);
+  const mName = (k)=> new Date(k+"-01T00:00:00").toLocaleDateString(undefined,{month:"short"});
+  const nowKey = rptMonthKey(new Date());
+  const shown = months.filter(k=> k<=nowKey || Object.values(M[k]).some(v=> typeof v==="number" && v>0));
+  const sum = (f)=> shown.reduce((s,k)=> s+(M[k][f]||0), 0);
+  const money = (v)=> finMoney(Math.round(v), cur);
+  const selKey = st.month || (shown.includes(nowKey)? nowKey : shown[shown.length-1]);
+  const sel = M[selKey] || M[months[0]];
+  const cell = (v, strong)=> `<td style="text-align:right;${strong?'font-weight:700;':''}">${v? money(v) : '<span style="color:var(--grey);">—</span>'}</td>`;
+  const docRows = Object.entries(sel.byDoctor).sort((a,b)=> b[1].amount-a[1].amount);
+  const yearDoc = {}; shown.forEach(k=> Object.entries(M[k].byDoctor).forEach(([d,v])=>{ const y = yearDoc[d] = yearDoc[d]||{amount:0,count:0}; y.amount+=v.amount; y.count+=v.count; }));
+  const modeRows = Object.entries(sel.byMode).sort((a,b)=> b[1]-a[1]);
+  const topTreat = Object.entries(sel.byTreatment).sort((a,b)=> b[1].amount-a[1].amount).slice(0,8);
+  const pct = (a,b)=> b>0 ? Math.round(a/b*100)+"%" : "—";
+  renderFormAsPage(`
+    <h2>Monthly Consolidated Report</h2>
+    <div class="field-row">
+      <div class="field"><label>Year</label><select id="mrYear">${[0,1,2,3].map(i=>{ const y = new Date().getFullYear()-i; return `<option value="${y}" ${st.year===y?'selected':''}>${y}</option>`; }).join("")}</select></div>
+      <div class="field"><label>Clinic</label><select id="mrClinic"><option value="">All Clinics</option>${clinics.map(c=>`<option value="${c.id}" ${st.clinicId===c.id?'selected':''}>${escapeHtml(c.name.replace('Healing Touch Dental – ',''))}</option>`).join("")}</select></div>
+    </div>
+    <div class="stat-grid" style="margin-bottom:12px;">
+      <div class="stat-card accent"><div class="num">${money(sum("treat"))}</div><div class="label">Treatment Done (${st.year})</div></div>
+      <div class="stat-card"><div class="num">${money(sum("invoiced"))}</div><div class="label">Invoiced</div></div>
+      <div class="stat-card accent"><div class="num" style="color:var(--green);">${money(sum("collection"))}</div><div class="label">Total Collection</div></div>
+      <div class="stat-card warn"><div class="num">${money(sum("unbilled"))}</div><div class="label">Treatment Not Invoiced</div></div>
+    </div>
+    <div class="section-title">Month by Month</div>
+    <div class="list-card" style="overflow-x:auto;padding:0;">
+      <table class="mr-table">
+        <thead><tr><th>Month</th><th>Treatment Done</th><th>Invoiced</th><th>Receipts</th><th>Payment to be Made (collected)</th><th>Refunds</th><th>Total Collection</th><th>Not Invoiced</th><th>Collected vs Done</th><th>Pharmacy</th><th>New Patients</th></tr></thead>
+        <tbody>${shown.map(k=>{ const m = M[k]; return `<tr data-mrmonth="${k}" class="${k===selKey?'sel':''}" style="cursor:pointer;">
+          <td><b>${mName(k)}</b></td>${cell(m.treat)}${cell(m.invoiced)}${cell(m.receipts)}${cell(m.dueColl)}${cell(m.refunds? -m.refunds : 0)}${cell(m.collection, true)}${cell(m.unbilled)}
+          <td style="text-align:right;">${pct(m.collection, m.treat)}</td>${cell(m.pharmacy)}<td style="text-align:right;">${m.newPatients||"—"}</td></tr>`; }).join("")}</tbody>
+        <tfoot><tr><td><b>Total</b></td>${cell(sum("treat"),1)}${cell(sum("invoiced"),1)}${cell(sum("receipts"),1)}${cell(sum("dueColl"),1)}${cell(sum("refunds")? -sum("refunds"):0,1)}${cell(sum("collection"),1)}${cell(sum("unbilled"),1)}<td style="text-align:right;font-weight:700;">${pct(sum("collection"), sum("treat"))}</td>${cell(sum("pharmacy"),1)}<td style="text-align:right;font-weight:700;">${sum("newPatients")}</td></tr></tfoot>
+      </table>
+    </div>
+    <p style="font-size:11.5px;color:var(--grey);margin:6px 0 14px;">Tap a month for its details. Total Collection = Receipts + Payment to be Made collections − Refunds. Treatment Done counts items marked Completed, after discounts.</p>
+
+    <div class="section-title">${new Date(selKey+"-01T00:00:00").toLocaleDateString(undefined,{month:"long",year:"numeric"})} — Doctor-wise Treatment Done</div>
+    ${docRows.length? `<div class="list-card">${docRows.map(([d,v])=>`<div class="clinic-row"><div><div class="name">${escapeHtml(d)}</div><div class="addr">${v.count} treatment${v.count>1?'s':''}</div></div><b>${money(v.amount)}</b></div>`).join("")}</div>` : `<div class="empty-card">No completed treatments this month.</div>`}
+
+    <div class="section-title">Collection by Payment Mode</div>
+    ${modeRows.length? `<div class="list-card">${modeRows.map(([k,v])=>`<div class="clinic-row"><div class="name">${escapeHtml(k)}</div><b>${money(v)}</b></div>`).join("")}</div>` : `<div class="empty-card">No collections recorded this month.</div>`}
+
+    <div class="section-title">Top Treatments</div>
+    ${topTreat.length? `<div class="list-card">${topTreat.map(([k,v])=>`<div class="clinic-row"><div><div class="name">${escapeHtml(k)}</div><div class="addr">${v.count} done</div></div><b>${money(v.amount)}</b></div>`).join("")}</div>` : `<div class="empty-card">—</div>`}
+
+    <div class="section-title">Doctor-wise — Whole ${st.year}</div>
+    ${Object.keys(yearDoc).length? `<div class="list-card">${Object.entries(yearDoc).sort((a,b)=>b[1].amount-a[1].amount).map(([d,v])=>`<div class="clinic-row"><div><div class="name">${escapeHtml(d)}</div><div class="addr">${v.count} treatments</div></div><b>${money(v.amount)}</b></div>`).join("")}</div>` : `<div class="empty-card">—</div>`}
+
+    <button class="btn btn-primary btn-block" id="mrCsv" style="margin-top:14px;">Export CSV</button>
+    <button class="btn btn-outline btn-block" id="mrPrint" style="margin-top:8px;">${icon('print',15)} Print / Save PDF</button>
+  `);
+  wireFormBack(()=>{ financeView = "Reports"; goTo("financial"); });
+  document.getElementById("mrYear").onchange = (e)=>{ st.year = parseInt(e.target.value); st.month = ""; openMonthlyConsolidatedReport(); };
+  document.getElementById("mrClinic").onchange = (e)=>{ st.clinicId = e.target.value; openMonthlyConsolidatedReport(); };
+  document.querySelectorAll("[data-mrmonth]").forEach(tr=> tr.onclick = ()=>{ st.month = tr.dataset.mrmonth; openMonthlyConsolidatedReport(); });
+  const headers = ["Month","Treatment Done","Treatments Count","Invoiced","Invoices Count","Receipts","Payment to be Made Collected","Refunds","Total Collection","Not Invoiced","Pharmacy","New Patients"];
+  const rowsFor = ()=> shown.map(k=>{ const m = M[k]; return [k, m.treat, m.treatCount, m.invoiced, m.invCount, m.receipts, m.dueColl, m.refunds, m.collection, m.unbilled, m.pharmacy, m.newPatients].map(v=> typeof v==="number"? Math.round(v*100)/100 : v); });
+  document.getElementById("mrCsv").onclick = ()=>{
+    const lines = [headers].concat(rowsFor());
+    lines.push([]); lines.push(["Doctor-wise "+st.year, "Amount", "Treatments"]);
+    Object.entries(yearDoc).forEach(([d,v])=> lines.push([d, Math.round(v.amount*100)/100, v.count]));
+    const csv = lines.map(r=> r.map(x=> `"${String(x??"").replace(/"/g,'""')}"`).join(",")).join("\n");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([csv], {type:"text/csv"}));
+    a.download = "Monthly report "+st.year+(st.clinicId? " - "+((clinics.find(c=>c.id===st.clinicId)||{}).name||"") : "")+".csv";
+    document.body.appendChild(a); a.click(); a.remove();
+  };
+  document.getElementById("mrPrint").onclick = async ()=>{
+    const clinic = clinics.find(c=>c.id===st.clinicId) || clinics.find(c=>c.isDefault) || clinics[0] || {};
+    const bodyHtml = `<h2 style="margin:0 0 10px;">Monthly Consolidated Report — ${st.year}${st.clinicId? " · "+escapeHtml(clinic.name||"") : " · All Clinics"}</h2>
+      <table><thead><tr>${["Month","Treatment Done","Invoiced","Receipts","Pay-to-be-Made","Refunds","Total Collection","Not Invoiced","Pharmacy"].map(h=>`<th>${h}</th>`).join("")}</tr></thead>
+      <tbody>${shown.map(k=>{ const m = M[k]; return `<tr><td>${mName(k)}</td>${[m.treat,m.invoiced,m.receipts,m.dueColl,-m.refunds,m.collection,m.unbilled,m.pharmacy].map(v=>`<td style="text-align:right;">${money(v)}</td>`).join("")}</tr>`; }).join("")}</tbody>
+      <tfoot><tr style="font-weight:bold;"><td>Total</td>${["treat","invoiced","receipts","dueColl","refunds","collection","unbilled","pharmacy"].map(f=>`<td style="text-align:right;">${money(f==="refunds"? -sum(f) : sum(f))}</td>`).join("")}</tr></tfoot></table>
+      <h3 style="margin:18px 0 8px;">Doctor-wise Treatment Done — ${st.year}</h3>
+      <table><thead><tr><th>Doctor</th><th>Treatments</th><th style="text-align:right;">Amount</th></tr></thead><tbody>
+      ${Object.entries(yearDoc).sort((a,b)=>b[1].amount-a[1].amount).map(([d,v])=>`<tr><td>${escapeHtml(d)}</td><td>${v.count}</td><td style="text-align:right;">${money(v.amount)}</td></tr>`).join("")}</tbody></table>`;
+    printDocument({ title: "Monthly Consolidated Report", clinic, docDate: new Date().toLocaleDateString(), bodyHtml, signHtml: "" });
+  };
 }
 
 async function exportFinanceCSV(filteredList){
@@ -19891,6 +20201,8 @@ async function upsertFollowupReminder(caseObj, patient, moduleLabel, followupDat
     followupDate: followupDateIso,
     dueDate: due.toISOString(),
     status: sameDate ? (prev.status||"Pending") : "Pending",
+    // Lab case reminders are for the clinic only - never sent to the patient.
+    internal: moduleLabel==="Lab Case",
     createdAt: (prev && prev.createdAt) || nowIso()
   });
   caseObj.followupReminderId = reminderId;
@@ -35234,6 +35546,7 @@ const ICON_PATHS = {
   message: `<path d="M4 5.5h16v11.2a1.4 1.4 0 0 1-1.4 1.4H8.3L4 21.5V5.5Z"/>`,
   edit: `<path d="M4.5 19.5h4l10-10a2 2 0 0 0 0-2.8l-1.2-1.2a2 2 0 0 0-2.8 0l-10 10v4Z"/><path d="M13 6.5 17.5 11"/>`,
   check: `<path d="M5 13l4.5 4.5L19 8"/>`,
+  clip: `<path d="M20.5 11.2l-8.4 8.4a5 5 0 0 1-7.1-7.1l8.6-8.6a3.4 3.4 0 0 1 4.8 4.8l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/>`,
   ticket: `<path d="M3.5 7.5A1.5 1.5 0 0 1 5 6h14a1.5 1.5 0 0 1 1.5 1.5V10a2 2 0 0 0 0 4v2.5A1.5 1.5 0 0 1 19 18H5a1.5 1.5 0 0 1-1.5-1.5V14a2 2 0 0 0 0-4Z"/><path d="M14.5 6v12" stroke-dasharray="1.6 1.8"/><path d="M7.5 10.5h4M7.5 13.5h3"/>`,
   xcircle: `<circle cx="12" cy="12" r="8.4"/><path d="M9.3 9.3l5.4 5.4M14.7 9.3l-5.4 5.4"/>`,
   alert: `<path d="M12 3.5 21.5 20h-19L12 3.5Z"/><path d="M12 10v4.2"/><circle cx="12" cy="17.3" r="0.9" fill="currentColor" stroke="none"/>`,
