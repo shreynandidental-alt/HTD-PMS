@@ -555,6 +555,12 @@
   #hbCollection .collection-summary{margin:0;}
   #hbTopTreat .bar-row:last-child{margin-bottom:0;}
   .hb-recent .hb-panel{max-height:340px;}
+  #promiseList:not(.pl-expanded) .pl-more{display:none;}
+  #promiseList.pl-expanded .pl-more{animation:hbPanelIn .35s cubic-bezier(.16,1,.3,1) both;}
+  .pl-toggle{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;margin-top:8px;padding:10px;border-radius:12px;border:1px dashed var(--green);background:color-mix(in srgb, var(--green) 7%, transparent);color:var(--green);font-weight:800;font-size:12.5px;cursor:pointer;}
+  .pl-toggle svg{transition:transform .25s;transform:rotate(90deg);}
+  #promiseList.pl-expanded .pl-toggle svg{transform:rotate(-90deg);}
+  .pl-cnt{background:var(--green);color:#fff;border-radius:999px;padding:1px 8px;font-size:11px;}
   .hb-backup{padding:12px 14px;}
   .hb-backup-row{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;}
   .hb-backup-btns{display:flex;gap:8px;}
@@ -3476,11 +3482,33 @@ async function renderHome(){
   if(combined.length===0){
     promiseList.innerHTML = `<div class="empty-card"><b>Nothing promised right now</b>Overdue follow-ups, lab delays, implant/aligner reminders and at-risk commitments will surface here as you log them.</div>`;
   }else{
-    const shown = combined.slice(0,5);
+    // All reminders are rendered (so Done / Snooze / Remind work on every one);
+    // only the first 5 show until "Show all" is tapped.
+    const rowHtml = (x,i)=>{
+      const h = x.kind==="commitment" ? commitmentRowHtml(x.data) : reminderRowHtml(x.data);
+      return i<5 ? h : h.replace('class="appt-row"', 'class="appt-row pl-more"');
+    };
+    const extra = combined.length-5;
+    promiseList.classList.toggle("pl-expanded", !!window.__homePromiseExpanded);
     promiseList.innerHTML = `
-      <div class="list-card">${shown.map(x=> x.kind==="commitment" ? commitmentRowHtml(x.data) : reminderRowHtml(x.data)).join("")}</div>
-      ${combined.length>5 ? `<div class="empty-card" style="margin-top:8px;font-size:12.5px;">+${combined.length-5} more due — check Assist or the patient's profile.</div>` : ""}
+      <div class="list-card">${combined.map(rowHtml).join("")}</div>
+      ${extra>0 ? `<button type="button" class="pl-toggle" id="btnPromiseShowAll"></button>` : ""}
     `;
+    const tgl = document.getElementById("btnPromiseShowAll");
+    if(tgl){
+      const label = ()=>{ tgl.innerHTML = promiseList.classList.contains("pl-expanded")
+        ? `${icon('chevron',15)} Show fewer`
+        : `${icon('chevron',15)} Show all ${combined.length} reminders <span class="pl-cnt">+${extra}</span>`; };
+      label();
+      tgl.onclick = ()=>{
+        const open = !promiseList.classList.contains("pl-expanded");
+        window.__homePromiseExpanded = open;
+        promiseList.classList.toggle("pl-expanded", open);
+        label();
+        if(open) promiseList.querySelectorAll(".pl-more").forEach((r,i)=>{ r.style.animation = "none"; void r.offsetWidth; r.style.animation = ""; r.style.animationDelay = Math.min(i*35,500)+"ms"; });
+        else { const panel = promiseList.closest(".hb-panel"); if(panel) panel.scrollTop = 0; }
+      };
+    }
   }
 
   const biannualFollowUpList = document.getElementById("biannualFollowUpList");
