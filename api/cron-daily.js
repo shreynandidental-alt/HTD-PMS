@@ -275,8 +275,12 @@ export default async function handler(req, res) {
   // ---------- 4. Case/procedure follow-ups due today ----------
   try {
     const allReminders = await getAllDocs(db, "reminders");
+    // Lab case reminders are for the clinic (check the crown/cap is back
+    // from the lab before the patient's date) - they show in the PMS and
+    // must never be sent to the patient.
+    const INTERNAL_TYPES = new Set(["Lab Case", "Insurance"]);
     const dueFollowUps = allReminders.filter(r =>
-      r.followupDate && r.patientId && r.status === "Pending" &&
+      r.followupDate && r.patientId && r.status === "Pending" && !r.internal && !INTERNAL_TYPES.has(r.type) &&
       dateKeyIST(new Date(r.followupDate)) === todayKey && !r.autoFollowUpSentAt
     );
     for (const rem of dueFollowUps) {
