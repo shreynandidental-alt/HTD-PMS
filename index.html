@@ -511,6 +511,56 @@
   .mr-table tr.sel td{background:color-mix(in srgb, var(--green) 9%, var(--white));}
   .mr-table tfoot td{border-top:2px solid var(--grey-light,#ddd);}
 
+  /* ---------- Home boards */
+  .hb-layout{display:grid;grid-template-columns:1fr;gap:14px;margin-top:6px;}
+  @media (min-width:900px){
+    .hb-layout{grid-template-columns:minmax(0,1.65fr) minmax(0,1fr);align-items:start;}
+    .hb-work{grid-row:span 2;}
+    .hb-recent, .hb-backup{grid-column:1 / -1;}
+  }
+  .hb-side{display:grid;gap:14px;}
+  @media (min-width:600px) and (max-width:899px){ .hb-side{grid-template-columns:1fr 1fr;} }
+  .hb-card{background:var(--white);border:1px solid rgba(20,23,26,0.06);border-radius:18px;padding:14px;box-shadow:0 1px 2px rgba(20,23,26,0.04),0 8px 22px -14px rgba(14,111,92,0.35);min-width:0;}
+  .hb-card-head{display:flex;justify-content:space-between;align-items:center;gap:8px;font-weight:800;font-size:14px;color:var(--charcoal);margin-bottom:10px;}
+  .hb-card-head > span:first-child{display:inline-flex;align-items:center;gap:7px;}
+  .hb-card-head svg{color:var(--green);}
+  .hb-sub{font-size:11.5px;font-weight:700;color:var(--grey);}
+  .hb-tabs{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;padding:2px 1px 8px;margin-bottom:6px;border-bottom:1px solid var(--off-white);}
+  .hb-tabs::-webkit-scrollbar{display:none;}
+  .hb-tab{flex-shrink:0;display:inline-flex;align-items:center;gap:6px;border:1px solid var(--grey-light,#e2e5e7);background:var(--white);color:var(--charcoal-2);border-radius:999px;padding:7px 11px;font-size:12px;font-weight:700;cursor:pointer;transition:background .2s,color .2s,border-color .2s,transform .15s;}
+  .hb-tab:active{transform:scale(.95);}
+  .hb-tab.on{background:var(--green);color:#fff;border-color:var(--green);box-shadow:0 4px 12px -4px rgba(14,111,92,.55);}
+  .hb-tab.zero:not(.on){opacity:.6;}
+  .hb-badge{min-width:20px;height:20px;padding:0 6px;border-radius:999px;background:var(--off-white);color:var(--charcoal);font-size:11px;display:inline-flex;align-items:center;justify-content:center;}
+  .hb-tab.on .hb-badge{background:rgba(255,255,255,.25);color:#fff;}
+  .hb-tab:not(.zero) .hb-badge{background:#fde7e4;color:#b42318;}
+  .hb-tab.on:not(.zero) .hb-badge{background:#fff;color:var(--green);}
+  .hb-badge.pop{animation:htdBadgePop .45s cubic-bezier(.34,1.56,.64,1);}
+  .hb-panel{display:none;max-height:430px;overflow-y:auto;overscroll-behavior:contain;padding-right:2px;}
+  .hb-panel.on{display:block;}
+  .hb-panel.hb-in{animation:hbPanelIn .32s cubic-bezier(.16,1,.3,1);}
+  @keyframes hbPanelIn{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:none;}}
+  .hb-panel .section-title{margin-top:2px;}
+  .hb-panel-head{display:flex;justify-content:space-between;align-items:center;font-size:12px;font-weight:800;color:var(--grey);text-transform:uppercase;letter-spacing:.4px;margin:2px 0 8px;}
+  .hb-none{display:none;color:var(--grey);font-size:13px;text-align:center;padding:22px 10px;}
+  .hb-panel.is-empty .hb-none{display:block;}
+  .hb-glance{display:grid;gap:7px;margin:0 0 12px;}
+  .hb-bar{display:grid;grid-template-columns:118px 1fr 30px;align-items:center;gap:10px;background:none;border:0;padding:2px 0;cursor:pointer;text-align:left;color:var(--charcoal-2);font-size:12px;font-weight:700;}
+  .hb-bar-track{height:10px;border-radius:999px;background:var(--off-white);overflow:hidden;}
+  .hb-bar-fill{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg, color-mix(in srgb, var(--c) 60%, #fff), var(--c));transition:width .9s cubic-bezier(.16,1,.3,1);}
+  .hb-bar-n{text-align:right;font-size:13px;color:var(--charcoal);}
+  .hb-bar.zero{opacity:.55;}
+  .hb-bar:hover .hb-bar-track{box-shadow:0 0 0 2px color-mix(in srgb, var(--c) 25%, transparent);}
+  @media (max-width:420px){ .hb-bar{grid-template-columns:96px 1fr 26px;font-size:11.5px;} }
+  #hbCollection .collection-summary{margin:0;}
+  #hbTopTreat .bar-row:last-child{margin-bottom:0;}
+  .hb-recent .hb-panel{max-height:340px;}
+  .hb-backup{padding:12px 14px;}
+  .hb-backup-row{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;}
+  .hb-backup-btns{display:flex;gap:8px;}
+  body.dark-mode .hb-card{border-color:rgba(255,255,255,0.06);}
+  @media (prefers-reduced-motion: reduce){ .hb-panel.hb-in, .hb-badge.pop{animation:none;} .hb-bar-fill{transition:none;} }
+
   /* ---------- Success tick (showSuccessTick) */
   #htdSuccessTick{ position:fixed; inset:0; z-index:100000; display:flex; align-items:center; justify-content:center; pointer-events:none; }
   #htdSuccessTick .st-card{ background:var(--white,#fff); border-radius:22px; padding:22px 26px 18px; min-width:190px; max-width:80vw; text-align:center;
@@ -3274,43 +3324,71 @@ async function renderHome(){
         <div class="section-title">Shortcuts</div>
         <div class="shortcut-grid" id="shortcutGrid"></div>
 
-        <div class="section-title">Today <span class="section-link" id="btnReminderToday">Reminder Today</span></div>
-        <div id="autoRemStatus"></div>
-        <div id="todayList"></div>
+        <!-- Organised home: everything that needs attention today sits in one
+             tabbed board (with an at-a-glance chart), insights side by side,
+             and the "recent" lists in a second tabbed board. Every section
+             keeps its original id, so all buttons and actions work as before. -->
+        <div class="hb-layout" id="hbLayout">
+          <div class="hb-card hb-work" id="hbWork">
+            <div class="hb-card-head"><span>${icon('calendar',16)} Today's Work</span><span class="hb-sub" id="hbWorkSub"></span></div>
+            <div class="hb-glance" id="hbGlance"></div>
+            <div class="hb-tabs" id="hbWorkTabs" role="tablist">
+              <button type="button" class="hb-tab" data-hbtab="today" role="tab">${icon('calendar',14)}<span>Appointments</span><b class="hb-badge">0</b></button>
+              <button type="button" class="hb-tab" data-hbtab="lab" role="tab">${icon('flask',14)}<span>Lab Due</span><b class="hb-badge">0</b></button>
+              <button type="button" class="hb-tab" data-hbtab="reminders" role="tab">${icon('bell',14)}<span>Reminders</span><b class="hb-badge">0</b></button>
+              <button type="button" class="hb-tab" data-hbtab="followup" role="tab">${icon('refresh',14)}<span>6-Month Follow Up</span><b class="hb-badge">0</b></button>
+              <button type="button" class="hb-tab" data-hbtab="birthday" role="tab">${icon('cake',14)}<span>Birthdays</span><b class="hb-badge">0</b></button>
+              <button type="button" class="hb-tab" data-hbtab="maint" role="tab">${icon('settings',14)}<span>Maintenance</span><b class="hb-badge">0</b></button>
+            </div>
+            <div class="hb-panel" data-hbpanel="today">
+              <div class="hb-panel-head"><span>Today's Appointments</span><span class="section-link" id="btnReminderToday">Reminder Today</span></div>
+              <div id="autoRemStatus"></div>
+              <div id="todayList"></div>
+            </div>
+            <div class="hb-panel" data-hbpanel="lab"><div id="homeLabDue"></div><div class="hb-none">No crowns / caps due from the lab today or tomorrow.</div></div>
+            <div class="hb-panel" data-hbpanel="reminders"><div id="promiseList"></div></div>
+            <div class="hb-panel" data-hbpanel="followup"><div id="biannualFollowUpList"></div></div>
+            <div class="hb-panel" data-hbpanel="birthday"><div id="birthdayList"></div></div>
+            <div class="hb-panel" data-hbpanel="maint"><div id="homeMaintDue"></div><div class="hb-none">No maintenance due.</div></div>
+          </div>
 
-        <div id="homeLabDue"></div>
-        <div id="homeMaintDue"></div>
+          <div class="hb-side">
+            <div class="hb-card" id="hbCollection">
+              <div class="hb-card-head"><span>${icon('wallet',16)} Collection Overview</span></div>
+              <div id="collectionOverview"></div>
+            </div>
+            <div class="hb-card" id="hbTopTreat">
+              <div class="hb-card-head"><span>${icon('tooth',16)} Top Treatments</span></div>
+              <div id="topTreatmentsList"></div>
+            </div>
+          </div>
 
-        <div class="section-title">Birthdays Today</div>
-        <div id="birthdayList"></div>
+          <div class="hb-card hb-recent" id="hbRecent">
+            <div class="hb-tabs" id="hbRecentTabs" role="tablist">
+              <button type="button" class="hb-tab" data-hbtab="rpatients" role="tab">${icon('user',14)}<span>Recent Patients</span></button>
+              <button type="button" class="hb-tab" data-hbtab="rinvoices" role="tab">${icon('receipt',14)}<span>Recent Invoices</span></button>
+              <button type="button" class="hb-tab" data-hbtab="ractivity" role="tab">${icon('reports',14)}<span>Recent Activity</span></button>
+            </div>
+            <div class="hb-panel" data-hbpanel="rpatients">
+              <div class="hb-panel-head"><span>Recent Patients</span><span class="section-link" id="linkRecentPatients">View All</span></div>
+              <div id="recentPatientsList"></div>
+            </div>
+            <div class="hb-panel" data-hbpanel="rinvoices">
+              <div class="hb-panel-head"><span>Recent Invoices</span><span class="section-link" id="linkRecentInvoices">View All</span></div>
+              <div id="recentInvoicesList"></div>
+            </div>
+            <div class="hb-panel" data-hbpanel="ractivity"><div class="list-card" id="activityList"></div></div>
+          </div>
 
-        <div class="section-title">Reminders</div>
-        <div id="promiseList"></div>
-
-        <div class="section-title">Biannual Follow Up</div>
-        <div id="biannualFollowUpList"></div>
-
-        <div class="section-title">Recent Patients <span class="section-link" id="linkRecentPatients">View All</span></div>
-        <div id="recentPatientsList"></div>
-
-        <div class="section-title">Recent Invoices <span class="section-link" id="linkRecentInvoices">View All</span></div>
-        <div id="recentInvoicesList"></div>
-
-        <div class="section-title">Top Treatments</div>
-        <div class="list-card" id="topTreatmentsList" style="padding:14px;"></div>
-
-        <div class="section-title">Collection Overview</div>
-        <div class="list-card" id="collectionOverview" style="padding:14px;"></div>
-
-        <div class="section-title">Recent Activity</div>
-        <div class="list-card" id="activityList"></div>
-
-        <div class="section-title">Backup</div>
-        <div class="list-card">
-          <div style="padding:14px;">
-            <div id="backupStatusLine" style="font-size:13px;color:var(--grey);margin-bottom:10px;"></div>
-            <button class="btn btn-primary btn-block" id="btnBackupNow">Backup Now</button>
-            <button class="btn btn-outline btn-block" style="margin-top:8px;" id="btnRestoreNow">Restore from Backup</button>
+          <div class="hb-card hb-backup" id="hbBackup">
+            <div class="hb-backup-row">
+              <div><div class="hb-card-head" style="margin:0;"><span>${icon('backup',16)} Backup</span></div>
+                <div id="backupStatusLine" style="font-size:12.5px;color:var(--grey);margin-top:4px;"></div></div>
+              <div class="hb-backup-btns">
+                <button class="btn btn-primary btn-sm" id="btnBackupNow">Backup Now</button>
+                <button class="btn btn-outline btn-sm" id="btnRestoreNow">Restore</button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -3569,6 +3647,7 @@ async function renderHome(){
   makeRowsCollapsible(document.getElementById("biannualFollowUpList"));
   startHomeHero(counts.todayAppts, settings);
   revealHomeSections(document.getElementById("dashboardBody"));
+  initHomeBoards();
 
   // ---- Global search (debounced) ----
   const searchInput = document.getElementById("globalSearch");
@@ -25104,9 +25183,103 @@ function startHomeHero(todayAppts, settings){
   homeHeroTimer = setInterval(tick, 30000);
 }
 // Sections glide in as they scroll into view.
+// ---- Home boards: tabs with live counts + an animated "at a glance" chart ----
+const HB_WORK_TABS = [
+  {key:"today", label:"Appointments", color:"var(--green)"},
+  {key:"lab", label:"Lab Due", color:"#b45309"},
+  {key:"reminders", label:"Reminders", color:"#c0392b"},
+  {key:"followup", label:"6-Month Follow Up", color:"#7c3aed"},
+  {key:"birthday", label:"Birthdays", color:"#db2777"},
+  {key:"maint", label:"Maintenance", color:"#2563eb"}
+];
+function hbCountPanel(panel){
+  if(!panel) return 0;
+  const lists = [...panel.querySelectorAll(".list-card")];
+  let n = 0;
+  lists.forEach(l=>{ n += [...l.children].filter(c=> !c.classList.contains("section-title")).length; });
+  const more = (panel.textContent||"").match(/\+(\d+) more/);
+  if(more) n += parseInt(more[1]);
+  return n;
+}
+function initHomeBoards(){
+  const work = document.getElementById("hbWork"), recent = document.getElementById("hbRecent");
+  if(!work || !recent) return;
+  const remember = (k,v)=>{ try{ localStorage.setItem(k, v); }catch(e){} };
+  const recall = (k)=>{ try{ return localStorage.getItem(k); }catch(e){ return null; } };
+  const select = (card, key, store)=>{
+    card.querySelectorAll(":scope > .hb-tabs .hb-tab").forEach(t=> { const on = t.dataset.hbtab===key; t.classList.toggle("on", on); t.setAttribute("aria-selected", on?"true":"false"); });
+    card.querySelectorAll(":scope > .hb-panel").forEach(p=>{
+      const on = p.dataset.hbpanel===key;
+      if(on && !p.classList.contains("on")){ p.classList.remove("hb-in"); void p.offsetWidth; p.classList.add("hb-in"); }
+      p.classList.toggle("on", on);
+    });
+    if(store) remember(store, key);
+    const tab = card.querySelector(`.hb-tab[data-hbtab="${key}"]`);
+    const strip = tab && tab.parentElement;   // scroll only the tab strip sideways, never the page
+    if(strip && strip.scrollWidth > strip.clientWidth){
+      const l = tab.offsetLeft - strip.offsetLeft, r = l + tab.offsetWidth;
+      if(l < strip.scrollLeft) strip.scrollLeft = l - 8;
+      else if(r > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = r - strip.clientWidth + 8;
+    }
+  };
+  work.querySelectorAll(":scope > .hb-tabs .hb-tab").forEach(t=> t.onclick = ()=>{ work.dataset.userPicked = "1"; select(work, t.dataset.hbtab, "htdHomeWorkTab"); });
+  recent.querySelectorAll(":scope > .hb-tabs .hb-tab").forEach(t=> t.onclick = ()=> select(recent, t.dataset.hbtab, "htdHomeRecentTab"));
+  select(recent, recall("htdHomeRecentTab") || "rpatients");
+  const lastWork = recall("htdHomeWorkTab");
+  select(work, lastWork || "today");
+
+  let drawn = false;
+  const refresh = ()=>{
+    const counts = {};
+    HB_WORK_TABS.forEach(t=>{
+      const panel = work.querySelector(`.hb-panel[data-hbpanel="${t.key}"]`);
+      const n = hbCountPanel(panel);
+      counts[t.key] = n;
+      panel.classList.toggle("is-empty", n===0);
+      const tab = work.querySelector(`.hb-tab[data-hbtab="${t.key}"]`);
+      const badge = tab.querySelector(".hb-badge");
+      if(badge.textContent!==String(n)){ badge.textContent = n; badge.classList.remove("pop"); void badge.offsetWidth; badge.classList.add("pop"); }
+      tab.classList.toggle("zero", n===0);
+      tab.style.display = (t.key==="maint" && n===0) ? "none" : "";
+    });
+    const total = Object.values(counts).reduce((a,b)=>a+b,0);
+    const sub = document.getElementById("hbWorkSub");
+    if(sub) sub.textContent = total ? total+" item"+(total>1?"s":"")+" need attention" : "All clear";
+    // At-a-glance bars (tap a bar to open that list).
+    const glance = document.getElementById("hbGlance");
+    if(glance){
+      const shownTabs = HB_WORK_TABS.filter(t=> t.key!=="maint" || counts.maint>0);
+      const max = Math.max(1, ...shownTabs.map(t=>counts[t.key]));
+      if(!drawn){
+        glance.innerHTML = shownTabs.map(t=>`<button type="button" class="hb-bar" data-hbgo="${t.key}" style="--c:${t.color};"><span class="hb-bar-lbl">${t.label}</span><span class="hb-bar-track"><span class="hb-bar-fill" style="width:0%"></span></span><b class="hb-bar-n">0</b></button>`).join("");
+        glance.querySelectorAll("[data-hbgo]").forEach(b=> b.onclick = ()=>{ work.dataset.userPicked = "1"; select(work, b.dataset.hbgo, "htdHomeWorkTab"); });
+        drawn = true;
+      }else{
+        // a tab may have appeared (maintenance) - redraw rows if the set changed
+        const keys = [...glance.querySelectorAll("[data-hbgo]")].map(b=>b.dataset.hbgo).join(",");
+        if(keys !== shownTabs.map(t=>t.key).join(",")){ drawn = false; return refresh(); }
+      }
+      requestAnimationFrame(()=> glance.querySelectorAll("[data-hbgo]").forEach(b=>{
+        const n = counts[b.dataset.hbgo]||0;
+        b.querySelector(".hb-bar-fill").style.width = (n? Math.max(6, n/max*100) : 0)+"%";
+        b.querySelector(".hb-bar-n").textContent = n;
+        b.classList.toggle("zero", n===0);
+      }));
+    }
+    // First visit (nothing remembered): open the first list that has items.
+    if(!lastWork && !work.dataset.userPicked){
+      const first = HB_WORK_TABS.find(t=> counts[t.key]>0);
+      if(first) select(work, first.key);
+    }
+  };
+  refresh();
+  let tmr = null;
+  const mo = new MutationObserver(()=>{ clearTimeout(tmr); tmr = setTimeout(refresh, 120); });
+  work.querySelectorAll(".hb-panel").forEach(p=> mo.observe(p, {childList:true, subtree:true}));
+}
 function revealHomeSections(root){
   if(!root || !("IntersectionObserver" in window)) return;
-  const els = [...root.querySelectorAll(":scope > .section-title, :scope > .list-card, :scope > div[id]:not(#homeHero):not(#statGrid)")];
+  const els = [...root.querySelectorAll(":scope > .section-title, :scope > .list-card, :scope > div[id]:not(#homeHero):not(#statGrid):not(#hbLayout), #hbLayout > .hb-card, #hbLayout > .hb-side > .hb-card")];
   els.forEach(el=> el.classList.add("hreveal"));
   const io = new IntersectionObserver((entries)=>{
     entries.forEach(en=>{ if(en.isIntersecting){ en.target.classList.add("hshow"); io.unobserve(en.target); } });
