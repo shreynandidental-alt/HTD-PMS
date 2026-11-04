@@ -9256,8 +9256,46 @@ async function labCasePatient(lc){
   if(!p){ showToast("Patient record not found for this lab case"); return null; }
   return p;
 }
-// One page with every warranty card (images shown, PDFs downloadable),
-// published as a link and sent with the approved "document_message" template.
+// PDF warranty cards are turned into page images (pdf.js) so they show on
+// the shared page and are included in its "Download PDF".
+const PDFJS_SRC = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+const PDFJS_WORKER = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+function loadPdfJs(){
+  if(window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+  if(loadPdfJs._p) return loadPdfJs._p;
+  loadPdfJs._p = new Promise((res, rej)=>{
+    const sc = document.createElement("script"); sc.src = PDFJS_SRC;
+    sc.onload = ()=>{ try{ window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER; res(window.pdfjsLib); }catch(e){ rej(e); } };
+    sc.onerror = ()=>{ loadPdfJs._p = null; rej(new Error("Couldn't load the PDF reader")); };
+    document.head.appendChild(sc);
+  });
+  return loadPdfJs._p;
+}
+async function pdfToJpegDataUrls(src, maxPages, width){
+  const lib = await loadPdfJs();
+  let data;
+  if(/^data:/i.test(src)){
+    const bin = atob(String(src).split(",")[1]||""); data = new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++) data[i] = bin.charCodeAt(i);
+  }else{
+    data = new Uint8Array(await (await fetch(src)).arrayBuffer());
+  }
+  const pdf = await lib.getDocument({data}).promise;
+  const out = [];
+  for(let n=1; n<=Math.min(pdf.numPages, maxPages||4); n++){
+    const page = await pdf.getPage(n);
+    const v1 = page.getViewport({scale:1});
+    const vp = page.getViewport({scale: (width||1000)/v1.width});
+    const cv = document.createElement("canvas"); cv.width = Math.round(vp.width); cv.height = Math.round(vp.height);
+    const ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0,0,cv.width,cv.height);
+    await page.render({canvasContext: ctx, viewport: vp}).promise;
+    out.push(cv.toDataURL("image/jpeg", 0.72));
+  }
+  return out;
+}
+// One page with every warranty card, published as a link (the patient can
+// view it and tap "Download PDF") and sent with the approved
+// "warranty_card" template: {{1}} patient name, {{2}} link.
 async function sendLabWarrantyWhatsApp(lc){
   const atts = lc.warrantyAttachments||[];
   if(!atts.length){ showToast("Attach the warranty card first"); return; }
@@ -9268,17 +9306,27 @@ async function sendLabWarrantyWhatsApp(lc){
   const clinics = await dbGetAll("clinics");
   const clinic = clinics.find(c=>c.id===patient.preferredClinicId) || clinics.find(c=>c.isDefault) || clinics[0] || {};
   const label = "Warranty Card"+(lc.caseType? " ("+lc.caseType+(lc.tooth? ", tooth "+lc.tooth : "")+")" : "");
-  const bodyHtml = atts.map((a,i)=> isPdfAttachment(a)
-    ? `<p style="margin:10px 0;font-size:13.5px;"><a href="${escapeAttr(a.fileData||"")}" download="${escapeAttr(a.name||"warranty-card.pdf")}" target="_blank" rel="noopener">Download warranty card ${atts.length>1? (i+1)+" " : ""}(PDF)</a></p>`
-    : `<div style="text-align:center;margin:8px 0 12px;"><img src="${escapeAttr(a.imageData||"")}" style="max-width:100%;max-height:980px;object-fit:contain;border:1px solid #ddd;border-radius:6px;"></div>`).join("");
+  const imgHtml = (src)=> `<div style="text-align:center;margin:8px 0 12px;page-break-inside:avoid;"><img src="${escapeAttr(src)}" style="max-width:100%;max-height:980px;object-fit:contain;border:1px solid #ddd;border-radius:6px;"></div>`;
+  let bodyHtml = `<p style="margin:0 0 10px;font-size:13px;">${escapeHtml(lc.caseType||"Dental prosthesis")}${lc.tooth? " · Tooth "+escapeHtml(lc.tooth) : ""}${lc.labName? " · "+escapeHtml(lc.labName) : ""}${lc.deliveryDate? " · Delivered "+escapeHtml(new Date(String(lc.deliveryDate).slice(0,10)+"T00:00:00").toLocaleDateString()) : ""}</p>`;
+  for(const a of atts){
+    if(!isPdfAttachment(a)){ bodyHtml += imgHtml(a.imageData||""); continue; }
+    try{
+      const pages = await pdfToJpegDataUrls(a.fileData||"", 3, 900);
+      pages.forEach(p=> bodyHtml += imgHtml(p));
+    }catch(e){
+      console.warn("Warranty PDF to image:", e);
+      showToast("Couldn't read the warranty PDF: "+((e&&e.message)||"error"));
+      return;
+    }
+  }
   const html = await captureDocHtml(()=> printDocument({ title: label, patient, clinic, docDate: new Date().toLocaleDateString(), bodyHtml, signHtml: "" }));
   if(!html){ showToast("Couldn't prepare the warranty card page"); return; }
   const link = await publishDocLink(html, {title: label, patientName: patient.name});
   if(!link) return;
   openWhatsAppComposer({
     title: "Send "+label, toName: patient.name, toNumber: number, patientId: patient.id, recipientType: "Patient",
-    message: `Hi ${patient.name}, here is the warranty card for your ${lc.caseType||"dental prosthesis"} from Healing Touch Dental. Please keep it safe: ${link}`,
-    templateName: "document_message",
+    message: `Hi ${patient.name}, here is the warranty card for your ${lc.caseType||"dental prosthesis"} from Healing Touch Dental. Open the link and tap "Download PDF" to save it: ${link}`,
+    templateName: "warranty_card",
     templateParams: [patient.name||"Patient", link],
     onSent: ()=> logActivity("Sent warranty card to "+patient.name+" on WhatsApp", {patientId: patient.id})
   });
