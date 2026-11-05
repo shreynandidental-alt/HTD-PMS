@@ -2678,7 +2678,13 @@ function showToast(msg){
 // ---------------------------------------------------------
 async function seedDefaults(){
   const clinics = await dbGetAll("clinics");
-  if(clinics.length===0){
+  // Only a brand-new, completely empty database gets the two starter clinics.
+  // (A device whose data hadn't finished loading used to see "no clinics"
+  // and add duplicate "Sector 23 / Sector 45" placeholders.)
+  const looksNew = clinics.length===0
+    && !(await dbGetAll("settings")).length
+    && !(await dbGetAll("patients")).length;
+  if(looksNew){
     await dbAdd("clinics", {
       id: uid("clinic"),
       name: "Healing Touch Dental – Sector 23",
@@ -2699,7 +2705,7 @@ async function seedDefaults(){
   }
   // Independent check so existing installations also get this clinic added once.
   const allClinicsNow = await dbGetAll("clinics");
-  if(!allClinicsNow.some(c=> normalizeStr(c.name).includes("bubbles"))){
+  if(allClinicsNow.length && !allClinicsNow.some(c=> normalizeStr(c.name).includes("bubbles"))){
     await dbAdd("clinics", {
       id: uid("clinic"),
       name: "Bubbles Dental – Pediatric Wing",
@@ -32607,9 +32613,12 @@ async function openClinicsSheet(){
         </div>
       `).join("")}
     </div>
+    ${placeholderClinics(clinics).length? `<button class="btn btn-outline btn-block" id="btnCleanClinics" style="margin-bottom:8px;border-color:var(--red);color:var(--red);">${icon('trash',15)} Remove ${placeholderClinics(clinics).length} duplicate Sector 23 / 45 clinics</button>` : ""}
     <button class="btn btn-primary btn-block" id="btnAddClinic">+ Add Clinic</button>
   `);
   document.getElementById("btnAddClinic").onclick = ()=>openClinicForm(null);
+  const cleanBtn = document.getElementById("btnCleanClinics");
+  if(cleanBtn) cleanBtn.onclick = ()=> removePlaceholderClinics(cleanBtn);
   document.querySelectorAll("[data-edit]").forEach(b=> b.onclick=()=>openClinicForm(b.dataset.edit));
   document.querySelectorAll("[data-archive]").forEach(b=> b.onclick=async ()=>{
     const c = clinics.find(x=>x.id===b.dataset.archive);
@@ -32619,6 +32628,53 @@ async function openClinicsSheet(){
     openClinicsSheet();
     refreshClinicSelector();
   });
+}
+
+// Duplicate "Healing Touch Dental – Sector 23 / 45" placeholders (the old
+// auto-created starter clinics: address is just "Sector NN, Gurgaon, Haryana")
+// next to the real clinic for that sector.
+function placeholderClinicTarget(c, clinics){
+  const m = /^Sector (23|45), Gurgaon, Haryana$/.exec(String(c.address||"").trim());
+  if(!m || c.isDefault) return null;
+  return clinics.find(x=> x.id!==c.id && !/^Sector (23|45), Gurgaon, Haryana$/.test(String(x.address||"").trim())
+    && new RegExp("sector\\s*"+m[1]+"\\b","i").test(x.name||"") && /healing touch/i.test(x.name||"")) || null;
+}
+function placeholderClinics(clinics){ return clinics.filter(c=> placeholderClinicTarget(c, clinics)); }
+async function removePlaceholderClinics(btn){
+  const clinics = await dbGetAll("clinics");
+  const dupes = placeholderClinics(clinics);
+  if(!dupes.length) return;
+  if(!confirm(`Remove ${dupes.length} duplicate clinic entr${dupes.length>1?"ies":"y"}?\n\nAny patient, appointment, invoice or other record linked to one of them is first moved to the real "Sector 23" / "Sector 45" clinic, so nothing is lost.`)) return;
+  btn.disabled = true; btn.textContent = "Checking linked records…";
+  try{
+    const map = {}; dupes.forEach(c=> map[c.id] = placeholderClinicTarget(c, clinics).id);
+    let moved = 0;
+    for(const store of PATIENT_DATA_STORES){
+      const rows = await window.__fb.getAll(store);
+      for(const r of rows){
+        let changed = false;
+        ["clinicId","preferredClinicId"].forEach(f=>{ if(map[r[f]]){ r[f] = map[r[f]]; changed = true; } });
+        if(changed){ const o = Object.assign({}, r); delete o._ts; await dbPut(store, o); moved++; }
+      }
+    }
+    for(const u of [...await dbGetAll("users"), ...await dbGetAll("staffUsers")]){
+      if(map[u.restrictedClinicId] || map[u.clinicId]){
+        const store = (await dbGetAll("users")).some(x=>x.id===u.id) ? "users" : "staffUsers";
+        if(map[u.restrictedClinicId]) u.restrictedClinicId = map[u.restrictedClinicId];
+        if(map[u.clinicId]) u.clinicId = map[u.clinicId];
+        await dbPut(store, u); moved++;
+      }
+    }
+    if(map[selectedClinicId]) selectedClinicId = map[selectedClinicId];
+    for(const c of dupes){ await dbDelete("clinics", c.id); }
+    logActivity(`Removed ${dupes.length} duplicate clinics${moved? " ("+moved+" records moved to the real clinics)" : ""}`);
+    showSuccessTick("Duplicate clinics removed", moved? moved+" records moved" : "No records were linked to them");
+  }catch(e){
+    console.warn("Clinic cleanup:", e);
+    showToast("Couldn't finish the cleanup — please try again");
+  }
+  refreshClinicSelector();
+  openClinicsSheet();
 }
 
 async function openClinicForm(id){
