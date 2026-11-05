@@ -9347,15 +9347,29 @@ async function openLabWarrantySheet(caseId, onDone){
     <button class="btn btn-primary btn-block" id="lqwSave">Save Warranty Card</button>
   `);
   wireWarrantyUpload('lqw', atts);
-  document.getElementById("lqwSave").onclick = async ()=>{
-    const fresh = (await dbGetAll("labCases")).find(x=>x.id===caseId) || lc;
-    fresh.warrantyAttachments = atts; fresh.updatedAt = nowIso();
-    await dbPut("labCases", fresh);
-    await syncLabWarrantyToCrownCase(fresh).catch(e=> console.warn("Warranty card sync:", e));
-    logActivity("Saved warranty card for "+(fresh.patientName||""), {patientId: fresh.patientId});
-    closeSheet();
-    showSuccessTick("Warranty card saved", fresh.patientName||"");
-    if(onDone) onDone();
+  // One tap saves: the sheet closes straight away and the upload to the
+  // cloud finishes in the background (the list refreshes again once it's
+  // stored), so there's no waiting and no need to tap Save twice.
+  const saveBtn = document.getElementById("lqwSave");
+  saveBtn.onclick = async ()=>{
+    if(saveBtn.disabled) return;
+    saveBtn.disabled = true; saveBtn.textContent = "Saving…";
+    try{
+      const fresh = (await dbGetAll("labCases")).find(x=>x.id===caseId) || lc;
+      fresh.warrantyAttachments = atts; fresh.updatedAt = nowIso();
+      const write = dbPut("labCases", fresh);
+      closeSheet();
+      showSuccessTick("Warranty card saved", fresh.patientName||"");
+      if(onDone) onDone();
+      write.then(()=>{ if(onDone) try{ onDone(); }catch(e){} })
+        .then(()=> syncLabWarrantyToCrownCase(fresh).catch(e=> console.warn("Warranty card sync:", e)))
+        .then(()=> logActivity("Saved warranty card for "+(fresh.patientName||""), {patientId: fresh.patientId}))
+        .catch(err=>{ console.warn("Warranty card save:", err); showToast("Warranty card couldn't be saved to the cloud — please attach it again"); });
+    }catch(err){
+      console.warn("Warranty card save:", err);
+      saveBtn.disabled = false; saveBtn.textContent = "Save Warranty Card";
+      showToast("Couldn't save the warranty card — please try again");
+    }
   };
 }
 async function labCasePatient(lc){
