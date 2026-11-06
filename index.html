@@ -10563,11 +10563,10 @@ async function publishDocLink(html, meta){
     return null;
   }
 }
-const DOC_LINK_TEMPLATES = {
-  "OPD Card": "opd_message",
-  "Prescription": "prescription_message",
-  "OPD Prescription": "prescription_message"
-};
+// Every document link (Print shortcut, Send Prescription, Send Invoice,
+// multi-select sends, etc.) goes out on the approved "document_message"
+// template: {{1}} patient name, {{2}} link.
+const DOC_LINK_TEMPLATE = "document_message";
 async function sendDocLinkOnWhatsApp(patient, printFn, docLabel, extra){
   extra = extra || {};
   if(!patient){ showToast("No patient context available"); return; }
@@ -10578,16 +10577,12 @@ async function sendDocLinkOnWhatsApp(patient, printFn, docLabel, extra){
   if(!html){ sendPdfOnWhatsAppTwoStep(patient, printFn, docLabel); return; }
   const link = await publishDocLink(html, {title: docLabel, patientName: patient.name});
   if(!link) return;
-  const st = (await dbGetAll("settings"))[0] || {};
-  // Approved Interakt templates: {{1}} name, {{2}} link.
-  const fixedTemplate = DOC_LINK_TEMPLATES[docLabel] || null;
-  const templateName = fixedTemplate || (st.docLinkTemplate||"").trim();
   openWhatsAppComposer({
     title: "Send "+docLabel+" (PDF link)",
     toName: patient.name, toNumber: number, patientId: patient.id, recipientType: "Patient",
     message: extra.message || `Hi ${patient.name}, your ${docLabel} from Healing Touch Dental is ready. View or download it (PDF) here: ${link}`,
-    templateName: templateName || null,
-    templateParams: fixedTemplate ? [patient.name||"Patient", link] : (templateName ? [patient.name||"Patient", docLabel, link] : null),
+    templateName: DOC_LINK_TEMPLATE,
+    templateParams: [patient.name||"Patient", link],
     onSent: ()=> logActivity("Sent "+docLabel+" link to "+patient.name, {patientId: patient.id})
   });
 }
@@ -25523,7 +25518,8 @@ async function renderTreatmentTab(body, patientId, patient){
     document.getElementById("btnPrintPlansMultiProfile").onclick = ()=> openMultiSelectPrintSheet(
       "Print Treatment Plans",
       plans.map(pl=>({label: (pl.title||"Treatment Plan")+" — "+new Date(pl.createdDate).toLocaleDateString(), sublabel: computePlanTotals(pl.items||[], pl.overallDiscount, pl.overallDiscountType).finalTotalStr, record: pl})),
-      (selected)=> printSelectedTreatmentPlans(selected, patient)
+      (selected)=> printSelectedTreatmentPlans(selected, patient),
+      {patient, docLabel: "Treatment Plans"}
     );
     subBody.querySelectorAll("[data-plan]").forEach(el=> el.onclick = ()=> openTreatmentPlanForm(el.dataset.plan, patient));
     subBody.querySelectorAll("[data-send]").forEach(el=> el.onclick = async (ev)=>{
@@ -25552,7 +25548,8 @@ async function renderTreatmentTab(body, patientId, patient){
     document.getElementById("btnPrintTreatmentsMulti").onclick = ()=> openMultiSelectPrintSheet(
       "Print Treatment Done",
       active.map(it=>({label: (it.treatment||"Treatment")+(it.tooth?" (Tooth "+it.tooth+")":""), sublabel: (it.treatmentDate||it.planDate)? new Date(it.treatmentDate||it.planDate).toLocaleDateString():"", record: it})),
-      (selected)=> printSelectedTreatmentsDone(selected, patient)
+      (selected)=> printSelectedTreatmentsDone(selected, patient),
+      {patient, docLabel: "Treatment Record"}
     );
     wireTreatmentItemActions(subBody, patient, body, patientId);
   }
@@ -26697,7 +26694,8 @@ async function renderPrescriptionTab(body, patientId, patient){
   document.getElementById("btnPrintRxMulti").onclick = ()=> openMultiSelectPrintSheet(
     "Print Prescriptions",
     rx.map(r=>({label: (r.date?new Date(r.date).toLocaleDateString():"")+" — "+((r.items||[]).map(it=>it.drugName).filter(Boolean).join(", ")||"Prescription"), sublabel: r.diagnosis||"", record: r})),
-    (selected)=> printSelectedPrescriptions(selected, patient)
+    (selected)=> printSelectedPrescriptions(selected, patient),
+      {patient, docLabel: "Prescription"}
   );
   body.querySelectorAll("[data-rx]").forEach(el=> el.onclick = ()=>{ returnToPatientProfile = patientId; openPrescriptionForm(el.dataset.rx, patient); });
   body.querySelectorAll("[data-rxmenu]").forEach(el=> el.onclick = (ev)=>{
@@ -26727,9 +26725,10 @@ async function openRxActionMenu(rxId, patient, tabBody, patientId){
       closeSheet();
       renderPrescriptionTab(tabBody, patientId, patient);
     } },
-    { key:"whatsapp", icon:"message", text:"Prescription On WhatsApp", onClick: ()=>{
-      closeSheet();
-      openWhatsAppComposer({ toName: patient.name, toNumber: patient.whatsappNumber||patient.mobile, patientId: patient.id, title:"Prescription On WhatsApp", message: summary });
+    { key:"whatsapp", icon:"message", text:"Prescription On WhatsApp", onClick: async ()=>{
+      // Sent as a link on the approved document_message template.
+      closeSheet(); const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived); rxItemsDraft = (rx.items||[]).map(it=>Object.assign({}, it));
+      sendPdfOnWhatsApp(patient, ()=>printPrescription(rx, patient, clinics), "Prescription");
     } }
   ]);
 }
@@ -28327,7 +28326,8 @@ async function renderBillingTab(body, patientId, patient){
     document.getElementById("btnPrintInvoicesMulti").onclick = ()=> openMultiSelectPrintSheet(
       "Print Invoices",
       invoices.map(inv=>({label: (inv.invoiceNumber||"Invoice")+" — "+new Date(inv.date).toLocaleDateString(), sublabel: finMoney(inv.totalNet||0,cur), record: inv})),
-      (selected)=> printSelectedInvoices(selected, patient)
+      (selected)=> printSelectedInvoices(selected, patient),
+      {patient, docLabel: "Invoice"}
     );
     subBody.querySelectorAll("[data-invoice]").forEach(el=> el.onclick = ()=>{ returnToPatientProfile = patientId; openInvoiceForm(el.dataset.invoice, patient); });
     subBody.querySelectorAll("[data-invmenu]").forEach(el=> el.onclick = (ev)=>{
@@ -28365,7 +28365,8 @@ async function renderBillingTab(body, patientId, patient){
     document.getElementById("btnPrintReceiptsMulti").onclick = ()=> openMultiSelectPrintSheet(
       "Print Receipts",
       payments.map(p=>({label: (p.receiptNumber||"Receipt")+" — "+new Date(p.date).toLocaleDateString(), sublabel: finMoney(p.amount||0,cur), record: p})),
-      (selected)=> printSelectedReceipts(selected, patient)
+      (selected)=> printSelectedReceipts(selected, patient),
+      {patient, docLabel: "Receipt"}
     );
     subBody.querySelectorAll("[data-receipt]").forEach(el=>{
       el.onclick = ()=>{
@@ -28491,9 +28492,10 @@ async function openInvoiceActionMenu(invoiceId, patient, tabBody, patientId, cur
       closeSheet();
       renderBillingTab(tabBody, patientId, patient);
     } },
-    { key:"whatsapp", icon:"message", text:"Invoice On WhatsApp", onClick: ()=>{
-      closeSheet();
-      openWhatsAppComposer({ toName: patient.name, toNumber: patient.whatsappNumber||patient.mobile, patientId: patient.id, title:"Invoice On WhatsApp", message: summary });
+    { key:"whatsapp", icon:"message", text:"Invoice On WhatsApp", onClick: async ()=>{
+      // Sent as a link on the approved document_message template.
+      closeSheet(); const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived); invoiceItemsDraft = (inv.items||[]).map(it=>Object.assign({}, it));
+      sendPdfOnWhatsApp(patient, ()=>printInvoice(inv, patient, clinics, cur), "Invoice");
     } }
   ]);
 }
@@ -30846,7 +30848,7 @@ function openOpdPrescriptionOptionsSheet(patient){
 // several dated records of THAT one type and print them together — kept
 // deliberately single-type, unlike the old consolidated-by-date print, so
 // picking the Invoices print icon only ever offers invoices to choose from.
-function openMultiSelectPrintSheet(title, records, onConfirm){
+function openMultiSelectPrintSheet(title, records, onConfirm, waOpts){
   if(!records.length){ showToast("Nothing here yet to print"); return; }
   openSheet(`
     <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
@@ -30868,6 +30870,7 @@ function openMultiSelectPrintSheet(title, records, onConfirm){
       `).join("")}
     </div>
     <button class="btn btn-primary btn-block" id="btnMspPrint" style="margin-top:14px;">${icon('print',15)} Print Selected</button>
+    ${waOpts && waOpts.patient? `<button class="btn btn-outline btn-block" id="btnMspWa" style="margin-top:8px;">${icon('message',15)} Send Selected on WhatsApp (link)</button>` : ""}
   `);
   document.getElementById("mspSelectAll").onclick = ()=> document.querySelectorAll(".msp-check").forEach(cb=> cb.checked=true);
   document.getElementById("mspClearAll").onclick = ()=> document.querySelectorAll(".msp-check").forEach(cb=> cb.checked=false);
@@ -30876,6 +30879,15 @@ function openMultiSelectPrintSheet(title, records, onConfirm){
     if(!chosen.length){ showToast("Pick at least one"); return; }
     closeSheetOrReturn();
     await onConfirm(chosen);
+  };
+  const waBtn = document.getElementById("btnMspWa");
+  if(waBtn) waBtn.onclick = ()=>{
+    const chosen = [...document.querySelectorAll(".msp-check:checked")].map(cb=> records[parseInt(cb.dataset.idx)].record);
+    if(!chosen.length){ showToast("Pick at least one"); return; }
+    closeSheetOrReturn();
+    // Same pages as "Print Selected", published as one link and sent via the
+    // WhatsApp API with the document_message template.
+    sendDocLinkOnWhatsApp(waOpts.patient, ()=> onConfirm(chosen), waOpts.docLabel || title.replace(/^Print\s+/,""));
   };
 }
 
@@ -34572,8 +34584,8 @@ function doctorSignHtml(doctor){
   return `
     <div class="sign-block">
       ${doctor.signature? `<img src="${doctor.signature}">` : `<div class="sign-blank-line"></div>`}
-      ${doctor.stamp? `<img class="stamp" src="${doctor.stamp}">` : ""}
       <div class="sign-name">Dr. ${escapeHtml(doctor.name)}</div>
+      ${doctor.stamp? `<img class="stamp" src="${doctor.stamp}">` : ""}
     </div>
   `;
 }
@@ -34606,8 +34618,8 @@ async function consentDoctorColumnHtml(doctorName){
   return `
     <div style="width:45%;text-align:center;">
       ${doctorRecord.signature? `<img src="${doctorRecord.signature}" style="height:42px;object-fit:contain;display:block;margin:0 auto;">` : `<div style="height:42px;"></div>`}
-      ${doctorRecord.stamp? `<img src="${doctorRecord.stamp}" style="height:54px;object-fit:contain;display:block;margin:2px auto 0;">` : ""}
       <div style="border-top:1px solid #14171A;padding-top:4px;margin-top:4px;font-size:12px;font-weight:700;">Dr. ${escapeHtml(doctorRecord.name)}</div>
+      ${doctorRecord.stamp? `<img src="${doctorRecord.stamp}" style="height:54px;object-fit:contain;display:block;margin:4px auto 0;">` : ""}
     </div>
   `;
 }
