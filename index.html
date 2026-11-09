@@ -511,6 +511,105 @@
   .mr-table tr.sel td{background:color-mix(in srgb, var(--green) 9%, var(--white));}
   .mr-table tfoot td{border-top:2px solid var(--grey-light,#ddd);}
 
+  /* ---------- AI Skills */
+  .ais-page{max-width:1180px;}
+  .ais-hero{display:flex;gap:14px;align-items:center;margin-bottom:6px;padding:16px;border-radius:18px;background:linear-gradient(135deg,color-mix(in srgb,var(--green) 12%,transparent),color-mix(in srgb,#7c3aed 10%,transparent));}
+  .ais-hero-ico{width:46px;height:46px;border-radius:14px;background:var(--green);color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0;animation:aisPulse 2.4s ease-in-out infinite;}
+  @keyframes aisPulse{0%,100%{box-shadow:0 0 0 0 rgba(14,111,92,.35);}50%{box-shadow:0 0 0 10px rgba(14,111,92,0);}}
+  .ais-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;}
+  .ais-tile{display:flex;flex-direction:column;align-items:flex-start;gap:6px;text-align:left;padding:14px;border-radius:16px;border:1px solid rgba(20,23,26,.07);background:var(--white);cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,.04);transition:transform .18s,box-shadow .18s,border-color .18s;animation:hbPanelIn .45s cubic-bezier(.16,1,.3,1) both;color:var(--charcoal);}
+  .ais-tile:hover{transform:translateY(-3px);box-shadow:0 10px 24px -12px var(--c);border-color:color-mix(in srgb,var(--c) 45%,transparent);}
+  .ais-tile-ico{width:38px;height:38px;border-radius:12px;display:flex;align-items:center;justify-content:center;background:color-mix(in srgb,var(--c) 14%,transparent);color:var(--c);}
+  .ais-tile-name{font-weight:800;font-size:14px;}
+  .ais-tile-desc{font-size:12px;color:var(--grey);line-height:1.4;}
+  .ais-top{display:flex;align-items:center;gap:10px;margin-bottom:14px;}
+  .ais-top-ico{width:38px;height:38px;border-radius:12px;color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+  .ais-top-title{font-weight:800;font-size:17px;}
+  .ais-top-sub{font-size:12px;color:var(--grey);}
+  .ais-loading{padding:30px;text-align:center;color:var(--grey);}
+  .ais-card{background:var(--white);border:1px solid rgba(20,23,26,.07);border-radius:16px;padding:14px;margin-bottom:12px;animation:hbPanelIn .4s cubic-bezier(.16,1,.3,1) both;min-width:0;}
+  .ais-card-title{font-weight:800;font-size:13px;margin-bottom:8px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+  .ais-two{display:grid;grid-template-columns:1fr;gap:12px;}
+  @media (min-width:860px){ .ais-two{grid-template-columns:1fr 1fr;} .ais-two > .ais-card{margin-bottom:0;} .ais-two{margin-bottom:12px;} }
+  .ais-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:12px;}
+  .ais-kpi{background:var(--white);border:1px solid rgba(20,23,26,.07);border-left:4px solid var(--k,var(--green));border-radius:14px;padding:10px 12px;animation:hbPanelIn .4s both;}
+  .ais-kpi b{display:block;font-size:19px;color:var(--k,var(--charcoal));}
+  .ais-kpi span{font-size:11.5px;color:var(--grey);}
+  .ais-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:4px 0 10px;}
+  .ais-select{padding:7px 10px;border-radius:10px;border:1px solid var(--grey-light,#e2e5e7);background:var(--white);font-size:12.5px;}
+  .ais-table-wrap{overflow:auto;border:1px solid rgba(20,23,26,.07);border-radius:14px;background:var(--white);margin-bottom:12px;}
+  .ais-table{width:100%;border-collapse:collapse;font-size:12.5px;}
+  .ais-table th{position:sticky;top:0;background:var(--off-white);text-align:left;padding:8px 10px;font-size:11px;text-transform:uppercase;letter-spacing:.3px;color:var(--grey);white-space:nowrap;}
+  .ais-table td{padding:8px 10px;border-top:1px solid var(--off-white);vertical-align:top;}
+  .ais-table small{color:var(--grey);}
+  .ais-empty{text-align:center;color:var(--grey);padding:20px !important;}
+  .ais-badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:10.5px;font-weight:800;letter-spacing:.3px;}
+  .ais-meter{height:6px;width:80px;border-radius:99px;background:var(--off-white);overflow:hidden;margin-bottom:3px;}
+  .ais-meter span{display:block;height:100%;border-radius:99px;animation:aisGrow .8s cubic-bezier(.16,1,.3,1);transform-origin:left;}
+  @keyframes aisGrow{from{transform:scaleX(0);}to{transform:scaleX(1);}}
+  .ais-bars{display:grid;gap:7px;}
+  .ais-bar-row{display:grid;grid-template-columns:minmax(90px,38%) 1fr auto;gap:8px;align-items:center;font-size:12px;}
+  .ais-bar-lbl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--charcoal-2);font-weight:600;}
+  .ais-bar-track{height:10px;border-radius:99px;background:var(--off-white);overflow:hidden;}
+  .ais-bar-fill{display:block;height:100%;width:0;border-radius:99px;background:var(--green);transition:width 1s cubic-bezier(.16,1,.3,1);}
+  .ais-bar-val{font-size:12px;}
+  .ais-col-chart{display:flex;align-items:flex-end;gap:3px;height:150px;padding-top:6px;}
+  .ais-col{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;min-width:0;}
+  .ais-col-fill{width:100%;height:0;border-radius:4px 4px 0 0;transition:height 1s cubic-bezier(.16,1,.3,1);}
+  .ais-col small{font-size:9px;color:var(--grey);margin-top:2px;}
+  .ais-heat-table{border-collapse:separate;border-spacing:3px;font-size:11px;width:100%;}
+  .ais-heat-table th{color:var(--grey);font-weight:700;padding:2px 4px;}
+  .ais-heat{height:30px;min-width:34px;text-align:center;border-radius:6px;background:rgba(14,111,92,calc(var(--a) * .9 + .04));color:#fff;font-weight:700;animation:hbPanelIn .5s both;}
+  .ais-insights:empty{display:none;}
+  .ais-ins-card{border-radius:16px;padding:14px;margin-bottom:12px;background:linear-gradient(135deg,color-mix(in srgb,#7c3aed 8%,var(--white)),var(--white));border:1px solid color-mix(in srgb,#7c3aed 25%,transparent);animation:hbPanelIn .4s both;}
+  .ais-ins-head{font-weight:800;font-size:14px;display:flex;gap:6px;align-items:center;color:#5b21b6;}
+  .ais-ins-sub{font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--grey);font-weight:800;margin:10px 0 2px;}
+  .ais-ins-card ul,.ais-ins-card ol{margin:0;padding-left:20px;font-size:13px;line-height:1.55;}
+  .ais-err{background:#fdecec;border:1px solid #f5c2c2;color:#b42318;border-radius:12px;padding:10px 12px;font-size:13px;margin-bottom:12px;}
+  .ais-warn{margin-top:8px;font-size:12px;color:#92400e;}
+  .ais-warnbox{background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;padding:10px 12px;margin-bottom:10px;font-size:13px;color:#9a3412;}
+  .ais-warnbox ul{margin:4px 0 0;padding-left:18px;}
+  .ais-steps{display:grid;gap:6px;}
+  .ais-step{display:grid;grid-template-columns:28px 1fr auto;gap:10px;align-items:center;padding:8px 10px;border-radius:12px;background:var(--off-white);animation:hbPanelIn .4s both;}
+  .ais-step .n{width:26px;height:26px;border-radius:50%;background:var(--green);color:#fff;font-weight:800;font-size:12px;display:flex;align-items:center;justify-content:center;}
+  .ais-total{text-align:right;margin-top:8px;font-size:14px;}
+  .ais-quote{background:var(--off-white);border-radius:12px;padding:10px 12px;font-size:13px;line-height:1.55;white-space:pre-wrap;}
+  .ais-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--off-white);font-size:13px;}
+  .ais-row:first-of-type{border-top:0;}
+  .ais-slot{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px;border-radius:12px;border:1px solid rgba(20,23,26,.07);margin-bottom:6px;animation:hbPanelIn .4s both;}
+  .ais-picked{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 10px;border-radius:12px;background:var(--off-white);font-size:13px;}
+  .ais-picked span{color:var(--grey);}
+  .ais-chips{display:flex;flex-wrap:wrap;gap:6px;}
+  .ais-chip{border:1px solid var(--grey-light,#e2e5e7);background:var(--white);border-radius:999px;padding:6px 10px;font-size:12px;cursor:pointer;color:var(--charcoal-2);}
+  .ais-chip:hover{border-color:var(--green);color:var(--green);}
+  .ais-answer{font-size:14px;line-height:1.6;}
+  .ais-topaction{margin-top:10px;padding:10px 12px;border-radius:12px;background:color-mix(in srgb,var(--green) 10%,transparent);font-size:13px;}
+  .ais-doc{border:1px solid rgba(20,23,26,.08);border-radius:12px;padding:16px;font-size:13px;line-height:1.55;max-height:520px;overflow:auto;background:#fff;color:#14171A;}
+  .ais-risk{display:flex;align-items:center;gap:14px;margin-bottom:10px;}
+  .ais-gauge{width:76px;height:76px;border-radius:50%;background:conic-gradient(var(--c) calc(var(--v) * 3.6deg), var(--off-white) 0);display:flex;flex-direction:column;align-items:center;justify-content:center;position:relative;flex-shrink:0;}
+  .ais-gauge::before{content:"";position:absolute;inset:8px;border-radius:50%;background:var(--white);}
+  .ais-gauge b,.ais-gauge span{position:relative;}
+  .ais-gauge b{font-size:20px;line-height:1;}
+  .ais-gauge span{font-size:10px;color:var(--grey);}
+  .ais-kvs{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:6px 14px;}
+  .ais-kv{display:flex;flex-direction:column;font-size:13px;padding:6px 0;border-bottom:1px solid var(--off-white);}
+  .ais-kv span{font-size:11px;color:var(--grey);}
+  .ais-seg-ring-card{display:flex;align-items:center;justify-content:center;}
+  .ais-seg-ring{width:190px;height:190px;border-radius:50%;display:flex;align-items:center;justify-content:center;position:relative;animation:aisSpin 1s cubic-bezier(.16,1,.3,1);}
+  @keyframes aisSpin{from{transform:rotate(-90deg) scale(.6);opacity:0;}to{transform:none;opacity:1;}}
+  .ais-seg-ring::before{content:"";position:absolute;inset:26px;border-radius:50%;background:var(--white);}
+  .ais-seg-ring > div{position:relative;text-align:center;}
+  .ais-seg-ring b{display:block;font-size:26px;}
+  .ais-seg-ring span{font-size:11px;color:var(--grey);}
+  .ais-seg-legend{display:grid;gap:4px;}
+  .ais-seg-item{display:grid;grid-template-columns:12px 1fr auto;gap:10px;align-items:center;padding:7px 8px;border-radius:10px;border:0;background:none;cursor:pointer;text-align:left;color:var(--charcoal);}
+  .ais-seg-item:hover{background:var(--off-white);}
+  .ais-seg-item .dot{width:12px;height:12px;border-radius:4px;background:var(--c);}
+  .ais-seg-item .nm{font-weight:800;font-size:12.5px;display:flex;flex-direction:column;}
+  .ais-seg-item small{font-weight:500;color:var(--grey);font-size:11px;}
+  body.dark-mode .ais-doc{background:#fff;}
+  @media (prefers-reduced-motion: reduce){ .ais-tile,.ais-card,.ais-kpi,.ais-step,.ais-slot,.ais-heat,.ais-seg-ring,.ais-hero-ico{animation:none;} .ais-bar-fill,.ais-col-fill{transition:none;} }
+
   /* ---------- Home boards */
   .hb-layout{display:grid;grid-template-columns:1fr;gap:14px;margin-top:6px;}
   @media (min-width:900px){
@@ -2042,6 +2141,7 @@
       <div class="nav-item" data-page="appointments"><span class="ico" data-icon="calendar"></span><span class="lbl"> Appointments</span></div>
       <div class="nav-item" data-page="clinical"><span class="ico" data-icon="tooth"></span><span class="lbl"> Clinical</span></div>
       <div class="nav-item" data-page="assist"><span class="ico" data-icon="assist"></span><span class="lbl"> Assist</span></div>
+      <div class="nav-item" data-page="aiskills"><span class="ico" data-icon="sparkle"></span><span class="lbl"> AI Skills</span></div>
       <div class="sidebar-divider"></div>
       <div class="nav-item" data-page="financial"><span class="ico" data-icon="wallet"></span><span class="lbl"> Billing &amp; Finance</span></div>
       <div class="nav-item" data-page="inventory"><span class="ico" data-icon="box"></span><span class="lbl"> Inventory</span></div>
@@ -3115,6 +3215,7 @@ const PAGE_RENDERERS = {
   pharmacy: renderPharmacy,
   labcases: renderLabCases,
   maintenance: renderMaintenance,
+  aiskills: renderAiSkills,
   more: renderMore,
   admin: renderAdminPanel,
   patientProfile: ()=> renderPatientProfileSheet(profilePatientId)
@@ -24835,6 +24936,733 @@ function aiSetBusy(btn, busy, label){
 }
 const AI_REVIEW_NOTE = `<div class="ai-note">✦ AI suggestion — please review before using. Final clinical decisions rest with the treating dentist.</div>`;
 
+// =====================================================================
+// AI SKILLS (sidebar → AI Skills). 14 assistants built on the clinic's
+// own data. Numbers (risk scores, forecasts, segments, stock run-outs,
+// peak hours) are calculated here in the PMS so they are exact; the AI
+// (Admin → AI Provider) only turns them into insights, drafts and
+// documents. Nothing is saved or sent without a staff member's tap.
+// =====================================================================
+const AIS_SKILLS = [
+  {key:"advisor",   name:"Treatment Advisor",     icon:"tooth",    color:"#0E6F5C", group:"Clinical",   desc:"Sequenced plan, cost estimate & contraindication flags from a diagnosis"},
+  {key:"consent",   name:"Consent Generator",     icon:"clip",     color:"#0E6F5C", group:"Clinical",   desc:"Procedure-specific consent form in English / Hindi / Hinglish, ready to print or send"},
+  {key:"intake",    name:"Patient Intake",        icon:"user",     color:"#0E6F5C", group:"Clinical",   desc:"Paste a new patient's details — get a clean record + medical risk score"},
+  {key:"scheduler", name:"Smart Scheduler",       icon:"calendar", color:"#2563eb", group:"Front desk", desc:"\"Next Tuesday evening with Dr. Hooda\" → 3 free slots, one tap to book"},
+  {key:"noshow",    name:"No-show Predictor",     icon:"alert",    color:"#2563eb", group:"Front desk", desc:"Risk score for every upcoming appointment, with who to call first"},
+  {key:"reception", name:"WhatsApp Receptionist", icon:"message",  color:"#2563eb", group:"Front desk", desc:"Paste a patient's WhatsApp message — get the right reply in their language"},
+  {key:"billing",   name:"Billing Agent",         icon:"wallet",   color:"#b45309", group:"Finance",    desc:"Outstanding balances by reminder stage, with one-tap reminders", fin:true},
+  {key:"cashflow",  name:"Cashflow Forecaster",   icon:"reports",  color:"#b45309", group:"Finance",    desc:"Next 30 days' collections projected from your own history", fin:true},
+  {key:"pricing",   name:"Dynamic Pricing",       icon:"ticket",   color:"#b45309", group:"Finance",    desc:"Peak / quiet hours heat-map and off-peak offer ideas", fin:true},
+  {key:"claims",    name:"Claim Analyzer",        icon:"clip",     color:"#b45309", group:"Finance",    desc:"Why an insurance claim is stuck or rejected + appeal letter", fin:true},
+  {key:"analyst",   name:"Clinic Analyst",        icon:"sparkle",  color:"#7c3aed", group:"Growth",     desc:"Ask anything about revenue, doctors, treatments, patients", fin:true},
+  {key:"segments",  name:"Patient Segmentation",  icon:"user",     color:"#7c3aed", group:"Growth",     desc:"VIP, loyal, at-risk & churning patients (RFM) — message a whole group"},
+  {key:"inventory", name:"Inventory Forecaster",  icon:"box",      color:"#db2777", group:"Operations", desc:"Days until each item runs out and how much to reorder"},
+  {key:"lab",       name:"Lab Coordinator",       icon:"flask",    color:"#db2777", group:"Operations", desc:"Lab turnaround, late deliveries & remakes per lab; what to chase today"}
+];
+let aisOpenKey = null;
+
+function aisAllowed(s){ return !s.fin || currentUserIsAdmin || canAccessModule("financial"); }
+function aisDaysBetween(a, b){ return Math.round((new Date(b) - new Date(a)) / 86400000); }
+function aisDateOnly(d){ try{ return toDateKey(new Date(d)); }catch(e){ return ""; } }
+function aisBadge(level){
+  const m = {HIGH:["#fde7e4","#b42318"], MEDIUM:["#fef3c7","#92400e"], LOW:["#dcfce7","#166534"], CRITICAL:["#fde7e4","#b42318"], SOON:["#fef3c7","#92400e"], NORMAL:["#e0f2fe","#075985"], EXCESS:["#ede9fe","#5b21b6"], OK:["#dcfce7","#166534"]};
+  const c = m[level] || ["#f1f5f9","#334155"];
+  return `<span class="ais-badge" style="background:${c[0]};color:${c[1]};">${escapeHtml(level)}</span>`;
+}
+function aisBars(rows, opts){
+  // rows: [{label, value, sub}] → animated horizontal bars
+  const max = Math.max(1, ...rows.map(r=>r.value||0));
+  const fmt = (opts && opts.fmt) || (v=>v);
+  return `<div class="ais-bars">${rows.map(r=>`<div class="ais-bar-row"><span class="ais-bar-lbl">${escapeHtml(r.label)}</span><span class="ais-bar-track"><span class="ais-bar-fill" data-w="${Math.max(r.value? 3:0, (r.value||0)/max*100)}" style="${opts&&opts.color? 'background:'+opts.color:''}"></span></span><b class="ais-bar-val">${fmt(r.value||0)}</b></div>`).join("")}</div>`;
+}
+function aisAnimate(root){
+  setTimeout(()=> (root||document).querySelectorAll(".ais-bar-fill[data-w]").forEach(el=> el.style.width = el.dataset.w+"%"), 40);
+  (root||document).querySelectorAll(".ais-tile").forEach((t,i)=> t.style.animationDelay = (i*40)+"ms");
+}
+function aisInsightsBox(id){ return `<div class="ais-insights" id="${id}"></div>`; }
+async function aisRunInsights(btn, boxId, skill, data){
+  const box = document.getElementById(boxId);
+  aiSetBusy(btn, true, "Analysing…");
+  try{
+    const r = await aiRequest("skill_insights", {skill, data});
+    box.innerHTML = `<div class="ais-ins-card">
+      <div class="ais-ins-head">${icon('sparkle',16)} ${escapeHtml(r.headline||"")}</div>
+      ${(r.insights||[]).length? `<div class="ais-ins-sub">What the data shows</div><ul>${r.insights.map(x=>`<li>${escapeHtml(x)}</li>`).join("")}</ul>` : ""}
+      ${(r.actions||[]).length? `<div class="ais-ins-sub">What to do</div><ol>${r.actions.map(x=>`<li>${escapeHtml(x)}</li>`).join("")}</ol>` : ""}
+      <div class="ai-note">✦ AI suggestion${aiRequest.last? " · "+escapeHtml(aiRequest.last):""} — figures above are calculated from your data; please review the advice.</div>
+    </div>`;
+  }catch(e){ box.innerHTML = `<div class="ais-err">${escapeHtml(e.message)}</div>`; }
+  aiSetBusy(btn, false);
+}
+function aisShell(skill, inner){
+  return `<div class="page ais-page">
+    <div class="ais-top"><button class="icon-btn" id="aisBack" title="All AI Skills">${icon('back',18)}</button>
+      <div class="ais-top-ico" style="background:${skill.color};">${icon(skill.icon,18)}</div>
+      <div><div class="ais-top-title">${escapeHtml(skill.name)}</div><div class="ais-top-sub">${escapeHtml(skill.desc)}</div></div></div>
+    <div id="aisBody">${inner}</div></div>`;
+}
+function aisWireBack(){ const b = document.getElementById("aisBack"); if(b) b.onclick = ()=>{ aisOpenKey = null; renderAiSkills(); }; }
+
+async function renderAiSkills(){
+  const main = document.getElementById("main");
+  if(aisOpenKey){
+    const s = AIS_SKILLS.find(x=>x.key===aisOpenKey);
+    if(s && aisAllowed(s)){ main.innerHTML = aisShell(s, `<div class="ais-loading"><span class="ai-spin"></span> Loading your data…</div>`); aisWireBack(); try{ await AIS_RENDER[s.key](document.getElementById("aisBody"), s); }catch(e){ console.warn(e); document.getElementById("aisBody").innerHTML = `<div class="ais-err">${escapeHtml(e.message||String(e))}</div>`; } aisAnimate(main); return; }
+    aisOpenKey = null;
+  }
+  const groups = [...new Set(AIS_SKILLS.map(s=>s.group))];
+  main.innerHTML = `<div class="page ais-page">
+    <div class="ais-hero"><div class="ais-hero-ico">${icon('sparkle',22)}</div><div><h2 style="margin:0;">AI Skills</h2>
+      <p style="margin:2px 0 0;color:var(--grey);font-size:13px;">${AIS_SKILLS.filter(aisAllowed).length} assistants working on your clinic's own data. Numbers are calculated by the PMS; the AI explains them and drafts the work. You review before anything is saved or sent.</p></div></div>
+    ${groups.map(g=>{ const list = AIS_SKILLS.filter(s=>s.group===g && aisAllowed(s)); return list.length? `<div class="section-title">${escapeHtml(g)}</div>
+      <div class="ais-grid">${list.map(s=>`<button type="button" class="ais-tile" data-ais="${s.key}" style="--c:${s.color};"><span class="ais-tile-ico">${icon(s.icon,20)}</span><span class="ais-tile-name">${escapeHtml(s.name)}</span><span class="ais-tile-desc">${escapeHtml(s.desc)}</span></button>`).join("")}</div>` : ""; }).join("")}
+    <p style="font-size:11.5px;color:var(--grey);margin-top:14px;">Also built into patient screens: AI clinical notes, patient summary, Rx safety check, treatment-plan explainer, pre/post-op instructions and message rewriting.</p>
+  </div>`;
+  main.querySelectorAll("[data-ais]").forEach(b=> b.onclick = ()=>{ aisOpenKey = b.dataset.ais; renderAiSkills(); document.getElementById("main").scrollTop = 0; });
+  aisAnimate(main);
+}
+
+// ---------- shared data helpers ----------
+async function aisPatientPicker(slotId, onPick, label){
+  const slot = document.getElementById(slotId);
+  const draw = (p)=>{
+    slot.innerHTML = p
+      ? `<div class="ais-picked"><b>${escapeHtml(p.name)}</b> <span>${escapeHtml(p.mobile||"")}</span> <button type="button" class="btn btn-outline btn-sm" id="${slotId}Chg">Change</button></div>`
+      : `<button type="button" class="btn btn-outline btn-block" id="${slotId}Pick">${icon('user',15)} ${escapeHtml(label||"Choose patient")}</button>`;
+    const btn = document.getElementById(p? slotId+"Chg" : slotId+"Pick");
+    btn.onclick = ()=> openPatientPickerThen(label||"Choose patient", (pt)=>{ closeSheet(); draw(pt); onPick(pt); });
+  };
+  draw(null);
+}
+function aisVisitDates(pid, ctx){
+  return ctx.visitsByPatient[pid] || [];
+}
+async function aisLoadCore(){
+  const [patients, appts, plans, payments, dues, refunds] = await Promise.all([
+    dbGetAll("patients"), dbGetAll("appointments"), dbGetAll("treatmentPlans"), dbGetAll("payments"), dbGetAll("paymentsDue"), dbGetAll("refunds").catch(()=>[])
+  ]);
+  const visitsByPatient = {};
+  const addVisit = (pid, d)=>{ if(!pid || !d) return; const k = aisDateOnly(d); if(!k) return; (visitsByPatient[pid] = visitsByPatient[pid] || new Set()).add(k); };
+  appts.forEach(a=>{ if(a.status==="Completed" || a.status==="Arrived" || a.status==="InChair") addVisit(a.patientId, a.date); });
+  plans.forEach(pl=> (pl.items||[]).forEach(it=>{ if(it.status==="Completed") addVisit(pl.patientId, it.treatmentDate || pl.createdDate); }));
+  Object.keys(visitsByPatient).forEach(k=> visitsByPatient[k] = [...visitsByPatient[k]].sort());
+  return {patients: patients.filter(p=>p.status!=="Archived"), appts, plans, payments, dues, refunds, visitsByPatient};
+}
+
+// ---------- individual skills ----------
+const AIS_RENDER = {};
+
+// 1. No-show predictor
+AIS_RENDER.noshow = async (body)=>{
+  const ctx = await aisLoadCore();
+  const today = toDateKey(new Date());
+  const horizon = toDateKey(new Date(Date.now()+7*86400000));
+  const past = {};
+  ctx.appts.forEach(a=>{
+    if(!a.patientId || !a.date || a.date>=today) return;
+    const h = past[a.patientId] = past[a.patientId] || {total:0, noShow:0, cancel:0};
+    h.total++; if(a.status==="NoShow") h.noShow++; if(a.status==="Cancelled") h.cancel++;
+  });
+  const pById = {}; ctx.patients.forEach(p=> pById[p.id] = p);
+  const upcoming = ctx.appts.filter(a=> a.date>=today && a.date<=horizon && !["Cancelled","NoShow","Completed","Reserved","Rescheduled"].includes(a.status))
+    .sort((a,b)=> (a.date+(a.startTime||"")).localeCompare(b.date+(b.startTime||"")));
+  const rows = upcoming.map(a=>{
+    const h = past[a.patientId] || {total:0, noShow:0, cancel:0};
+    const visits = aisVisitDates(a.patientId, ctx);
+    const factors = []; let score;
+    if(!visits.length && h.total===0){ score = a.status==="Confirmed"? 30 : 45; factors.push("New patient — no visit history"); }
+    else{
+      score = 18;
+      if(h.total){ const r = h.noShow/h.total; score += Math.round(r*65); if(h.noShow) factors.push(`Missed ${h.noShow} of ${h.total} past appointments`); const c = h.cancel/h.total; score += Math.round(c*20); if(h.cancel>=2) factors.push(`Cancelled ${h.cancel} times before`); }
+      const last = visits[visits.length-1];
+      if(last && aisDaysBetween(last, today) > 180){ score += 10; factors.push("Last visit over 6 months ago"); }
+    }
+    if(a.createdAt){ const lead = aisDaysBetween(aisDateOnly(a.createdAt), a.date); if(lead>14){ score += 10; factors.push(`Booked ${lead} days in advance`); } }
+    if(a.status==="Confirmed"){ score -= 12; factors.push("Confirmed by patient"); }
+    if(/follow|review|check/i.test(a.treatmentType||"")){ score += 6; factors.push("Follow-up visit"); }
+    score = Math.max(3, Math.min(97, score));
+    const level = score>70? "HIGH" : score>30? "MEDIUM" : "LOW";
+    const action = level==="HIGH"? "Call to confirm today; keep a waitlist patient for this slot" : level==="MEDIUM"? "Send an extra WhatsApp reminder the day before" : "Standard reminder";
+    return {a, p: pById[a.patientId], score, level, factors: factors.slice(0,3), action};
+  });
+  const cnt = {HIGH:0, MEDIUM:0, LOW:0}; rows.forEach(r=> cnt[r.level]++);
+  body.innerHTML = `
+    <div class="ais-kpis">
+      <div class="ais-kpi"><b>${rows.length}</b><span>Appointments next 7 days</span></div>
+      <div class="ais-kpi" style="--k:#b42318;"><b>${cnt.HIGH}</b><span>High risk</span></div>
+      <div class="ais-kpi" style="--k:#92400e;"><b>${cnt.MEDIUM}</b><span>Medium risk</span></div>
+      <div class="ais-kpi" style="--k:#166534;"><b>${cnt.LOW}</b><span>Low risk</span></div>
+    </div>
+    <div class="ais-actions"><button class="ai-btn" id="aisNsAi">${icon('sparkle',15)} Get AI advice</button>
+      <select id="aisNsFilter" class="ais-select"><option value="">All risk levels</option><option>HIGH</option><option>MEDIUM</option><option>LOW</option></select></div>
+    ${aisInsightsBox("aisNsIns")}
+    <div class="ais-table-wrap"><table class="ais-table"><thead><tr><th>When</th><th>Patient</th><th>Risk</th><th>Why</th><th>Suggested action</th><th></th></tr></thead>
+    <tbody>${rows.map((r,i)=>`<tr data-lvl="${r.level}"><td>${escapeHtml(new Date(r.a.date+"T00:00:00").toLocaleDateString(undefined,{weekday:"short",day:"numeric",month:"short"}))}<br><small>${escapeHtml(r.a.startTime||"")}</small></td>
+      <td><b>${escapeHtml(r.a.patientName||(r.p&&r.p.name)||"")}</b><br><small>${escapeHtml(r.a.treatmentType||"")}${r.a.doctor? " · Dr. "+escapeHtml(r.a.doctor):""}</small></td>
+      <td><div class="ais-meter"><span style="width:${r.score}%;background:${r.level==="HIGH"?"#dc2626":r.level==="MEDIUM"?"#f59e0b":"#16a34a"};"></span></div>${aisBadge(r.level)} <small>${r.score}</small></td>
+      <td><small>${r.factors.map(escapeHtml).join("<br>")||"—"}</small></td><td><small>${escapeHtml(r.action)}</small></td>
+      <td>${r.p && r.p.mobile? `<button class="btn btn-outline btn-sm" data-nsrem="${i}">Remind</button>` : ""}</td></tr>`).join("") || `<tr><td colspan="6" class="ais-empty">No upcoming appointments in the next 7 days.</td></tr>`}</tbody></table></div>`;
+  document.getElementById("aisNsFilter").onchange = (e)=> body.querySelectorAll("tr[data-lvl]").forEach(tr=> tr.style.display = (!e.target.value || tr.dataset.lvl===e.target.value)? "" : "none");
+  body.querySelectorAll("[data-nsrem]").forEach(b=> b.onclick = ()=>{
+    const r = rows[parseInt(b.dataset.nsrem)];
+    const when = new Date(r.a.date+"T00:00:00").toLocaleDateString(undefined,{weekday:"long",day:"numeric",month:"long"});
+    openWhatsAppComposer({ title:"Appointment Reminder", toName:r.p.name, toNumber:r.p.whatsappNumber||r.p.mobile, patientId:r.p.id,
+      message:`Hello ${r.p.name}, this is a reminder of your appointment at Healing Touch Dental on ${when} at ${r.a.startTime||""}. Please reply YES to confirm or let us know if you need to change the time. 😊` });
+  });
+  document.getElementById("aisNsAi").onclick = (e)=> aisRunInsights(e.currentTarget, "aisNsIns", "no_show", {
+    counts: cnt, appointments: rows.slice(0,60).map(r=>({date:r.a.date, time:r.a.startTime, patient:r.a.patientName, treatment:r.a.treatmentType, risk:r.score, level:r.level, factors:r.factors}))
+  });
+};
+
+// 2. Cashflow forecaster
+AIS_RENDER.cashflow = async (body)=>{
+  const ctx = await aisLoadCore();
+  const cur = await finCurrency();
+  const invoices = await dbGetAll("invoices");
+  const daily = {};
+  const add = (d, v)=>{ const k = aisDateOnly(d); if(k) daily[k] = (daily[k]||0) + v; };
+  ctx.payments.forEach(p=> add(p.date, Number(p.amount)||0));
+  ctx.dues.forEach(d=> (d.payments||[]).forEach(p=> add(p.date, Number(p.amount)||0)));
+  ctx.refunds.forEach(r=> add(r.date, -(Number(r.amount)||0)));
+  const today = new Date(); today.setHours(0,0,0,0);
+  const hist = []; for(let i=90;i>=1;i--){ const d = new Date(today); d.setDate(d.getDate()-i); const k = toDateKey(d); hist.push({date:k, dow:d.getDay(), amount: daily[k]||0}); }
+  const last56 = hist.slice(-56);
+  const dowAvg = [0,1,2,3,4,5,6].map(w=>{ const xs = last56.filter(h=>h.dow===w).map(h=>h.amount); return xs.length? xs.reduce((a,b)=>a+b,0)/xs.length : 0; });
+  const prev30 = hist.slice(-30).reduce((a,h)=>a+h.amount,0), prior30 = hist.slice(-60,-30).reduce((a,h)=>a+h.amount,0);
+  const outstanding = invoices.filter(i=> Number(i.balance)>0).reduce((a,i)=>a+Number(i.balance),0);
+  const upcomingAppts = ctx.appts.filter(a=> a.date>=toDateKey(today) && !["Cancelled","NoShow","Reserved"].includes(a.status)).length;
+  const proj = []; for(let i=0;i<30;i++){ const d = new Date(today); d.setDate(d.getDate()+i); proj.push({date: toDateKey(d), dow:d.getDay(), projected: Math.round(dowAvg[d.getDay()] + (outstanding*0.35)/30)}); }
+  const total30 = proj.reduce((a,p)=>a+p.projected,0), avgDay = total30/30;
+  const weeks = [0,1,2,3].map(w=>{ const xs = proj.slice(w*7, w*7+7); return {week:w+1, from:xs[0].date, to:xs[xs.length-1].date, projected: xs.reduce((a,p)=>a+p.projected,0)}; });
+  const weekAvg = weeks.reduce((a,w)=>a+w.projected,0)/4;
+  const trend = prior30? (prev30>prior30*1.08? "GROWING" : prev30<prior30*0.92? "DECLINING" : "STABLE") : "STABLE";
+  const days = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  const maxP = Math.max(1, ...proj.map(p=>p.projected));
+  body.innerHTML = `
+    <div class="ais-kpis">
+      <div class="ais-kpi"><b>${finMoney(total30,cur)}</b><span>Projected next 30 days</span></div>
+      <div class="ais-kpi"><b>${finMoney(avgDay,cur)}</b><span>Average per day</span></div>
+      <div class="ais-kpi"><b>${finMoney(prev30,cur)}</b><span>Collected last 30 days</span></div>
+      <div class="ais-kpi" style="--k:${trend==="DECLINING"?"#b42318":trend==="GROWING"?"#166534":"#334155"};"><b>${trend}</b><span>Trend vs previous 30 days</span></div>
+    </div>
+    <div class="ais-card"><div class="ais-card-title">Daily projection (next 30 days)</div>
+      <div class="ais-col-chart">${proj.map(p=>`<div class="ais-col" title="${p.date}: ${finMoney(p.projected,cur)}"><span class="ais-col-fill" data-h="${p.projected/maxP*100}" style="background:${p.projected < avgDay*0.7? '#f59e0b':'var(--green)'};"></span><small>${new Date(p.date+"T00:00:00").getDate()}</small></div>`).join("")}</div>
+      <div style="font-size:11.5px;color:var(--grey);margin-top:6px;">Amber = below 70% of the daily average. Based on each weekday's average over the last 8 weeks plus ~35% of the ${finMoney(outstanding,cur)} outstanding on invoices.</div></div>
+    <div class="ais-two">
+      <div class="ais-card"><div class="ais-card-title">Weekly totals</div>${aisBars(weeks.map(w=>({label:"Week "+w.week+" ("+new Date(w.from+"T00:00:00").getDate()+"–"+new Date(w.to+"T00:00:00").getDate()+")", value:w.projected})), {fmt:v=>finMoney(v,cur)})}
+        ${weeks.some(w=>w.projected<weekAvg*0.7)? `<div class="ais-warn">⚠ A week is projected below 70% of average.</div>` : ""}</div>
+      <div class="ais-card"><div class="ais-card-title">Average collection by weekday</div>${aisBars(dowAvg.map((v,i)=>({label:days[i], value:Math.round(v)})), {fmt:v=>finMoney(v,cur), color:"#b45309"})}</div>
+    </div>
+    <div class="ais-actions"><button class="ai-btn" id="aisCfAi">${icon('sparkle',15)} Get AI advice</button></div>
+    ${aisInsightsBox("aisCfIns")}`;
+  body.querySelectorAll(".ais-col-fill[data-h]").forEach(el=> setTimeout(()=> el.style.height = Math.max(2, el.dataset.h)+"%", 40));
+  document.getElementById("aisCfAi").onclick = (e)=> aisRunInsights(e.currentTarget, "aisCfIns", "cashflow", {
+    currency: "INR", collectedLast30: Math.round(prev30), collectedPrevious30: Math.round(prior30), trend,
+    weekdayAverage: Object.fromEntries(dowAvg.map((v,i)=>[days[i], Math.round(v)])), projectedNext30: Math.round(total30),
+    weeklyProjection: weeks, outstandingInvoices: Math.round(outstanding), upcomingAppointments: upcomingAppts
+  });
+};
+
+// 3. Inventory forecaster
+AIS_RENDER.inventory = async (body)=>{
+  const [items, log] = await Promise.all([dbGetAll("inventoryItems"), dbGetAll("inventoryLog")]);
+  const since = Date.now() - 90*86400000;
+  const used = {}, firstSeen = {};
+  log.forEach(l=>{ const t = new Date(l.date||0).getTime(); if(!l.itemId) return; firstSeen[l.itemId] = Math.min(firstSeen[l.itemId]||t, t); if(t<since) return; const q = Number(l.quantityChange)||0; if(q<0) used[l.itemId] = (used[l.itemId]||0) + (-q); });
+  const rows = items.filter(i=>i.status!=="Archived").map(i=>{
+    const days = Math.max(14, Math.min(90, Math.round((Date.now() - Math.max(since, firstSeen[i.id]||since))/86400000)));
+    const avg = (used[i.id]||0)/days;
+    const stock = Number(i.quantityInStock)||0;
+    const daysLeft = avg>0? Math.floor(stock/avg) : null;
+    const need = avg>0? Math.max(0, Math.ceil(avg*60 - stock)) : 0;
+    let urgency = "OK";
+    if(avg>0){ urgency = daysLeft<=7? "CRITICAL" : daysLeft<=14? "SOON" : daysLeft<=30? "NORMAL" : daysLeft>90? "EXCESS" : "OK"; }
+    else if(i.lowStockThreshold && stock<=Number(i.lowStockThreshold)) urgency = "SOON";
+    return {i, avg, stock, daysLeft, need, urgency, used90: used[i.id]||0};
+  }).sort((a,b)=> ["CRITICAL","SOON","NORMAL","EXCESS","OK"].indexOf(a.urgency) - ["CRITICAL","SOON","NORMAL","EXCESS","OK"].indexOf(b.urgency) || (a.daysLeft??9999)-(b.daysLeft??9999));
+  const c = {}; rows.forEach(r=> c[r.urgency] = (c[r.urgency]||0)+1);
+  body.innerHTML = `
+    <div class="ais-kpis">
+      <div class="ais-kpi" style="--k:#b42318;"><b>${c.CRITICAL||0}</b><span>Run out within 7 days</span></div>
+      <div class="ais-kpi" style="--k:#92400e;"><b>${c.SOON||0}</b><span>Within 14 days / low</span></div>
+      <div class="ais-kpi" style="--k:#075985;"><b>${c.NORMAL||0}</b><span>Reorder this month</span></div>
+      <div class="ais-kpi" style="--k:#5b21b6;"><b>${c.EXCESS||0}</b><span>Over-stocked (90+ days)</span></div>
+    </div>
+    <div class="ais-actions"><button class="ai-btn" id="aisInvAi">${icon('sparkle',15)} Get AI advice</button></div>
+    ${aisInsightsBox("aisInvIns")}
+    ${rows.length? `<div class="ais-table-wrap"><table class="ais-table"><thead><tr><th>Item</th><th>In stock</th><th>Used / day</th><th>Runs out in</th><th>Order (≈60 days)</th><th>Status</th></tr></thead><tbody>
+      ${rows.map(r=>`<tr><td><b>${escapeHtml(r.i.name||"")}</b><br><small>${escapeHtml(r.i.category||"")}</small></td><td>${r.stock} ${escapeHtml(r.i.unit||"")}</td><td>${r.avg? r.avg.toFixed(r.avg<1?2:1) : "—"}</td>
+        <td>${r.daysLeft==null? "—" : `<div class="ais-meter"><span style="width:${Math.min(100, r.daysLeft/90*100)}%;background:${r.daysLeft<=7?'#dc2626':r.daysLeft<=14?'#f59e0b':'#16a34a'};"></span></div>${r.daysLeft} days`}</td>
+        <td>${r.need? `<b>${r.need}</b> ${escapeHtml(r.i.unit||"")}` : "—"}</td><td>${aisBadge(r.urgency)}</td></tr>`).join("")}
+    </tbody></table></div>` : `<div class="empty-card">No inventory items yet — add them in Inventory.</div>`}
+    <p style="font-size:11.5px;color:var(--grey);">Usage = stock removed in the last 90 days (Inventory → adjust stock). Items with no usage recorded can't be forecast.</p>`;
+  document.getElementById("aisInvAi").onclick = (e)=> aisRunInsights(e.currentTarget, "aisInvIns", "inventory", {
+    items: rows.slice(0,80).map(r=>({name:r.i.name, stock:r.stock, unit:r.i.unit, avgDailyUse:+r.avg.toFixed(2), used90Days:r.used90, daysUntilStockout:r.daysLeft, suggestedOrder:r.need, status:r.urgency}))
+  });
+};
+
+// 4. Patient segmentation (RFM)
+let aisSegRows = [];
+AIS_RENDER.segments = async (body)=>{
+  const ctx = await aisLoadCore();
+  const cur = await finCurrency();
+  const now = Date.now(), yearAgo = now - 365*86400000;
+  const spend = {};
+  ctx.payments.forEach(p=>{ if(p.patientId && new Date(p.date||0).getTime()>=yearAgo) spend[p.patientId] = (spend[p.patientId]||0) + (Number(p.amount)||0); });
+  ctx.dues.forEach(d=> (d.payments||[]).forEach(p=>{ if(d.patientId && new Date(p.date||0).getTime()>=yearAgo) spend[d.patientId] = (spend[d.patientId]||0) + (Number(p.amount)||0); }));
+  const rows = ctx.patients.map(p=>{
+    const v = aisVisitDates(p.id, ctx);
+    const last = v[v.length-1] || null;
+    const recency = last? aisDaysBetween(last, new Date()) : null;
+    const freq = v.filter(d=> new Date(d).getTime()>=yearAgo).length;
+    const reg = p.registrationDate || p.createdAt;
+    const isNew = reg && (now - new Date(reg).getTime()) < 90*86400000;
+    return {p, recency, freq, monetary: spend[p.id]||0, last, isNew, everVisited: v.length>0};
+  });
+  const active = rows.filter(r=> r.everVisited && r.recency!=null && r.recency<=180 && r.freq>=2).sort((a,b)=>b.monetary-a.monetary);
+  const vipCut = active.length? active[Math.max(0, Math.ceil(active.length*0.1)-1)].monetary : Infinity;
+  rows.forEach(r=>{
+    let s, risk;
+    if(r.isNew){ s = "NEW"; risk = r.freq>=2? 25 : 50; }
+    else if(!r.everVisited){ s = "NEVER TREATED"; risk = 80; }
+    else if(r.recency>180){ s = "CHURNING"; risk = Math.min(95, 60 + Math.round((r.recency-180)/30)*3); }
+    else if(r.recency>90){ s = "AT RISK"; risk = 45 + Math.round((r.recency-90)/90*20); }
+    else if(r.freq>=2 && r.monetary>0 && r.monetary>=vipCut){ s = "VIP"; risk = 8; }
+    else if(r.freq>=4){ s = "LOYAL"; risk = 15; }
+    else { s = "REGULAR"; risk = 28; }
+    r.segment = s; r.churnRisk = risk;
+  });
+  aisSegRows = rows;
+  const SEG = [["VIP","#7c3aed","Top 10% by spend, visiting regularly"],["LOYAL","#0E6F5C","4+ visits in the last year"],["REGULAR","#2563eb","Visited in the last 3 months"],["NEW","#0891b2","Registered in the last 3 months"],["AT RISK","#f59e0b","No visit for 3–6 months"],["CHURNING","#dc2626","No visit for 6+ months"],["NEVER TREATED","#64748b","Registered but no visit recorded"]];
+  const counts = {}; rows.forEach(r=> counts[r.segment] = (counts[r.segment]||0)+1);
+  const total = rows.length || 1;
+  let acc = 0;
+  const ring = SEG.map(([k,c])=>{ const from = acc/total*360; acc += counts[k]||0; return `${c} ${from}deg ${acc/total*360}deg`; }).join(",");
+  body.innerHTML = `
+    <div class="ais-two">
+      <div class="ais-card ais-seg-ring-card"><div class="ais-seg-ring" style="background:conic-gradient(${ring});"><div><b>${rows.length}</b><span>patients</span></div></div></div>
+      <div class="ais-card"><div class="ais-seg-legend">${SEG.map(([k,c,d])=>`<button type="button" class="ais-seg-item" data-seg="${k}" style="--c:${c};"><span class="dot"></span><span class="nm">${k}<small>${d}</small></span><b>${counts[k]||0}</b></button>`).join("")}</div></div>
+    </div>
+    <div class="ais-actions"><button class="ai-btn" id="aisSegAi">${icon('sparkle',15)} Get retention plan</button>
+      <select id="aisSegFilter" class="ais-select"><option value="">All segments</option>${SEG.map(([k])=>`<option ${k==="AT RISK"?"selected":""}>${k}</option>`).join("")}</select>
+      <button class="btn btn-primary btn-sm" id="aisSegSend">${icon('message',14)} Message this group</button></div>
+    ${aisInsightsBox("aisSegIns")}
+    <div class="ais-table-wrap" style="max-height:460px;"><table class="ais-table"><thead><tr><th>Patient</th><th>Segment</th><th>Last visit</th><th>Visits (12 mo)</th><th>Spend (12 mo)</th><th>Churn risk</th></tr></thead><tbody id="aisSegBody"></tbody></table></div>`;
+  const draw = ()=>{
+    const f = document.getElementById("aisSegFilter").value;
+    const list = rows.filter(r=> !f || r.segment===f).sort((a,b)=> b.monetary-a.monetary).slice(0,400);
+    document.getElementById("aisSegBody").innerHTML = list.map(r=>`<tr><td><b>${escapeHtml(r.p.name||"")}</b><br><small>${escapeHtml(r.p.mobile||"")}</small></td><td>${escapeHtml(r.segment)}</td>
+      <td>${r.last? new Date(r.last+"T00:00:00").toLocaleDateString(undefined,{day:"numeric",month:"short",year:"2-digit"})+`<br><small>${r.recency} days ago</small>` : "—"}</td><td>${r.freq}</td><td>${finMoney(r.monetary,cur)}</td>
+      <td><div class="ais-meter"><span style="width:${r.churnRisk}%;background:${r.churnRisk>60?'#dc2626':r.churnRisk>30?'#f59e0b':'#16a34a'};"></span></div><small>${r.churnRisk}</small></td></tr>`).join("") || `<tr><td colspan="6" class="ais-empty">No patients in this segment.</td></tr>`;
+  };
+  draw();
+  document.getElementById("aisSegFilter").onchange = draw;
+  body.querySelectorAll("[data-seg]").forEach(b=> b.onclick = ()=>{ document.getElementById("aisSegFilter").value = b.dataset.seg; draw(); });
+  document.getElementById("aisSegSend").onclick = ()=>{
+    const f = document.getElementById("aisSegFilter").value;
+    const ids = rows.filter(r=> (!f || r.segment===f) && r.p.mobile).map(r=>r.p.id);
+    if(!ids.length){ showToast("No patients with a mobile number in this group"); return; }
+    commBulkSelectedIds = new Set(ids);
+    if(typeof commView!=="undefined") commView = "Bulk Greetings";
+    showToast(`${ids.length} patients selected in Communication → Bulk Greetings`);
+    goTo("communication");
+  };
+  document.getElementById("aisSegAi").onclick = (e)=> aisRunInsights(e.currentTarget, "aisSegIns", "segmentation", {
+    totalPatients: rows.length, segments: Object.fromEntries(SEG.map(([k])=>[k, counts[k]||0])),
+    averageSpend: Object.fromEntries(SEG.map(([k])=>{ const xs = rows.filter(r=>r.segment===k); return [k, xs.length? Math.round(xs.reduce((a,r)=>a+r.monetary,0)/xs.length) : 0]; })),
+    currency: "INR"
+  });
+};
+
+// 5. Dynamic pricing / demand
+AIS_RENDER.pricing = async (body)=>{
+  const appts = await dbGetAll("appointments");
+  const since = toDateKey(new Date(Date.now()-120*86400000)), today = toDateKey(new Date());
+  const list = appts.filter(a=> a.date>=since && a.date<today && !["Cancelled","Reserved"].includes(a.status));
+  const days = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  const hours = [10,11,12,13,14,15,16,17,18,19];
+  const grid = {}; const byDoc = {}, byTx = {}, byDow = [0,0,0,0,0,0,0];
+  list.forEach(a=>{ const d = new Date(a.date+"T00:00:00").getDay(); const h = parseInt(String(a.startTime||"").split(":")[0]); byDow[d]++;
+    if(h>=10 && h<=19){ const k = d+"-"+h; grid[k] = (grid[k]||0)+1; }
+    const doc = (a.doctor||"Not assigned").trim()||"Not assigned"; byDoc[doc] = (byDoc[doc]||0)+1;
+    const tx = (a.treatmentType||"").trim(); if(tx) byTx[tx] = (byTx[tx]||0)+1; });
+  const weeks = 120/7;
+  const maxCell = Math.max(1, ...Object.values(grid));
+  const cells = (d)=> hours.map(h=>{ const v = grid[d+"-"+h]||0; const perWeek = v/weeks; return `<td class="ais-heat" style="--a:${(v/maxCell).toFixed(2)};" title="${days[d]} ${h}:00 — ${perWeek.toFixed(1)} appointments/week">${perWeek>=0.5? perWeek.toFixed(1):""}</td>`; }).join("");
+  const peak = Object.entries(grid).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([k,v])=>{ const [d,h]=k.split("-"); return {slot: days[d]+" "+h+":00-"+(+h+1)+":00", perWeek:+(v/weeks).toFixed(1)}; });
+  const quiet = []; [1,2,3,4,5,6].forEach(d=> hours.forEach(h=> quiet.push({slot: days[d]+" "+h+":00-"+(h+1)+":00", perWeek:+((grid[d+"-"+h]||0)/weeks).toFixed(1)})));
+  quiet.sort((a,b)=> a.perWeek-b.perWeek);
+  body.innerHTML = `
+    <div class="ais-card"><div class="ais-card-title">When patients come (avg appointments per week, last 4 months)</div>
+      <div class="ais-table-wrap"><table class="ais-heat-table"><thead><tr><th></th>${hours.map(h=>`<th>${h>12?h-12:h}${h>=12?"pm":"am"}</th>`).join("")}</tr></thead>
+      <tbody>${[1,2,3,4,5,6,0].map(d=>`<tr><th>${days[d]}</th>${cells(d)}</tr>`).join("")}</tbody></table></div>
+      <div style="font-size:11.5px;color:var(--grey);margin-top:6px;">Darker = busier. ${list.length} appointments analysed.</div></div>
+    <div class="ais-two">
+      <div class="ais-card"><div class="ais-card-title">Doctor workload</div>${aisBars(Object.entries(byDoc).sort((a,b)=>b[1]-a[1]).slice(0,8).map(([k,v])=>({label:k, value:v})))}</div>
+      <div class="ais-card"><div class="ais-card-title">Most-booked treatments</div>${aisBars(Object.entries(byTx).sort((a,b)=>b[1]-a[1]).slice(0,8).map(([k,v])=>({label:k, value:v})), {color:"#b45309"})}</div>
+    </div>
+    <div class="ais-actions"><button class="ai-btn" id="aisPrAi">${icon('sparkle',15)} Get pricing ideas</button></div>
+    ${aisInsightsBox("aisPrIns")}`;
+  document.getElementById("aisPrAi").onclick = (e)=> aisRunInsights(e.currentTarget, "aisPrIns", "pricing", {
+    periodDays: 120, totalAppointments: list.length, byWeekday: Object.fromEntries(byDow.map((v,i)=>[days[i], v])),
+    busiestSlots: peak, quietestSlots: quiet.slice(0,8), doctorWorkload: byDoc, treatmentDemand: Object.fromEntries(Object.entries(byTx).sort((a,b)=>b[1]-a[1]).slice(0,15))
+  });
+};
+
+// 6. Lab coordinator
+AIS_RENDER.lab = async (body)=>{
+  const cases = (await dbGetAll("labCases")).filter(c=>!c.archived);
+  const today = toDateKey(new Date());
+  const DONE = ["Received","Ready","Delivered to Patient","Trial Pending"];
+  const stats = {};
+  cases.forEach(c=>{
+    const lab = (c.labName||"Unknown lab").trim();
+    const s = stats[lab] = stats[lab] || {lab, cases:0, done:0, tatSum:0, tatN:0, late:0, remakes:0, open:0, overdue:0};
+    s.cases++;
+    const back = c.receivedDate || (DONE.includes(c.status)? (c.deliveryDate||c.updatedAt) : null);
+    if(c.dateSent && back){ const t = aisDaysBetween(aisDateOnly(c.dateSent), aisDateOnly(back)); if(t>=0 && t<120){ s.tatSum += t; s.tatN++; } }
+    if(c.labPromisedDate && back && aisDateOnly(back) > c.labPromisedDate) s.late++;
+    if(c.status==="Remake" || c.status==="Sent Back for Correction" || (c.corrections||[]).length) s.remakes++;
+    if(!DONE.includes(c.status)){ s.open++; if(c.labPromisedDate && c.labPromisedDate < today) s.overdue++; }
+  });
+  const labs = Object.values(stats).sort((a,b)=> b.cases-a.cases);
+  const overdue = cases.filter(c=> !DONE.includes(c.status) && c.labPromisedDate && c.labPromisedDate < today).sort((a,b)=> a.labPromisedDate.localeCompare(b.labPromisedDate));
+  body.innerHTML = `
+    <div class="ais-kpis">
+      <div class="ais-kpi"><b>${cases.filter(c=>!DONE.includes(c.status)).length}</b><span>Cases at the lab</span></div>
+      <div class="ais-kpi" style="--k:#b42318;"><b>${overdue.length}</b><span>Overdue from lab</span></div>
+      <div class="ais-kpi"><b>${labs.length}</b><span>Labs used</span></div>
+    </div>
+    ${overdue.length? `<div class="ais-card"><div class="ais-card-title">Chase today</div>${overdue.map(c=>`<div class="ais-row"><div><b>${escapeHtml(c.patientName||"")}</b> · ${escapeHtml(c.caseType||"")} ${c.tooth? "("+escapeHtml(c.tooth)+")":""}<br><small>${escapeHtml(c.labName||"")} · promised ${escapeHtml(c.labPromisedDate)} — ${aisDaysBetween(c.labPromisedDate, today)} day(s) late</small></div>${c.labContact? `<a class="btn btn-outline btn-sm" href="tel:${escapeAttr(c.labContact)}">Call lab</a>`:""}</div>`).join("")}</div>` : ""}
+    <div class="ais-table-wrap"><table class="ais-table"><thead><tr><th>Lab</th><th>Cases</th><th>Avg turnaround</th><th>Late vs promised</th><th>Remakes / corrections</th><th>Open (overdue)</th></tr></thead><tbody>
+      ${labs.map(s=>`<tr><td><b>${escapeHtml(s.lab)}</b></td><td>${s.cases}</td><td>${s.tatN? (s.tatSum/s.tatN).toFixed(1)+" days" : "—"}</td><td>${s.late}${s.tatN? ` <small>(${Math.round(s.late/s.tatN*100)}%)</small>`:""}</td><td>${s.remakes}</td><td>${s.open}${s.overdue? ` <b style="color:#b42318;">(${s.overdue})</b>`:""}</td></tr>`).join("") || `<tr><td colspan="6" class="ais-empty">No lab cases yet.</td></tr>`}
+    </tbody></table></div>
+    <div class="ais-actions"><button class="ai-btn" id="aisLabAi">${icon('sparkle',15)} Get AI advice</button></div>
+    ${aisInsightsBox("aisLabIns")}`;
+  document.getElementById("aisLabAi").onclick = (e)=> aisRunInsights(e.currentTarget, "aisLabIns", "lab", {
+    today, labs: labs.map(s=>({lab:s.lab, cases:s.cases, avgTurnaroundDays: s.tatN? +(s.tatSum/s.tatN).toFixed(1) : null, lateDeliveries:s.late, remakesOrCorrections:s.remakes, openNow:s.open, overdueNow:s.overdue})),
+    overdueCases: overdue.slice(0,30).map(c=>({patient:c.patientName, work:c.caseType, tooth:c.tooth, lab:c.labName, promised:c.labPromisedDate, status:c.status}))
+  });
+};
+
+// 7. Billing agent
+AIS_RENDER.billing = async (body)=>{
+  const [invoices, patients] = await Promise.all([dbGetAll("invoices"), dbGetAll("patients")]);
+  const cur = await finCurrency();
+  const pById = {}; patients.forEach(p=> pById[p.id] = p);
+  const today = toDateKey(new Date());
+  const byP = {};
+  invoices.filter(i=> Number(i.balance)>0.5).forEach(i=>{
+    const b = byP[i.patientId] = byP[i.patientId] || {p: pById[i.patientId], balance:0, oldest: i.date, invoices:[]};
+    b.balance += Number(i.balance); b.invoices.push(i); if(i.date < b.oldest) b.oldest = i.date;
+  });
+  const STAGE = (d)=> d>=21? ["Escalate to doctor","#b42318"] : d>=14? ["Staff call","#c2410c"] : d>=7? ["WhatsApp + payment link","#b45309"] : d>=3? ["Friendly reminder","#2563eb"] : ["Recent — no action yet","#64748b"];
+  const rows = Object.values(byP).filter(r=>r.p).map(r=>{ const d = aisDaysBetween(aisDateOnly(r.oldest), today); const st = STAGE(d); return Object.assign(r, {days:d, stage:st[0], color:st[1]}); }).sort((a,b)=> b.days-a.days || b.balance-a.balance);
+  const total = rows.reduce((a,r)=>a+r.balance,0);
+  const stageTot = {}; rows.forEach(r=> stageTot[r.stage] = (stageTot[r.stage]||0) + r.balance);
+  body.innerHTML = `
+    <div class="ais-kpis">
+      <div class="ais-kpi"><b>${finMoney(total,cur)}</b><span>Total outstanding</span></div>
+      <div class="ais-kpi"><b>${rows.length}</b><span>Patients with a balance</span></div>
+      <div class="ais-kpi" style="--k:#b42318;"><b>${rows.filter(r=>r.days>=21).length}</b><span>21+ days overdue</span></div>
+    </div>
+    <div class="ais-card"><div class="ais-card-title">Outstanding by reminder stage</div>${aisBars(["Friendly reminder","WhatsApp + payment link","Staff call","Escalate to doctor","Recent — no action yet"].map(k=>({label:k, value:Math.round(stageTot[k]||0)})), {fmt:v=>finMoney(v,cur), color:"#b45309"})}</div>
+    <div class="ais-actions"><button class="ai-btn" id="aisBillAi">${icon('sparkle',15)} Get collection plan</button></div>
+    ${aisInsightsBox("aisBillIns")}
+    <div class="ais-table-wrap" style="max-height:460px;"><table class="ais-table"><thead><tr><th>Patient</th><th>Balance</th><th>Oldest bill</th><th>Stage</th><th></th></tr></thead><tbody>
+      ${rows.map((r,i)=>`<tr><td><b>${escapeHtml(r.p.name)}</b><br><small>${r.invoices.length} invoice(s)</small></td><td><b>${finMoney(r.balance,cur)}</b></td><td>${r.days} days</td>
+        <td><span class="ais-badge" style="background:${r.color}1a;color:${r.color};">${escapeHtml(r.stage)}</span></td>
+        <td style="white-space:nowrap;">${r.p.mobile? `<button class="btn btn-outline btn-sm" data-billrem="${i}">Remind</button>`:""} <button class="btn btn-outline btn-sm" data-billopen="${i}">Open</button></td></tr>`).join("") || `<tr><td colspan="5" class="ais-empty">No outstanding balances 🎉</td></tr>`}
+    </tbody></table></div>
+    <p style="font-size:11.5px;color:var(--grey);">Stages: 3 days friendly reminder · 7 days WhatsApp + payment link · 14 days staff call · 21+ days escalate to the doctor. Discounts and write-offs stay with the doctor/admin.</p>`;
+  body.querySelectorAll("[data-billrem]").forEach(b=> b.onclick = ()=>{
+    const r = rows[parseInt(b.dataset.billrem)];
+    const soft = r.days<14;
+    openWhatsAppComposer({ title:"Payment Reminder", toName:r.p.name, toNumber:r.p.whatsappNumber||r.p.mobile, patientId:r.p.id,
+      message: soft ? `Hello ${r.p.name}, hope you're doing well! This is a gentle reminder that ${finMoney(r.balance,cur)} is pending on your treatment bill at Healing Touch Dental. You can pay at your next visit or by UPI — just reply here and we'll share the details. Thank you! 🙏`
+                    : `Hello ${r.p.name}, our records show ${finMoney(r.balance,cur)} pending on your treatment bill at Healing Touch Dental since ${new Date(r.oldest).toLocaleDateString(undefined,{day:"numeric",month:"short"})}. Please clear it at your earliest convenience, or reply/call 7827168138 if you'd like to discuss. Thank you.` });
+  });
+  body.querySelectorAll("[data-billopen]").forEach(b=> b.onclick = ()=>{ const r = rows[parseInt(b.dataset.billopen)]; if(typeof openPatientProfile==="function") openPatientProfile(r.p.id); else { profilePatientId = r.p.id; goTo("patientProfile"); } });
+  document.getElementById("aisBillAi").onclick = (e)=> aisRunInsights(e.currentTarget, "aisBillIns", "billing", {
+    currency:"INR", totalOutstanding: Math.round(total), byStage: Object.fromEntries(Object.entries(stageTot).map(([k,v])=>[k, Math.round(v)])),
+    patients: rows.slice(0,40).map(r=>({name:r.p.name, balance:Math.round(r.balance), daysOverdue:r.days, stage:r.stage, invoices:r.invoices.length}))
+  });
+};
+
+// 8. Treatment advisor
+AIS_RENDER.advisor = async (body)=>{
+  let patient = null;
+  body.innerHTML = `
+    <div class="ais-card"><div id="aisAdvPt"></div>
+      <div class="field" style="margin-top:10px;"><label>Diagnosis / findings</label><textarea id="aisAdvDx" rows="3" placeholder="e.g. Deep caries 36 with irreversible pulpitis, missing 46, generalised calculus, grade I mobility 31 41"></textarea></div>
+      <div class="field-row"><div class="field"><label>Teeth (FDI)</label><input id="aisAdvTeeth" placeholder="e.g. 36, 46"></div>
+        <div class="field"><label>Notes / patient wishes</label><input id="aisAdvNotes" placeholder="e.g. wants fixed option, budget conscious"></div></div>
+      <button class="ai-btn" id="aisAdvGo" style="width:100%;justify-content:center;">${icon('sparkle',15)} Suggest treatment plan</button></div>
+    <div id="aisAdvOut"></div>`;
+  aisPatientPicker("aisAdvPt", (p)=> patient = p, "Choose patient (for medical history)");
+  document.getElementById("aisAdvGo").onclick = async (e)=>{
+    const dx = document.getElementById("aisAdvDx").value.trim();
+    if(!dx){ showToast("Enter the diagnosis or findings"); return; }
+    const btn = e.currentTarget; aiSetBusy(btn, true, "Planning…");
+    const out = document.getElementById("aisAdvOut");
+    try{
+      const cur = await finCurrency();
+      const prices = (await dbGetAll("treatmentPresets")).filter(t=>Number(t.fee)>0).map(t=>({name:t.name, fee:Number(t.fee)}));
+      const r = await aiRequest("treatment_advisor", { patient: patient? await aiPatientBasics(patient, {name: patient.name}) : {}, diagnosis: dx, teeth: document.getElementById("aisAdvTeeth").value, notes: document.getElementById("aisAdvNotes").value, prices });
+      out.innerHTML = `<div class="ais-card">
+        ${(r.warnings||[]).filter(Boolean).length? `<div class="ais-warnbox"><b>⚠ Check before treating</b><ul>${r.warnings.filter(Boolean).map(w=>`<li>${escapeHtml(w)}</li>`).join("")}</ul></div>` : ""}
+        <div class="ais-card-title">Suggested sequence</div>
+        <div class="ais-steps">${(r.plan||[]).map(s=>`<div class="ais-step"><span class="n">${escapeHtml(String(s.step||""))}</span><div><b>${escapeHtml(s.treatment||"")}</b>${s.teeth? ` · <small>${escapeHtml(s.teeth)}</small>`:""}<br><small>${escapeHtml(s.why||"")}${s.visits? " · "+escapeHtml(String(s.visits))+" visit(s)":""}</small></div><b>${Number(s.estCost)? finMoney(Number(s.estCost),cur) : "—"}</b></div>`).join("")}</div>
+        ${Number(r.totalEstimate)? `<div class="ais-total">Estimated total <b>${finMoney(Number(r.totalEstimate),cur)}</b></div>` : ""}
+        ${(r.alternatives||[]).filter(Boolean).length? `<div class="ais-card-title" style="margin-top:12px;">Alternatives</div><ul>${r.alternatives.filter(Boolean).map(a=>`<li>${escapeHtml(a)}</li>`).join("")}</ul>` : ""}
+        ${r.patientSummary? `<div class="ais-card-title" style="margin-top:12px;">For the patient</div><div class="ais-quote" id="aisAdvSum">${escapeHtml(r.patientSummary)}</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;"><button class="btn btn-outline btn-sm" id="aisAdvCopy">Copy</button>${patient && patient.mobile? `<button class="btn btn-outline btn-sm" id="aisAdvWa">${icon('message',14)} Send to patient</button>`:""}</div>` : ""}
+        ${AI_REVIEW_NOTE}</div>`;
+      const cp = document.getElementById("aisAdvCopy"); if(cp) cp.onclick = ()=>{ navigator.clipboard.writeText(r.patientSummary).then(()=>showToast("Copied")); };
+      const wa = document.getElementById("aisAdvWa"); if(wa) wa.onclick = ()=> openWhatsAppComposer({title:"Treatment Plan", toName:patient.name, toNumber:patient.whatsappNumber||patient.mobile, patientId:patient.id, message:r.patientSummary});
+    }catch(err){ out.innerHTML = `<div class="ais-err">${escapeHtml(err.message)}</div>`; }
+    aiSetBusy(btn, false);
+  };
+};
+
+// 9. Smart scheduler
+AIS_RENDER.scheduler = async (body)=>{
+  const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived);
+  const doctors = await dbGetAll("users");
+  let patient = null;
+  const defClinic = selectedClinicId!=="ALL" ? selectedClinicId : getDefaultClinicId(clinics);
+  body.innerHTML = `
+    <div class="ais-card"><div id="aisSchPt"></div>
+      <div class="field" style="margin-top:10px;"><label>What does the patient want?</label><input id="aisSchReq" placeholder="e.g. next Tuesday evening · kal subah jaldi · urgent pain · any Saturday after 5"></div>
+      <div class="field-row">
+        <div class="field"><label>Clinic</label><select id="aisSchClinic">${clinics.map(c=>`<option value="${c.id}" ${c.id===defClinic?'selected':''}>${escapeHtml(c.name.replace('Healing Touch Dental – ',''))}</option>`).join("")}</select></div>
+        <div class="field"><label>Doctor (optional)</label><select id="aisSchDoc"><option value="">Any doctor</option>${doctors.map(d=>`<option value="${escapeAttr(d.name)}">Dr. ${escapeHtml(d.name)}</option>`).join("")}</select></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Treatment</label><input id="aisSchTx" placeholder="e.g. RCT, Consultation"></div>
+        <div class="field"><label>Duration</label><select id="aisSchDur"><option value="30">30 min</option><option value="45">45 min</option><option value="60">60 min</option><option value="90">90 min</option></select></div>
+      </div>
+      <button class="ai-btn" id="aisSchGo" style="width:100%;justify-content:center;">${icon('sparkle',15)} Find the best slots</button></div>
+    <div id="aisSchOut"></div>`;
+  aisPatientPicker("aisSchPt", (p)=> patient = p, "Choose patient (optional)");
+  document.getElementById("aisSchGo").onclick = async (e)=>{
+    const req = document.getElementById("aisSchReq").value.trim();
+    if(!req){ showToast("Type what the patient asked for"); return; }
+    const clinicId = document.getElementById("aisSchClinic").value, doc = document.getElementById("aisSchDoc").value, dur = parseInt(document.getElementById("aisSchDur").value);
+    const clinic = clinics.find(c=>c.id===clinicId) || {};
+    const closeH = /23|palam/i.test(clinic.name||"") ? 19 : 20;
+    const appts = (await dbGetAll("appointments")).filter(a=> !["Cancelled","NoShow","Rescheduled"].includes(a.status));
+    const toMin = (t)=>{ const [h,m] = String(t||"0:0").split(":").map(Number); return h*60+(m||0); };
+    const chairs = Math.max(1, (await dbGetAll("chairs").catch(()=>[])).filter(c=> !c.clinicId || c.clinicId===clinicId).length || 3);
+    const slots = []; const now = new Date();
+    for(let i=0;i<14;i++){
+      const d = new Date(); d.setHours(0,0,0,0); d.setDate(d.getDate()+i);
+      const key = toDateKey(d);
+      const dayAppts = appts.filter(a=> a.date===key && (a.clinicId||clinicId)===clinicId);
+      const times = [];
+      for(let m=10*60+30; m+dur<=closeH*60; m+=30){
+        if(i===0 && m <= now.getHours()*60+now.getMinutes()+30) continue;
+        const overl = dayAppts.filter(a=>{ const s = toMin(a.startTime), e2 = s + (Number(a.durationMinutes)||30); return s < m+dur && m < e2; });
+        if(doc ? overl.some(a=> (a.doctor||"")===doc) : overl.length>=chairs) continue;
+        times.push(String(Math.floor(m/60)).padStart(2,"0")+":"+String(m%60).padStart(2,"0"));
+      }
+      if(times.length) slots.push({date:key, day: d.toLocaleDateString("en-IN",{weekday:"long"}), free: times});
+    }
+    const out = document.getElementById("aisSchOut");
+    if(!slots.length){ out.innerHTML = `<div class="ais-err">No free slots in the next 14 days for this clinic/doctor.</div>`; return; }
+    const btn = e.currentTarget; aiSetBusy(btn, true, "Finding slots…");
+    try{
+      const r = await aiRequest("smart_scheduler", { today: toDateKey(new Date())+" ("+new Date().toLocaleDateString("en-IN",{weekday:"long"})+")", request: req, treatment: document.getElementById("aisSchTx").value,
+        slots: slots.map(s=>({date:s.date, day:s.day, doctor: doc||"any", clinic: clinic.name, times: s.free})) });
+      const valid = (r.options||[]).filter(o=> slots.some(s=> s.date===o.date && s.free.includes(o.time)));
+      out.innerHTML = `<div class="ais-card"><div class="ais-card-title">${icon('sparkle',15)} ${escapeHtml(r.understood||"Suggested slots")}</div>
+        ${valid.length? valid.map((o,i)=>`<div class="ais-slot"><div><b>${escapeHtml(new Date(o.date+"T00:00:00").toLocaleDateString(undefined,{weekday:"long",day:"numeric",month:"short"}))} · ${escapeHtml(o.time)}</b><br><small>${escapeHtml(doc? "Dr. "+doc : "Any doctor")} · ${escapeHtml((clinic.name||"").replace('Healing Touch Dental – ',''))} — ${escapeHtml(o.why||"")}</small></div><button class="btn btn-primary btn-sm" data-book="${i}">Book</button></div>`).join("")
+          : `<div class="ais-err">The AI couldn't match a free slot — try rephrasing the request.</div>`}</div>`;
+      out.querySelectorAll("[data-book]").forEach(b=> b.onclick = ()=>{
+        const o = valid[parseInt(b.dataset.book)];
+        openAppointmentForm(null, { date:o.date, startTime:o.time, durationMinutes:dur, clinicId, doctor:doc||"", treatmentType: document.getElementById("aisSchTx").value,
+          patientId: patient? patient.id : "", patientName: patient? patient.name : "" });
+      });
+    }catch(err){ out.innerHTML = `<div class="ais-err">${escapeHtml(err.message)}</div>`; }
+    aiSetBusy(btn, false);
+  };
+};
+
+// 10. Claim analyzer
+AIS_RENDER.claims = async (body)=>{
+  const [claims, patients] = await Promise.all([dbGetAll("insuranceClaims"), dbGetAll("patients")]);
+  const cur = await finCurrency();
+  const pById = {}; patients.forEach(p=> pById[p.id] = p);
+  const list = claims.slice().sort((a,b)=> (b.claimDate||"").localeCompare(a.claimDate||""));
+  body.innerHTML = `
+    <div class="ais-card">
+      <div class="field"><label>Claim</label><select id="aisClSel">${list.length? list.map(c=>`<option value="${c.id}">${escapeHtml((pById[c.patientId]||{}).name||"")} · ${escapeHtml(c.treatment||"")} · ${escapeHtml(c.status||"")} · ${finMoney(Number(c.amountClaimed)||0,cur)}</option>`).join("") : `<option value="">No insurance claims recorded</option>`}</select></div>
+      <div class="field"><label>What did the insurer say? (rejection reason, query, amount paid…)</label><textarea id="aisClNotes" rows="3" placeholder="e.g. Rejected: 'dental treatment not covered unless due to accident' / paid ₹4,000 of ₹12,000 citing reasonable & customary"></textarea></div>
+      <button class="ai-btn" id="aisClGo" style="width:100%;justify-content:center;" ${list.length? "":"disabled"}>${icon('sparkle',15)} Analyse claim</button></div>
+    <div id="aisClOut"></div>`;
+  document.getElementById("aisClGo").onclick = async (e)=>{
+    const c = list.find(x=>x.id===document.getElementById("aisClSel").value); if(!c) return;
+    const p = pById[c.patientId] || {};
+    const btn = e.currentTarget; aiSetBusy(btn, true, "Analysing…");
+    const out = document.getElementById("aisClOut");
+    try{
+      const r = await aiRequest("claim_analyzer", { claim: {insurer:c.insurer, treatment:c.treatment, tooth:c.tooth, status:c.status, claimDate:c.claimDate, amountClaimed:c.amountClaimed, amountReimbursed:c.amountReimbursed, notes:c.notes},
+        patient: Object.assign(await aiPatientBasics(p), {name:p.name}), notes: document.getElementById("aisClNotes").value });
+      const a = r.analysis || {};
+      out.innerHTML = `<div class="ais-card">
+        <div class="ais-card-title">${aisBadge(a.outlook||"")} ${escapeHtml(a.category||"")}</div><p>${escapeHtml(a.likelyCause||"")}</p>
+        ${(r.suggestions||[]).length? `<div class="ais-card-title">Next steps</div>${r.suggestions.map(s=>`<div class="ais-row"><span>${escapeHtml(s.action||"")}</span>${aisBadge(s.priority||"")}</div>`).join("")}` : ""}
+        ${(r.documentsNeeded||[]).length? `<div class="ais-card-title" style="margin-top:10px;">Documents to attach</div><ul>${r.documentsNeeded.map(d=>`<li>${escapeHtml(d)}</li>`).join("")}</ul>` : ""}
+        ${r.appealLetter? `<div class="ais-card-title" style="margin-top:10px;">Appeal letter</div><textarea id="aisClLetter" rows="10" style="width:100%;">${escapeHtml(r.appealLetter)}</textarea>
+          <div style="display:flex;gap:8px;margin-top:8px;"><button class="btn btn-outline btn-sm" id="aisClCopy">Copy</button><button class="btn btn-outline btn-sm" id="aisClPrint">${icon('print',14)} Print on letterhead</button></div>` : ""}
+        ${(r.preventionTips||[]).length? `<div class="ais-card-title" style="margin-top:10px;">Avoid this next time</div><ul>${r.preventionTips.map(d=>`<li>${escapeHtml(d)}</li>`).join("")}</ul>` : ""}
+        ${AI_REVIEW_NOTE}</div>`;
+      const cp = document.getElementById("aisClCopy"); if(cp) cp.onclick = ()=> navigator.clipboard.writeText(document.getElementById("aisClLetter").value).then(()=>showToast("Copied"));
+      const pr = document.getElementById("aisClPrint"); if(pr) pr.onclick = async ()=>{
+        const clinics = await dbGetAll("clinics"); const clinic = clinics.find(x=>x.id===c.clinicId) || clinics.find(x=>x.isDefault) || clinics[0] || {};
+        printDocument({ title:"Insurance Claim Appeal", clinic, docDate: new Date().toLocaleDateString(), bodyHtml: `<div style="white-space:pre-wrap;font-size:13px;line-height:1.6;">${escapeHtml(document.getElementById("aisClLetter").value)}</div>`, signHtml:"" });
+      };
+    }catch(err){ out.innerHTML = `<div class="ais-err">${escapeHtml(err.message)}</div>`; }
+    aiSetBusy(btn, false);
+  };
+};
+
+// 11. Consent generator
+AIS_RENDER.consent = async (body)=>{
+  let patient = null;
+  body.innerHTML = `
+    <div class="ais-card"><div id="aisCnPt"></div>
+      <div class="field-row" style="margin-top:10px;"><div class="field"><label>Procedure</label><input id="aisCnProc" placeholder="e.g. Surgical extraction of impacted 38, Implant 46, RCT 36"></div>
+        <div class="field"><label>Teeth</label><input id="aisCnTeeth" placeholder="e.g. 38"></div></div>
+      <div class="field"><label>Language</label><select id="aisCnLang"><option value="english">English</option><option value="hindi">Hindi</option><option value="hinglish">Hinglish</option></select></div>
+      <button class="ai-btn" id="aisCnGo" style="width:100%;justify-content:center;">${icon('sparkle',15)} Generate consent form</button></div>
+    <div id="aisCnOut"></div>`;
+  aisPatientPicker("aisCnPt", (p)=> patient = p, "Choose patient");
+  document.getElementById("aisCnGo").onclick = async (e)=>{
+    const proc = document.getElementById("aisCnProc").value.trim();
+    if(!proc){ showToast("Enter the procedure"); return; }
+    const btn = e.currentTarget; aiSetBusy(btn, true, "Writing…");
+    const out = document.getElementById("aisCnOut");
+    try{
+      const r = await aiRequest("consent_generator", { procedure: proc, teeth: document.getElementById("aisCnTeeth").value, language: document.getElementById("aisCnLang").value, patient: patient? await aiPatientBasics(patient, {name:patient.name}) : {} });
+      const list = (t, xs)=> (xs||[]).filter(Boolean).length? `<h4 style="margin:12px 0 4px;">${t}</h4><ul style="margin:0;padding-left:18px;">${xs.filter(Boolean).map(x=>`<li>${escapeHtml(x)}</li>`).join("")}</ul>` : "";
+      const docHtml = `<h3 style="margin:0 0 8px;">Informed Consent — ${escapeHtml(r.title||proc)}</h3>
+        ${patient? `<p><b>Patient:</b> ${escapeHtml(patient.name)}${patient.mobile? " · "+escapeHtml(patient.mobile):""}${document.getElementById("aisCnTeeth").value? " &nbsp; <b>Teeth:</b> "+escapeHtml(document.getElementById("aisCnTeeth").value):""}</p>` : ""}
+        <div style="white-space:pre-wrap;">${escapeHtml(r.procedureDescription||"")}</div>
+        ${r.anesthesia||r.duration? `<p><b>Anaesthesia:</b> ${escapeHtml(r.anesthesia||"—")} &nbsp; <b>Expected duration:</b> ${escapeHtml(r.duration||"—")}</p>` : ""}
+        ${list("Benefits", r.benefits)}${list("Risks and possible complications", r.risks)}${list("Alternatives", r.alternatives)}${list("After the procedure", r.postOpInstructions)}${list("I confirm that", r.acknowledgements)}
+        <div style="display:flex;justify-content:space-between;margin-top:36px;gap:20px;"><div style="flex:1;border-top:1px solid #333;padding-top:4px;font-size:12px;">Patient / Guardian signature &amp; date</div><div style="flex:1;border-top:1px solid #333;padding-top:4px;font-size:12px;">Witness</div></div>`;
+      out.innerHTML = `<div class="ais-card"><div class="ais-doc">${docHtml}</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;"><button class="btn btn-primary btn-sm" id="aisCnPrint">${icon('print',14)} Print</button>${patient && patient.mobile? `<button class="btn btn-outline btn-sm" id="aisCnWa">${icon('message',14)} Send link on WhatsApp</button>`:""}</div>
+        ${AI_REVIEW_NOTE}</div>`;
+      const doPrint = async ()=>{ const clinics = await dbGetAll("clinics"); const clinic = clinics.find(x=> patient && x.id===patient.preferredClinicId) || clinics.find(x=>x.isDefault) || clinics[0] || {};
+        return printDocument({ title:"Consent Form", clinic, docDate: new Date().toLocaleDateString(), bodyHtml: `<div style="font-size:12.5px;line-height:1.55;">${docHtml}</div>`, signHtml:"" }); };
+      document.getElementById("aisCnPrint").onclick = doPrint;
+      const wa = document.getElementById("aisCnWa"); if(wa) wa.onclick = ()=> sendDocLinkOnWhatsApp(patient, doPrint, "Consent Form");
+    }catch(err){ out.innerHTML = `<div class="ais-err">${escapeHtml(err.message)}</div>`; }
+    aiSetBusy(btn, false);
+  };
+};
+
+// 12. Clinic analyst
+AIS_RENDER.analyst = async (body)=>{
+  const chips = ["How was last month compared to the month before?","Which doctor did the most treatment this year?","Which treatments bring the most revenue?","How much treatment did we do but not invoice?","How many new patients this year, month by month?","What's our no-show rate?"];
+  body.innerHTML = `
+    <div class="ais-card"><div class="field"><label>Ask about your clinic</label><textarea id="aisAnQ" rows="2" placeholder="e.g. Why are collections lower this month?"></textarea></div>
+      <div class="ais-chips">${chips.map(c=>`<button type="button" class="ais-chip">${escapeHtml(c)}</button>`).join("")}</div>
+      <button class="ai-btn" id="aisAnGo" style="width:100%;justify-content:center;margin-top:8px;">${icon('sparkle',15)} Ask</button></div>
+    <div id="aisAnOut"></div>`;
+  body.querySelectorAll(".ais-chip").forEach(c=> c.onclick = ()=>{ document.getElementById("aisAnQ").value = c.textContent; document.getElementById("aisAnGo").click(); });
+  document.getElementById("aisAnGo").onclick = async (e)=>{
+    const q = document.getElementById("aisAnQ").value.trim(); if(!q){ showToast("Type a question"); return; }
+    const btn = e.currentTarget; aiSetBusy(btn, true, "Crunching numbers…");
+    const out = document.getElementById("aisAnOut");
+    try{
+      const y = new Date().getFullYear();
+      const pack = async (yr)=>{ const {months, M} = await buildMonthlyConsolidated(yr, ""); return months.filter(k=> k<=toDateKey(new Date()).slice(0,7)).map(k=>{ const m = M[k];
+        const top = (o)=> Object.entries(o).sort((a,b)=>b[1].amount-a[1].amount).slice(0,8).map(([n,v])=>({name:n, amount:Math.round(v.amount), count:v.count}));
+        return {month:k, treatmentDone:Math.round(m.treat), treatments:m.treatCount, invoiced:Math.round(m.invoiced), receipts:Math.round(m.receipts), paymentToBeMadeCollected:Math.round(m.dueColl), refunds:Math.round(m.refunds), totalCollection:Math.round(m.collection), notInvoiced:Math.round(m.unbilled), pharmacy:Math.round(m.pharmacy), newPatients:m.newPatients, byDoctor:top(m.byDoctor), topTreatments:top(m.byTreatment)}; }); };
+      const appts = await dbGetAll("appointments");
+      const apptStats = {}; appts.forEach(a=>{ const k = (a.date||"").slice(0,7); if(!k || k < (y-1)+"-01") return; const s = apptStats[k] = apptStats[k] || {booked:0, completed:0, noShow:0, cancelled:0}; s.booked++; if(a.status==="Completed") s.completed++; if(a.status==="NoShow") s.noShow++; if(a.status==="Cancelled") s.cancelled++; });
+      const data = { today: toDateKey(new Date()), currency:"INR", thisYear: await pack(y), lastYear: (await pack(y-1)).map(m=>({month:m.month, treatmentDone:m.treatmentDone, totalCollection:m.totalCollection, invoiced:m.invoiced, newPatients:m.newPatients})), appointmentsByMonth: apptStats };
+      const r = await aiRequest("clinic_analyst", { question: q, data });
+      out.innerHTML = `<div class="ais-card"><div class="ais-answer">${escapeHtml(r.answer||"").replace(/\n/g,"<br>")}</div>
+        ${(r.keyNumbers||[]).length? `<div class="ais-kpis" style="margin-top:10px;">${r.keyNumbers.slice(0,6).map(k=>`<div class="ais-kpi"><b>${escapeHtml(String(k.value||""))}</b><span>${escapeHtml(k.label||"")}</span></div>`).join("")}</div>` : ""}
+        ${r.topAction? `<div class="ais-topaction">${icon('sparkle',15)} <b>Do this next:</b> ${escapeHtml(r.topAction)}</div>` : ""}
+        <div class="ai-note">✦ AI analysis${aiRequest.last? " · "+escapeHtml(aiRequest.last):""} — based on the figures in your Monthly Consolidated Report.</div></div>`;
+      aisAnimate(out);
+    }catch(err){ out.innerHTML = `<div class="ais-err">${escapeHtml(err.message)}</div>`; }
+    aiSetBusy(btn, false);
+  };
+};
+
+// 13. Patient intake
+AIS_RENDER.intake = async (body)=>{
+  body.innerHTML = `
+    <div class="ais-card"><div class="field"><label>Paste or type everything the patient told you</label>
+      <textarea id="aisInTx" rows="6" placeholder="e.g. Ramesh Gupta 52 M 9876543210, lives Sec 46, pain lower left 3 days. Sugar patient on metformin, BP tablets, allergic to penicillin. Smokes 5/day. Wife Sunita 98xxxxxx emergency."></textarea></div>
+      <button class="ai-btn" id="aisInGo" style="width:100%;justify-content:center;">${icon('sparkle',15)} Structure & score</button></div>
+    <div id="aisInOut"></div>`;
+  document.getElementById("aisInGo").onclick = async (e)=>{
+    const t = document.getElementById("aisInTx").value.trim(); if(!t){ showToast("Paste the patient's details first"); return; }
+    const btn = e.currentTarget; aiSetBusy(btn, true, "Reading…");
+    const out = document.getElementById("aisInOut");
+    try{
+      const r = await aiRequest("patient_intake", { text: t });
+      const p = r.patient || {}, m = r.medical || {};
+      const lvl = String(r.riskLevel||"low").toUpperCase(); const score = Number(r.riskScore)||0;
+      const field = (k,v)=> v? `<div class="ais-kv"><span>${k}</span><b>${escapeHtml(String(v))}</b></div>` : "";
+      out.innerHTML = `<div class="ais-card">
+        <div class="ais-risk"><div class="ais-gauge" style="--v:${score};--c:${score>60?'#dc2626':score>30?'#f59e0b':'#16a34a'};"><b>${score}</b><span>risk</span></div><div>${aisBadge(lvl==="MODERATE"?"MEDIUM":lvl)}<div style="font-size:12.5px;color:var(--grey);margin-top:4px;">${lvl==="HIGH"? "Doctor must review before any treatment" : lvl==="MODERATE"? "Flag for doctor review" : "Low medical risk"}</div></div></div>
+        ${(r.flags||[]).filter(Boolean).length? `<div class="ais-warnbox"><b>For the dentist</b><ul>${r.flags.filter(Boolean).map(f=>`<li>${escapeHtml(f)}</li>`).join("")}</ul></div>` : ""}
+        <div class="ais-kvs">${field("Name",p.name)}${field("Gender",p.gender)}${field("Age",p.age)}${field("DOB",p.dob)}${field("Mobile",p.mobile)}${field("Email",p.email)}${field("Address",p.address)}${field("Emergency contact",p.emergencyContact)}${field("Chief complaint",p.chiefComplaint)}
+          ${field("Conditions",(m.conditions||[]).join(", "))}${field("Medications",(m.medications||[]).join(", "))}${field("Allergies",(m.allergies||[]).join(", "))}${field("Pregnant",m.pregnant!=="unknown"? m.pregnant:"")}${field("Habits",(m.habits||[]).join(", "))}</div>
+        ${(r.missing||[]).filter(Boolean).length? `<div style="font-size:12.5px;color:#92400e;margin-top:8px;">Still to ask: ${escapeHtml(r.missing.filter(Boolean).join(", "))}</div>` : ""}
+        <button class="btn btn-primary btn-block" id="aisInCreate" style="margin-top:12px;">${icon('user',15)} Create patient with these details</button>
+        ${AI_REVIEW_NOTE}</div>`;
+      document.getElementById("aisInCreate").onclick = ()=>{
+        const g = /^f/i.test(p.gender||"")? "Female" : /^m/i.test(p.gender||"")? "Male" : (p.gender||"");
+        const alerts = [...(m.conditions||[]), m.pregnant==="yes"? "Pregnant" : "", ...(m.habits||[])].filter(Boolean).join(", ");
+        openPatientForm(null, { name: p.name||"", mobile: String(p.mobile||"").replace(/\D/g,"").slice(-10), whatsappNumber: String(p.mobile||"").replace(/\D/g,"").slice(-10), email: p.email||"", gender: g, dob: /^\d{4}-\d{2}-\d{2}$/.test(p.dob||"")? p.dob : "", address: p.address||"",
+          medicalAlerts: alerts, allergies: (m.allergies||[]).join(", "), currentMedications: (m.medications||[]).join(", "),
+          generalNotes: [p.chiefComplaint? "Chief complaint: "+p.chiefComplaint : "", p.emergencyContact? "Emergency contact: "+p.emergencyContact : "", p.age && !p.dob? "Age given: "+p.age : "", "Intake risk score: "+score+" ("+lvl+")"].filter(Boolean).join("\n") });
+      };
+    }catch(err){ out.innerHTML = `<div class="ais-err">${escapeHtml(err.message)}</div>`; }
+    aiSetBusy(btn, false);
+  };
+};
+
+// 14. WhatsApp receptionist
+AIS_RENDER.reception = async (body)=>{
+  let patient = null;
+  body.innerHTML = `
+    <div class="ais-card"><div id="aisRcPt"></div>
+      <div class="field" style="margin-top:10px;"><label>Patient's message</label><textarea id="aisRcMsg" rows="4" placeholder="e.g. Hello doctor, mera kal 5 baje appointment hai, kya 7 baje ho sakta hai? Aur RCT ka kitna kharcha aayega?"></textarea></div>
+      <div class="field"><label>Anything the reply should include? (optional)</label><input id="aisRcInfo" placeholder="e.g. RCT starts ₹4,500; Dr. Pradeep free Thursday 6 PM"></div>
+      <button class="ai-btn" id="aisRcGo" style="width:100%;justify-content:center;">${icon('sparkle',15)} Draft reply</button></div>
+    <div id="aisRcOut"></div>`;
+  aisPatientPicker("aisRcPt", (p)=> patient = p, "Which patient? (optional)");
+  document.getElementById("aisRcGo").onclick = async (e)=>{
+    const msg = document.getElementById("aisRcMsg").value.trim(); if(!msg){ showToast("Paste the patient's message"); return; }
+    const btn = e.currentTarget; aiSetBusy(btn, true, "Drafting…");
+    const out = document.getElementById("aisRcOut");
+    try{
+      let appt = null;
+      if(patient){ const today = toDateKey(new Date()); appt = (await dbGetAll("appointments")).filter(a=> a.patientId===patient.id && a.date>=today && !["Cancelled","NoShow"].includes(a.status)).sort((a,b)=> (a.date+a.startTime).localeCompare(b.date+b.startTime))[0] || null; }
+      const r = await aiRequest("wa_receptionist", { message: msg, info: document.getElementById("aisRcInfo").value, patient: patient? {name: patient.name} : {}, appointment: appt? {date: appt.date, time: appt.startTime, doctor: appt.doctor, treatment: appt.treatmentType} : null });
+      out.innerHTML = `<div class="ais-card"><div class="ais-card-title">${aisBadge(String(r.intent||"other").toUpperCase())} ${r.suggestedAction? `<small style="font-weight:600;color:var(--grey);">→ ${escapeHtml(r.suggestedAction)}</small>`:""}</div>
+        <textarea id="aisRcReply" rows="5" style="width:100%;">${escapeHtml(r.reply||"")}</textarea>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;"><button class="btn btn-outline btn-sm" id="aisRcCopy">Copy</button>${patient && patient.mobile? `<button class="btn btn-primary btn-sm" id="aisRcSend">${icon('message',14)} Send to ${escapeHtml(patient.name)}</button>`:""}
+          ${appt && /reschedule|cancel|booking/.test(r.intent||"")? `<button class="btn btn-outline btn-sm" id="aisRcAppt">${icon('calendar',14)} Open appointment</button>`:""}</div>
+        ${AI_REVIEW_NOTE}</div>`;
+      document.getElementById("aisRcCopy").onclick = ()=> navigator.clipboard.writeText(document.getElementById("aisRcReply").value).then(()=>showToast("Copied"));
+      const s = document.getElementById("aisRcSend"); if(s) s.onclick = ()=> openWhatsAppComposer({title:"Reply", toName:patient.name, toNumber:patient.whatsappNumber||patient.mobile, patientId:patient.id, message: document.getElementById("aisRcReply").value});
+      const ap = document.getElementById("aisRcAppt"); if(ap) ap.onclick = ()=> openAppointmentForm(appt.id);
+    }catch(err){ out.innerHTML = `<div class="ais-err">${escapeHtml(err.message)}</div>`; }
+    aiSetBusy(btn, false);
+  };
+};
+
 function patientAgeYears(p){
   if(!p) return null;
   if(p.dob){ const a = computeAgeFromDob(p.dob); return a===""? null : Number(a); }
@@ -31365,6 +32193,7 @@ async function renderMore(){
         <div class="list-row" id="rowTrash"><span class="row-ico">${icon('trash',18)}</span><span class="txt">Trash</span><span class="meta"></span><span class="chev">${icon('chevron',16)}</span></div>
   ` : "";
   const businessRows = `
+        <div class="list-row" id="rowAiSkills"><span class="row-ico">${icon('sparkle',18)}</span><span class="txt">AI Skills</span><span class="meta">14 AI assistants for your clinic</span><span class="chev">${icon('chevron',16)}</span></div>
         ${canAccessModule("financial")? `<div class="list-row" id="rowFinancial"><span class="row-ico">${icon('wallet',18)}</span><span class="txt">Financial</span><span class="meta">Income, expenses, budgets</span><span class="chev">${icon('chevron',16)}</span></div>` : ""}
         ${canAccessModule("inventory")? `<div class="list-row" id="rowInventory"><span class="row-ico">${icon('box',18)}</span><span class="txt">Inventory</span><span class="meta">Materials, stock, alerts</span><span class="chev">${icon('chevron',16)}</span></div>` : ""}
         ${canAccessModule("pharmacy")? `<div class="list-row" id="rowPharmacy"><span class="row-ico">${icon('pill',18)}</span><span class="txt">Pharmacy</span><span class="meta">Products, stock &amp; billing</span><span class="chev">${icon('chevron',16)}</span></div>` : ""}
@@ -31388,6 +32217,7 @@ async function renderMore(){
   `;
   const wire = (id, fn)=>{ const el=document.getElementById(id); if(el) el.onclick = fn; };
   wire("rowAdmin", ()=> goTo("admin"));
+  wire("rowAiSkills", ()=>{ aisOpenKey = null; goTo("aiskills"); });
   wire("rowClinics", openClinicsSheet);
   wire("rowDoctors", openDoctorsSheet);
   wire("rowConsultants", openConsultantsSheet);
