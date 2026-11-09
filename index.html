@@ -610,6 +610,14 @@
   body.dark-mode .ais-doc{background:#fff;}
   @media (prefers-reduced-motion: reduce){ .ais-tile,.ais-card,.ais-kpi,.ais-step,.ais-slot,.ais-heat,.ais-seg-ring,.ais-hero-ico{animation:none;} .ais-bar-fill,.ais-col-fill{transition:none;} }
 
+  /* ---------- Loyalty & CRM */
+  .crm-card{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:18px;border-radius:18px;color:#fff;background:linear-gradient(135deg,#7c3aed,#db2777);box-shadow:0 12px 30px -14px #7c3aed;animation:hbPanelIn .45s both;}
+  .crm-card .ais-badge{background:rgba(255,255,255,.22) !important;color:#fff !important;margin-top:6px;}
+  .crm-card-name{font-size:18px;font-weight:800;}
+  .crm-card-pts{font-size:30px;font-weight:900;line-height:1;}
+  .crm-count{padding:10px 12px;border-radius:12px;background:color-mix(in srgb,var(--green) 9%,transparent);font-size:13px;margin:6px 0 4px;}
+  .crm-sample{font-size:11.5px;color:var(--grey);margin-top:4px;}
+
   /* ---------- Home boards */
   .hb-layout{display:grid;grid-template-columns:1fr;gap:14px;margin-top:6px;}
   @media (min-width:900px){
@@ -2142,6 +2150,7 @@
       <div class="nav-item" data-page="clinical"><span class="ico" data-icon="tooth"></span><span class="lbl"> Clinical</span></div>
       <div class="nav-item" data-page="assist"><span class="ico" data-icon="assist"></span><span class="lbl"> Assist</span></div>
       <div class="nav-item" data-page="aiskills"><span class="ico" data-icon="sparkle"></span><span class="lbl"> AI Skills</span></div>
+      <div class="nav-item" data-page="crm"><span class="ico" data-icon="ticket"></span><span class="lbl"> Loyalty &amp; CRM</span></div>
       <div class="sidebar-divider"></div>
       <div class="nav-item" data-page="financial"><span class="ico" data-icon="wallet"></span><span class="lbl"> Billing &amp; Finance</span></div>
       <div class="nav-item" data-page="inventory"><span class="ico" data-icon="box"></span><span class="lbl"> Inventory</span></div>
@@ -3216,6 +3225,7 @@ const PAGE_RENDERERS = {
   labcases: renderLabCases,
   maintenance: renderMaintenance,
   aiskills: renderAiSkills,
+  crm: renderCrm,
   more: renderMore,
   admin: renderAdminPanel,
   patientProfile: ()=> renderPatientProfileSheet(profilePatientId)
@@ -24926,6 +24936,482 @@ async function aiRequest(task, input){
   aiRequest.last = data.provider ? (data.provider==="cloudflare" ? "Cloudflare " : "Claude ") + (data.model||"") : "";
   return data.result;
 }
+// =====================================================================
+// CRM, LOYALTY & CAMPAIGNS (sidebar → Loyalty & CRM)
+//  - Loyalty points: earned automatically from every payment recorded
+//    (receipts + Payment to be Made collections) since the programme start
+//    date, plus referral bonuses; redeemed as a normal patient coupon, so
+//    the existing coupon-code discount does the rest.
+//  - Referrals: who referred whom, conversions and a leaderboard.
+//  - Campaigns: pick an audience, send an approved WhatsApp template
+//    ({{1}} = name) or an email to all of them in one go.
+//  - Automations: rules the 9 AM server job runs every day (recalls,
+//    post-visit check-ins, no-show follow-ups, unconverted enquiries).
+// Patients marked "No marketing messages" are always skipped.
+// =====================================================================
+const CRM_DEFAULTS = { enabled:true, startDate:"2026-01-01", earnPer100:1, pointValue:1, referrerBonus:500, refereeBonus:250, minRedeem:100, gold:2000, platinum:5000 };
+let crmTab = "Overview";
+let crmCtxCache = null;
+
+async function crmSettings(){
+  const s = (await dbGetAll("settings"))[0] || {};
+  return Object.assign({}, CRM_DEFAULTS, s.loyalty||{});
+}
+function crmDigits(x){ return String(x||"").replace(/\D/g,"").slice(-10); }
+async function crmLoad(force){
+  if(crmCtxCache && !force && Date.now()-crmCtxCache.at < 60000) return crmCtxCache;
+  const [core, ledger, cfg] = await Promise.all([aisLoadCore(), dbGetAll("loyaltyLedger").catch(()=>[]), crmSettings()]);
+  const pById = {}; core.patients.forEach(p=> pById[p.id] = p);
+  const byMobile = {}, byName = {};
+  core.patients.forEach(p=>{ const m = crmDigits(p.mobile); if(m.length===10) (byMobile[m] = byMobile[m]||[]).push(p); const n = normalizeStr(p.name||"").trim(); if(n) (byName[n] = byName[n]||[]).push(p); });
+  // Money paid per patient since the programme start
+  const start = new Date((cfg.startDate||"2000-01-01")+"T00:00:00").getTime();
+  const paid = {}, paidByMonth = {};
+  const addPay = (pid, amt, d)=>{ if(!pid) return; const t = new Date(d||0).getTime(); if(!(t>=start)) return; paid[pid] = (paid[pid]||0) + amt; const mk = aisDateOnly(d).slice(0,7); (paidByMonth[pid] = paidByMonth[pid]||{})[mk] = ((paidByMonth[pid]||{})[mk]||0) + amt; };
+  core.payments.forEach(p=> addPay(p.patientId, Number(p.amount)||0, p.date));
+  core.dues.forEach(d=> (d.payments||[]).forEach(p=> addPay(d.patientId, Number(p.amount)||0, p.date)));
+  core.refunds.forEach(r=> addPay(r.patientId, -(Number(r.amount)||0), r.date));
+  // Referrals: explicit link first, else the free-text "Referred by" matched to a patient
+  const referrerOf = {};
+  const guessReferrer = (p)=>{
+    const t = String(p.referredBy||"").trim(); if(!t) return null;
+    const m = crmDigits(t); if(m.length===10 && byMobile[m]) { const c = byMobile[m].filter(x=>x.id!==p.id); if(c.length===1) return c[0]; }
+    const n = normalizeStr(t).replace(/^(dr\.?|mr\.?|mrs\.?|ms\.?)\s+/,"").trim(); if(byName[n]) { const c = byName[n].filter(x=>x.id!==p.id); if(c.length===1) return c[0]; }
+    return null;
+  };
+  const suggestions = [];
+  core.patients.forEach(p=>{
+    if(p.referredByPatientId && pById[p.referredByPatientId]) referrerOf[p.id] = p.referredByPatientId;
+    else { const g = guessReferrer(p); if(g) suggestions.push({p, ref:g}); }
+  });
+  const converted = (pid)=> (paid[pid]||0) > 0 || (core.visitsByPatient[pid]||[]).length>0;
+  const referrals = {};
+  Object.entries(referrerOf).forEach(([pid, rid])=>{ (referrals[rid] = referrals[rid]||[]).push({pid, converted: converted(pid)}); });
+  const ledgerBy = {}; ledger.forEach(l=> (ledgerBy[l.patientId] = ledgerBy[l.patientId]||[]).push(l));
+  const points = (pid)=>{
+    const earned = Math.floor((Math.max(0, paid[pid]||0))/100 * (Number(cfg.earnPer100)||0));
+    const refs = (referrals[pid]||[]).filter(r=>r.converted).length;
+    const refPts = refs * (Number(cfg.referrerBonus)||0) + ((referrerOf[pid] && converted(pid)) ? (Number(cfg.refereeBonus)||0) : 0);
+    const led = (ledgerBy[pid]||[]);
+    const plus = led.filter(l=>l.points>0).reduce((a,l)=>a+l.points,0), minus = led.filter(l=>l.points<0).reduce((a,l)=>a+l.points,0);
+    const lifetime = earned + refPts + plus;
+    const balance = Math.max(0, lifetime + minus);
+    const tier = lifetime >= cfg.platinum ? "Platinum" : lifetime >= cfg.gold ? "Gold" : "Silver";
+    return {earned, refPts, refs, plus, minus, lifetime, balance, tier};
+  };
+  crmCtxCache = {at: Date.now(), core, cfg, ledger, ledgerBy, pById, paid, paidByMonth, referrerOf, referrals, suggestions, points, converted};
+  return crmCtxCache;
+}
+function crmTierBadge(t){ const c = {Platinum:["#ede9fe","#5b21b6"], Gold:["#fef3c7","#92400e"], Silver:["#f1f5f9","#334155"]}[t] || ["#f1f5f9","#334155"]; return `<span class="ais-badge" style="background:${c[0]};color:${c[1]};">${t==="Platinum"?"💎":t==="Gold"?"🥇":"🥈"} ${t}</span>`; }
+
+async function renderCrm(){
+  const main = document.getElementById("main");
+  const tabs = ["Overview","Loyalty","Referrals","Campaigns","Automations","Settings"];
+  main.innerHTML = `<div class="page ais-page">
+    <div class="ais-hero" style="background:linear-gradient(135deg,color-mix(in srgb,#db2777 12%,transparent),color-mix(in srgb,#7c3aed 10%,transparent));"><div class="ais-hero-ico" style="background:#db2777;">${icon('ticket',22)}</div><div><h2 style="margin:0;">Loyalty &amp; CRM</h2>
+      <p style="margin:2px 0 0;color:var(--grey);font-size:13px;">Loyalty points, referrals, WhatsApp/email campaigns and automatic follow-ups.</p></div></div>
+    <div class="hb-tabs" id="crmTabs" style="margin-top:10px;">${tabs.map(t=>`<button type="button" class="hb-tab ${t===crmTab?'on':''}" data-crmtab="${t}">${escapeHtml(t)}</button>`).join("")}</div>
+    <div id="crmBody"><div class="ais-loading"><span class="ai-spin"></span> Loading…</div></div></div>`;
+  main.querySelectorAll("[data-crmtab]").forEach(b=> b.onclick = ()=>{ crmTab = b.dataset.crmtab; renderCrm(); });
+  const body = document.getElementById("crmBody");
+  try{ await CRM_RENDER[crmTab](body); }catch(e){ console.warn(e); body.innerHTML = `<div class="ais-err">${escapeHtml(e.message||String(e))}</div>`; }
+  aisAnimate(main);
+}
+const CRM_RENDER = {};
+
+// ---------- Overview ----------
+CRM_RENDER.Overview = async (body)=>{
+  const ctx = await crmLoad(true);
+  const cur = await finCurrency();
+  const rows = ctx.core.patients.map(p=> ({p, ...ctx.points(p.id)}));
+  const members = rows.filter(r=>r.lifetime>0);
+  const liability = rows.reduce((a,r)=>a+r.balance,0) * (Number(ctx.cfg.pointValue)||0);
+  const refTotal = Object.values(ctx.referrals).reduce((a,l)=>a+l.length,0), refConv = Object.values(ctx.referrals).reduce((a,l)=>a+l.filter(x=>x.converted).length,0);
+  const campaigns = await dbGetAll("campaigns").catch(()=>[]);
+  const sent = campaigns.reduce((a,c)=>a+(c.sentCount||0),0);
+  const tiers = {Silver:0, Gold:0, Platinum:0}; members.forEach(r=> tiers[r.tier]++);
+  const leaders = Object.entries(ctx.referrals).map(([rid,l])=>({p:ctx.pById[rid], n:l.length, c:l.filter(x=>x.converted).length})).filter(x=>x.p).sort((a,b)=> b.c-a.c || b.n-a.n).slice(0,8);
+  body.innerHTML = `
+    <div class="ais-kpis">
+      <div class="ais-kpi"><b>${members.length}</b><span>Patients with points</span></div>
+      <div class="ais-kpi" style="--k:#7c3aed;"><b>${rows.reduce((a,r)=>a+r.balance,0).toLocaleString("en-IN")}</b><span>Points unredeemed (${finMoney(liability,cur)})</span></div>
+      <div class="ais-kpi" style="--k:#db2777;"><b>${refConv} / ${refTotal}</b><span>Referrals converted</span></div>
+      <div class="ais-kpi" style="--k:#2563eb;"><b>${sent}</b><span>Campaign messages sent</span></div>
+    </div>
+    <div class="ais-two">
+      <div class="ais-card"><div class="ais-card-title">Top loyalty members</div>${aisBars(rows.sort((a,b)=>b.balance-a.balance).slice(0,8).map(r=>({label:r.p.name, value:r.balance})), {color:"#7c3aed", fmt:v=>v.toLocaleString("en-IN")+" pts"})}</div>
+      <div class="ais-card"><div class="ais-card-title">Referral leaderboard</div>${leaders.length? aisBars(leaders.map(l=>({label:l.p.name, value:l.c})), {color:"#db2777", fmt:v=>v+" joined"}) : `<div class="ais-empty">No referrals linked yet — see the Referrals tab.</div>`}</div>
+    </div>
+    <div class="ais-card"><div class="ais-card-title">Members by tier</div>${aisBars([{label:"💎 Platinum ("+ctx.cfg.platinum+"+ lifetime pts)", value:tiers.Platinum},{label:"🥇 Gold ("+ctx.cfg.gold+"+)", value:tiers.Gold},{label:"🥈 Silver", value:tiers.Silver}], {color:"#b45309"})}</div>
+    <p style="font-size:11.5px;color:var(--grey);">Points: ${ctx.cfg.earnPer100} per ₹100 paid since ${new Date(ctx.cfg.startDate+"T00:00:00").toLocaleDateString()} · referrer +${ctx.cfg.referrerBonus} · new patient +${ctx.cfg.refereeBonus} · 1 point = ₹${ctx.cfg.pointValue}. Change these in Settings.</p>`;
+};
+
+// ---------- Loyalty ----------
+let crmLoySearch = "";
+CRM_RENDER.Loyalty = async (body)=>{
+  const ctx = await crmLoad();
+  const nq = normalizeStr(crmLoySearch);
+  const rows = ctx.core.patients.filter(p=> !nq || normalizeStr(p.name).includes(nq) || (p.mobile||"").includes(crmLoySearch)).map(p=>({p, ...ctx.points(p.id)})).sort((a,b)=> b.balance-a.balance || b.lifetime-a.lifetime).slice(0,150);
+  body.innerHTML = `
+    <div class="search-bar" style="margin-bottom:10px;"><span class="icon-btn" style="background:none;color:var(--grey);">${icon('search',18)}</span><input id="crmLoyQ" placeholder="Search patient by name or mobile…" value="${escapeAttr(crmLoySearch)}"></div>
+    <div class="ais-table-wrap" style="max-height:560px;"><table class="ais-table"><thead><tr><th>Patient</th><th>Tier</th><th>Points balance</th><th>Earned</th><th>Referral</th><th>Redeemed</th><th></th></tr></thead><tbody>
+    ${rows.map(r=>`<tr><td><b>${escapeHtml(r.p.name)}</b><br><small>${escapeHtml(r.p.mobile||"")}${r.p.marketingOptOut? " · 🚫 no marketing":""}</small></td><td>${crmTierBadge(r.tier)}</td><td><b>${r.balance.toLocaleString("en-IN")}</b></td><td>${r.earned}</td><td>${r.refPts}</td><td>${-r.minus}</td>
+      <td><button class="btn btn-outline btn-sm" data-loyopen="${r.p.id}">Open</button></td></tr>`).join("") || `<tr><td colspan="7" class="ais-empty">No patients found</td></tr>`}
+    </tbody></table></div>`;
+  const q = document.getElementById("crmLoyQ");
+  q.oninput = ()=>{ crmLoySearch = q.value; clearTimeout(q._t); q._t = setTimeout(async ()=>{ await CRM_RENDER.Loyalty(body); const n = document.getElementById("crmLoyQ"); n.focus(); n.setSelectionRange(n.value.length, n.value.length); }, 250); };
+  body.querySelectorAll("[data-loyopen]").forEach(b=> b.onclick = ()=> openLoyaltyCard(b.dataset.loyopen));
+};
+async function openLoyaltyCard(pid){
+  const ctx = await crmLoad(true);
+  const p = ctx.pById[pid]; if(!p) return;
+  const pt = ctx.points(pid); const cfg = ctx.cfg;
+  const led = (ctx.ledgerBy[pid]||[]).slice().sort((a,b)=> (b.date||"").localeCompare(a.date||""));
+  const refs = (ctx.referrals[pid]||[]).map(r=>({p:ctx.pById[r.pid], c:r.converted})).filter(x=>x.p);
+  const months = Object.entries(ctx.paidByMonth[pid]||{}).sort((a,b)=> b[0].localeCompare(a[0])).slice(0,12);
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <div class="crm-card"><div><div class="crm-card-name">${escapeHtml(p.name)}</div><div>${crmTierBadge(pt.tier)}</div></div>
+      <div style="text-align:right;"><div class="crm-card-pts">${pt.balance.toLocaleString("en-IN")}</div><div style="font-size:11px;opacity:.85;">points · worth ₹${(pt.balance*cfg.pointValue).toLocaleString("en-IN")}</div></div></div>
+    <div class="ais-kpis" style="margin-top:10px;"><div class="ais-kpi"><b>${pt.earned}</b><span>From payments</span></div><div class="ais-kpi" style="--k:#db2777;"><b>${pt.refPts}</b><span>Referral bonus (${pt.refs} joined)</span></div><div class="ais-kpi" style="--k:#7c3aed;"><b>${pt.plus}</b><span>Bonus added</span></div><div class="ais-kpi" style="--k:#b42318;"><b>${-pt.minus}</b><span>Redeemed / removed</span></div></div>
+    <div class="field-row"><div class="field"><label>Redeem points</label><input type="number" id="loyRedeem" min="${cfg.minRedeem}" max="${pt.balance}" step="10" placeholder="Min ${cfg.minRedeem}"></div>
+      <div class="field"><label>&nbsp;</label><button class="btn btn-primary btn-block" id="loyRedeemBtn" ${pt.balance<cfg.minRedeem?'disabled':''}>Create ₹ coupon</button></div></div>
+    <p style="font-size:11.5px;color:var(--grey);margin-top:-6px;">Redeeming makes a one-time coupon for this patient (valid 90 days). Type its code in the treatment's discount section, as with any coupon.</p>
+    <div class="field-row"><div class="field"><label>Add / remove points</label><input type="number" id="loyAdj" placeholder="e.g. 200 or -100"></div><div class="field"><label>Reason</label><input id="loyAdjNote" placeholder="e.g. Google review bonus"></div></div>
+    <button class="btn btn-outline btn-block" id="loyAdjBtn">Save adjustment</button>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+      ${p.mobile? `<button class="btn btn-outline btn-sm" id="loyWa">${icon('message',14)} Send points balance</button>` : ""}
+      <button class="btn btn-outline btn-sm" id="loyRef">${icon('user',14)} Link who referred ${escapeHtml(p.name.split(" ")[0])}</button>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;"><input type="checkbox" id="loyOptOut" ${p.marketingOptOut?'checked':''}> No marketing messages</label>
+    </div>
+    ${refs.length? `<div class="section-title">Referred ${refs.length} patient(s)</div><div class="list-card">${refs.map(r=>`<div class="clinic-row"><div class="name">${escapeHtml(r.p.name)}</div><span class="ais-badge" style="background:${r.c?'#dcfce7':'#f1f5f9'};color:${r.c?'#166534':'#475569'};">${r.c?'Joined — bonus given':'Not visited yet'}</span></div>`).join("")}</div>` : ""}
+    ${led.length? `<div class="section-title">Points history</div><div class="list-card">${led.map(l=>`<div class="clinic-row"><div><div class="name">${escapeHtml(l.note||l.type||"")}</div><div class="addr">${new Date(l.date).toLocaleDateString()}${l.couponCode? " · coupon "+escapeHtml(l.couponCode):""}</div></div><b style="color:${l.points<0?'#b42318':'#166534'};">${l.points>0?'+':''}${l.points}</b></div>`).join("")}</div>` : ""}
+    ${months.length? `<div class="section-title">Payments counted</div>${aisBars(months.map(([k,v])=>({label:new Date(k+"-01T00:00:00").toLocaleDateString(undefined,{month:"short",year:"numeric"}), value:Math.round(v)})), {fmt:v=>"₹"+v.toLocaleString("en-IN")})}` : ""}
+  `);
+  aisAnimate(document.getElementById("sheetOverlay")||document);
+  const addLedger = async (points, type, note, extra)=>{
+    await dbPut("loyaltyLedger", Object.assign({ id: uid("loy"), patientId: pid, patientName: p.name, points, type, note, date: nowIso(), by: (typeof fbCurrentUserEmail!=="undefined" && fbCurrentUserEmail)||"" }, extra||{}));
+    crmCtxCache = null;
+  };
+  let busy = false;
+  document.getElementById("loyRedeemBtn").onclick = async ()=>{
+    if(busy) return;
+    const n = Math.floor(Number(document.getElementById("loyRedeem").value)||0);
+    if(n < cfg.minRedeem){ showToast("Minimum "+cfg.minRedeem+" points"); return; }
+    if(n > pt.balance){ showToast("Only "+pt.balance+" points available"); return; }
+    const value = Math.round(n * cfg.pointValue);
+    if(!confirm(`Redeem ${n} points for a ₹${value.toLocaleString("en-IN")} coupon for ${p.name}?`)) return;
+    busy = true;
+    try{
+      const code = await generateCouponCode(p);
+      const vt = new Date(); vt.setDate(vt.getDate()+90);
+      const c = { id: uid("coupon"), code, patientId: p.id, patientName: p.name, discountType:"flat", discountValue:value, validTill: toDateKey(vt), treatments:[COUPON_ALL], reusable:false,
+        terms:`Loyalty reward — ${n} points redeemed. One-time use.`, status:"Active", source:"loyalty", createdAt: nowIso(), createdBy:(typeof fbCurrentUserEmail!=="undefined" && fbCurrentUserEmail)||"" };
+      await dbPut("coupons", c);
+      await addLedger(-n, "redeem", `Redeemed for ₹${value} coupon`, {couponId:c.id, couponCode:code});
+      logActivity(`Redeemed ${n} loyalty points for ${p.name} (coupon ${code})`, {patientId:p.id});
+      showSuccessTick("Coupon created", code+" · ₹"+value.toLocaleString("en-IN"));
+      if(typeof openCouponPreviewSheet==="function") setTimeout(()=> openCouponPreviewSheet(c, p), 600); else openLoyaltyCard(pid);
+    }catch(e){ showToast("Couldn't redeem: "+e.message); }
+    busy = false;
+  };
+  document.getElementById("loyAdjBtn").onclick = async ()=>{
+    const n = Math.round(Number(document.getElementById("loyAdj").value)||0);
+    const note = document.getElementById("loyAdjNote").value.trim();
+    if(!n){ showToast("Enter points to add or remove"); return; }
+    if(!note){ showToast("Add a reason"); return; }
+    if(n<0 && -n>pt.balance){ showToast("Only "+pt.balance+" points available"); return; }
+    await addLedger(n, "adjust", note);
+    logActivity(`Loyalty points ${n>0?'+':''}${n} for ${p.name} — ${note}`, {patientId:p.id});
+    showSuccessTick("Points updated", (n>0?'+':'')+n+" points");
+    openLoyaltyCard(pid);
+  };
+  const wa = document.getElementById("loyWa"); if(wa) wa.onclick = ()=> openWhatsAppComposer({ title:"Loyalty Points", toName:p.name, toNumber:p.whatsappNumber||p.mobile, patientId:p.id,
+    message:`Hello ${p.name}! 🎉 You have ${pt.balance.toLocaleString("en-IN")} Healing Touch Dental reward points (worth ₹${(pt.balance*cfg.pointValue).toLocaleString("en-IN")}) — ${pt.tier} member. Redeem them on your next treatment, and earn ${cfg.referrerBonus} more for every friend or family member you refer. 😊` });
+  document.getElementById("loyRef").onclick = ()=> openPatientPickerThen("Who referred "+p.name+"?", async (ref)=>{
+    if(ref.id===p.id){ showToast("A patient can't refer themselves"); return; }
+    const fresh = (await dbGetAll("patients")).find(x=>x.id===p.id) || p;
+    fresh.referredByPatientId = ref.id; if(!fresh.referredBy) fresh.referredBy = ref.name; fresh.updatedAt = nowIso();
+    await dbPut("patients", fresh); crmCtxCache = null;
+    logActivity(`${p.name} linked as referred by ${ref.name}`, {patientId:p.id});
+    closeSheet(); showSuccessTick("Referral linked", ref.name+" → "+p.name);
+  });
+  document.getElementById("loyOptOut").onchange = async (e)=>{
+    const fresh = (await dbGetAll("patients")).find(x=>x.id===p.id) || p;
+    fresh.marketingOptOut = e.target.checked; fresh.updatedAt = nowIso();
+    await dbPut("patients", fresh); crmCtxCache = null;
+    showToast(e.target.checked? "Marketing messages turned off for "+p.name : "Marketing messages allowed for "+p.name);
+  };
+}
+
+// ---------- Referrals ----------
+CRM_RENDER.Referrals = async (body)=>{
+  const ctx = await crmLoad(true);
+  const board = Object.entries(ctx.referrals).map(([rid,l])=>({p:ctx.pById[rid], l})).filter(x=>x.p).sort((a,b)=> b.l.filter(x=>x.converted).length - a.l.filter(x=>x.converted).length || b.l.length-a.l.length);
+  const sugg = ctx.suggestions.slice(0,100);
+  body.innerHTML = `
+    <div class="ais-actions"><button class="btn btn-primary btn-sm" id="crmRefLink">${icon('user',14)} Link a referral</button></div>
+    ${sugg.length? `<div class="ais-card"><div class="ais-card-title">${icon('sparkle',15)} ${sugg.length} possible referrals found in "Referred by"</div>
+      <div style="font-size:12px;color:var(--grey);margin-bottom:6px;">These patients' "Referred by" matches an existing patient. Link them to start giving referral points.</div>
+      ${sugg.map((s,i)=>`<div class="ais-row"><span><b>${escapeHtml(s.p.name)}</b> ← referred by <b>${escapeHtml(s.ref.name)}</b> <small>(${escapeHtml(s.ref.mobile||"")})</small></span><button class="btn btn-outline btn-sm" data-sugg="${i}">Link</button></div>`).join("")}
+      ${sugg.length>1? `<button class="btn btn-outline btn-block" id="crmLinkAll" style="margin-top:8px;">Link all ${sugg.length}</button>`:""}</div>` : ""}
+    <div class="ais-table-wrap"><table class="ais-table"><thead><tr><th>Referrer</th><th>Referred</th><th>Joined</th><th>Bonus earned</th><th>Who</th></tr></thead><tbody>
+      ${board.map(b=>{ const c = b.l.filter(x=>x.converted).length; return `<tr><td><b>${escapeHtml(b.p.name)}</b><br><small>${escapeHtml(b.p.mobile||"")}</small></td><td>${b.l.length}</td><td>${c}</td><td>${(c*ctx.cfg.referrerBonus).toLocaleString("en-IN")} pts</td><td><small>${b.l.map(x=> escapeHtml((ctx.pById[x.pid]||{}).name||"")+(x.converted?" ✓":"")).join(", ")}</small></td></tr>`; }).join("") || `<tr><td colspan="5" class="ais-empty">No referrals linked yet.</td></tr>`}
+    </tbody></table></div>`;
+  const link = async (patient, ref)=>{ const fresh = (await dbGetAll("patients")).find(x=>x.id===patient.id) || patient; fresh.referredByPatientId = ref.id; fresh.updatedAt = nowIso(); await dbPut("patients", fresh); };
+  body.querySelectorAll("[data-sugg]").forEach(b=> b.onclick = async ()=>{ const s = sugg[parseInt(b.dataset.sugg)]; b.disabled = true; await link(s.p, s.ref); crmCtxCache = null; b.textContent = "Linked ✓"; });
+  const all = document.getElementById("crmLinkAll"); if(all) all.onclick = async ()=>{ if(!confirm(`Link all ${sugg.length} referrals?`)) return; all.disabled = true; for(const s of sugg) await link(s.p, s.ref); crmCtxCache = null; showSuccessTick("Referrals linked", sugg.length+" patients"); CRM_RENDER.Referrals(body); };
+  document.getElementById("crmRefLink").onclick = ()=> openPatientPickerThen("New patient (who was referred)", (np)=>{
+    closeSheet();
+    setTimeout(()=> openPatientPickerThen("Referred by", async (ref)=>{
+      if(ref.id===np.id){ showToast("A patient can't refer themselves"); return; }
+      await link(np, ref); crmCtxCache = null; closeSheet();
+      logActivity(`${np.name} linked as referred by ${ref.name}`, {patientId:np.id});
+      showSuccessTick("Referral linked", ref.name+" → "+np.name); CRM_RENDER.Referrals(body);
+    }), 250);
+  });
+};
+
+// ---------- Campaigns ----------
+const CRM_SEGMENTS = ["VIP","LOYAL","REGULAR","NEW","AT RISK","CHURNING","NEVER TREATED"];
+function crmSegmentOf(r, vipCut){
+  if(r.isNew) return "NEW";
+  if(!r.everVisited) return "NEVER TREATED";
+  if(r.recency>180) return "CHURNING";
+  if(r.recency>90) return "AT RISK";
+  if(r.freq>=2 && r.monetary>0 && r.monetary>=vipCut) return "VIP";
+  if(r.freq>=4) return "LOYAL";
+  return "REGULAR";
+}
+async function crmAudience(f){
+  const ctx = await crmLoad();
+  const now = Date.now(), yearAgo = now - 365*86400000;
+  const plansBy = {}; ctx.core.plans.forEach(pl=> (pl.items||[]).forEach(it=>{ if(it.status==="Completed") (plansBy[pl.patientId] = plansBy[pl.patientId]||[]).push(normalizeStr(it.treatment||"")); }));
+  const openInv = f.outstanding? new Set((await aisOpenInvoices("reset")).list.map(i=>i.patientId)) : null;
+  const base = ctx.core.patients.map(p=>{
+    const v = ctx.core.visitsByPatient[p.id]||[]; const last = v[v.length-1]||null;
+    const reg = p.registrationDate || p.createdAt;
+    return {p, last, recency: last? aisDaysBetween(last, new Date()) : null, freq: v.filter(d=> new Date(d).getTime()>=yearAgo).length, monetary: ctx.paid[p.id]||0, isNew: reg && (now-new Date(reg).getTime()) < 90*86400000, everVisited: v.length>0};
+  });
+  const active = base.filter(r=> r.everVisited && r.recency<=180 && r.freq>=2).sort((a,b)=>b.monetary-a.monetary);
+  const vipCut = active.length? active[Math.max(0, Math.ceil(active.length*0.1)-1)].monetary : Infinity;
+  const tx = normalizeStr(f.treatment||"").trim();
+  const bmonth = f.birthMonth? parseInt(f.birthMonth) : 0;
+  return base.filter(r=>{
+    const p = r.p;
+    if(f.segment && crmSegmentOf(r, vipCut)!==f.segment) return false;
+    if(f.clinicId && (p.preferredClinicId||"")!==f.clinicId) return false;
+    if(f.gender && !String(p.gender||"").toLowerCase().startsWith(f.gender.toLowerCase())) return false;
+    if(f.minDays && !(r.recency!=null && r.recency >= Number(f.minDays))) return false;
+    if(f.maxDays && !(r.recency!=null && r.recency <= Number(f.maxDays))) return false;
+    if(tx && !(plansBy[p.id]||[]).some(t=> t.includes(tx))) return false;
+    if(bmonth){ if(!p.dob) return false; const d = new Date(p.dob+"T00:00:00"); if(isNaN(d) || d.getMonth()+1!==bmonth) return false; }
+    if(f.ageMin || f.ageMax){ const a = patientAgeYears(p); if(a==null) return false; if(f.ageMin && a < Number(f.ageMin)) return false; if(f.ageMax && a > Number(f.ageMax)) return false; }
+    if(openInv && !openInv.has(p.id)) return false;
+    if(f.tier){ if(ctx.points(p.id).tier!==f.tier || ctx.points(p.id).lifetime<=0) return false; }
+    return true;
+  }).map(r=>r.p);
+}
+CRM_RENDER.Campaigns = async (body)=>{
+  const list = (await dbGetAll("campaigns").catch(()=>[])).sort((a,b)=> (b.createdAt||"").localeCompare(a.createdAt||""));
+  body.innerHTML = `
+    <div class="ais-actions"><button class="btn btn-primary btn-sm" id="crmNewCamp">+ New campaign</button></div>
+    ${list.length? `<div class="ais-table-wrap"><table class="ais-table"><thead><tr><th>Campaign</th><th>Channel</th><th>Audience</th><th>Sent</th><th>Status</th><th></th></tr></thead><tbody>
+      ${list.map(c=>`<tr><td><b>${escapeHtml(c.name||"")}</b><br><small>${new Date(c.createdAt).toLocaleDateString()}</small></td><td>${c.channel==="email"? "Email" : "WhatsApp · "+escapeHtml(c.templateName||"")}</td><td><small>${escapeHtml(crmFilterText(c.filter||{}))}</small></td>
+        <td><b>${c.sentCount||0}</b>${c.failedCount? ` <small style="color:#b42318;">(${c.failedCount} failed)</small>`:""}</td><td>${aisBadge(c.status==="Sent"?"OK":c.status==="Sending"?"SOON":"NORMAL").replace(/>(OK|SOON|NORMAL)</, ">"+escapeHtml(c.status||"Draft")+"<")}</td>
+        <td style="white-space:nowrap;"><button class="btn btn-outline btn-sm" data-campopen="${c.id}">Open</button></td></tr>`).join("")}
+    </tbody></table></div>` : `<div class="empty-card"><b>No campaigns yet</b>Create one to message a group of patients — e.g. all "At risk" patients, everyone who had scaling a year ago, or Gold members.</div>`}`;
+  document.getElementById("crmNewCamp").onclick = ()=> openCampaignEditor(null);
+  body.querySelectorAll("[data-campopen]").forEach(b=> b.onclick = ()=> openCampaignEditor(b.dataset.campopen));
+};
+function crmFilterText(f){
+  const t = [];
+  if(f.segment) t.push(f.segment); if(f.tier) t.push(f.tier+" members"); if(f.treatment) t.push("had "+f.treatment);
+  if(f.minDays) t.push("last visit "+f.minDays+"+ days ago"); if(f.maxDays) t.push("visited in last "+f.maxDays+" days");
+  if(f.gender) t.push(f.gender); if(f.ageMin||f.ageMax) t.push("age "+(f.ageMin||0)+"–"+(f.ageMax||"∞")); if(f.birthMonth) t.push("birthday in month "+f.birthMonth);
+  if(f.outstanding) t.push("has outstanding bill");
+  return t.join(" · ") || "All patients";
+}
+async function openCampaignEditor(id){
+  const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived);
+  let c = id ? (await dbGetAll("campaigns")).find(x=>x.id===id) : null;
+  if(!c) c = { id: uid("camp"), name:"", channel:"whatsapp", templateName:"", param2:"", subject:"", body:"", filter:{}, status:"Draft", sentIds:[], sentCount:0, failedCount:0, createdAt: nowIso() };
+  const f = c.filter||{};
+  const locked = c.status==="Sent";
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>${id? "Campaign" : "New Campaign"}</h2>
+    <div class="field"><label>Campaign name</label><input id="cpgName" value="${escapeAttr(c.name)}" placeholder="e.g. Winter cleaning offer — at-risk patients"></div>
+    <div class="section-title">Audience</div>
+    <div class="field-row"><div class="field"><label>Segment</label><select id="cpgSeg"><option value="">Any</option>${CRM_SEGMENTS.map(s=>`<option ${f.segment===s?'selected':''}>${s}</option>`).join("")}</select></div>
+      <div class="field"><label>Loyalty tier</label><select id="cpgTier"><option value="">Any</option>${["Silver","Gold","Platinum"].map(s=>`<option ${f.tier===s?'selected':''}>${s}</option>`).join("")}</select></div></div>
+    <div class="field-row"><div class="field"><label>Last visit at least (days ago)</label><input type="number" id="cpgMin" value="${escapeAttr(f.minDays||"")}" placeholder="e.g. 180"></div>
+      <div class="field"><label>Visited within (days)</label><input type="number" id="cpgMax" value="${escapeAttr(f.maxDays||"")}" placeholder="e.g. 365"></div></div>
+    <div class="field-row"><div class="field"><label>Had treatment (contains)</label><input id="cpgTx" value="${escapeAttr(f.treatment||"")}" placeholder="e.g. Scaling, RCT, Aligner"></div>
+      <div class="field"><label>Clinic</label><select id="cpgClinic"><option value="">All clinics</option>${clinics.map(x=>`<option value="${x.id}" ${f.clinicId===x.id?'selected':''}>${escapeHtml(x.name)}</option>`).join("")}</select></div></div>
+    <div class="field-row"><div class="field"><label>Gender</label><select id="cpgGender"><option value="">Any</option><option ${f.gender==="Male"?'selected':''}>Male</option><option ${f.gender==="Female"?'selected':''}>Female</option></select></div>
+      <div class="field"><label>Age</label><div style="display:flex;gap:6px;"><input type="number" id="cpgAgeMin" value="${escapeAttr(f.ageMin||"")}" placeholder="from"><input type="number" id="cpgAgeMax" value="${escapeAttr(f.ageMax||"")}" placeholder="to"></div></div></div>
+    <div class="field-row"><div class="field"><label>Birthday month</label><select id="cpgBm"><option value="">Any</option>${["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"].map((m,i)=>`<option value="${i+1}" ${String(f.birthMonth)===String(i+1)?'selected':''}>${m}</option>`).join("")}</select></div>
+      <div class="field"><label>&nbsp;</label><label style="display:flex;gap:6px;align-items:center;font-size:13px;"><input type="checkbox" id="cpgOut" ${f.outstanding?'checked':''}> Has an outstanding bill</label></div></div>
+    <div id="cpgCount" class="crm-count">Counting…</div>
+    <div class="section-title">Message</div>
+    <div class="field"><label>Send by</label><select id="cpgCh"><option value="whatsapp" ${c.channel!=="email"?'selected':''}>WhatsApp (approved template)</option><option value="email" ${c.channel==="email"?'selected':''}>Email</option></select></div>
+    <div id="cpgWa">
+      <div class="field"><label>Approved Interakt template name</label><input id="cpgTpl" value="${escapeAttr(c.templateName)}" placeholder="e.g. happy_diwali, cleaning_offer"></div>
+      <div class="field"><label>Value for {{2}} (optional — only if the template has a second variable)</label><input id="cpgP2" value="${escapeAttr(c.param2||"")}" placeholder="e.g. 20% off scaling till 30 Nov"></div>
+      <p style="font-size:11.5px;color:var(--grey);margin-top:-6px;">{{1}} is filled with each patient's name. Marketing templates may not reach everyone — WhatsApp limits how many marketing messages a person receives.</p>
+    </div>
+    <div id="cpgEm">
+      <div class="field"><label>Subject</label><input id="cpgSubj" value="${escapeAttr(c.subject||"")}"></div>
+      <div class="field"><label>Email text ({name} = patient's name)</label><textarea id="cpgBody" rows="5">${escapeHtml(c.body||"")}</textarea></div>
+    </div>
+    ${c.sentCount? `<div class="warn-banner" style="margin:8px 0;">Already sent to ${c.sentCount} patient(s). Sending again only messages people who haven't received this campaign yet.</div>` : ""}
+    <button class="btn btn-outline btn-block" id="cpgSave">Save draft</button>
+    <button class="btn btn-primary btn-block" id="cpgSend" style="margin-top:8px;background:#128C7E;border-color:#128C7E;">${icon('message',15)} Send now</button>
+    <div id="cpgProg" style="display:none;margin-top:10px;"><div style="height:10px;border-radius:999px;background:var(--off-white);overflow:hidden;"><div id="cpgBar" style="height:100%;width:0%;background:linear-gradient(90deg,#25D366,#128C7E);transition:width .3s;"></div></div><div id="cpgStat" style="font-size:12.5px;margin-top:6px;"></div><div id="cpgErr" style="font-size:11.5px;color:#b42318;max-height:110px;overflow:auto;"></div></div>
+    ${id && !c.sentCount? `<button class="btn btn-outline btn-block" id="cpgDel" style="margin-top:8px;color:var(--red);">Delete draft</button>` : ""}
+  `);
+  const $ = (x)=> document.getElementById(x);
+  const read = ()=>({ segment:$("cpgSeg").value, tier:$("cpgTier").value, minDays:$("cpgMin").value, maxDays:$("cpgMax").value, treatment:$("cpgTx").value.trim(), clinicId:$("cpgClinic").value, gender:$("cpgGender").value, ageMin:$("cpgAgeMin").value, ageMax:$("cpgAgeMax").value, birthMonth:$("cpgBm").value, outstanding:$("cpgOut").checked });
+  const chSync = ()=>{ const em = $("cpgCh").value==="email"; $("cpgWa").style.display = em? "none":""; $("cpgEm").style.display = em? "":"none"; };
+  $("cpgCh").onchange = ()=>{ chSync(); recount(); }; chSync();
+  let audience = [];
+  const recount = async ()=>{
+    $("cpgCount").textContent = "Counting…";
+    audience = await crmAudience(read());
+    const em = $("cpgCh").value==="email";
+    const reach = audience.filter(p=> !p.marketingOptOut && (em? p.email : (p.whatsappNumber||p.mobile)));
+    const already = new Set(c.sentIds||[]);
+    const fresh = reach.filter(p=> !already.has(p.id));
+    $("cpgCount").innerHTML = `<b>${audience.length}</b> patients match · <b>${fresh.length}</b> will receive it${reach.length<audience.length? ` <small>(${audience.length-reach.length} skipped: no ${em?"email":"mobile"} or opted out)</small>`:""}${already.size? ` <small>(${reach.length-fresh.length} already sent)</small>`:""}
+      ${audience.length? `<div class="crm-sample">${audience.slice(0,6).map(p=>escapeHtml(p.name)).join(", ")}${audience.length>6?"…":""}</div>`:""}`;
+  };
+  ["cpgSeg","cpgTier","cpgMin","cpgMax","cpgTx","cpgClinic","cpgGender","cpgAgeMin","cpgAgeMax","cpgBm","cpgOut"].forEach(k=>{ const el = $(k); el.addEventListener("change", recount); if(el.tagName==="INPUT" && el.type!=="checkbox") el.addEventListener("input", ()=>{ clearTimeout(el._t); el._t = setTimeout(recount, 400); }); });
+  recount();
+  const collect = ()=> Object.assign(c, { name: $("cpgName").value.trim() || "Campaign "+new Date().toLocaleDateString(), channel:$("cpgCh").value, templateName:$("cpgTpl").value.trim(), param2:$("cpgP2").value.trim(), subject:$("cpgSubj").value.trim(), body:$("cpgBody").value, filter: read(), updatedAt: nowIso() });
+  $("cpgSave").onclick = async ()=>{ collect(); await dbPut("campaigns", c); showToast("Campaign saved"); closeSheet(); if(currentPage==="crm") renderCrm(); };
+  const del = $("cpgDel"); if(del) del.onclick = async ()=>{ if(!confirm("Delete this draft?")) return; await dbDelete("campaigns", c.id); closeSheet(); if(currentPage==="crm") renderCrm(); };
+  let stop = false;
+  $("cpgSend").onclick = async ()=>{
+    collect();
+    const em = c.channel==="email";
+    if(!em && !c.templateName){ showToast("Enter the approved template name"); return; }
+    if(em && (!c.subject || !c.body.trim())){ showToast("Enter the email subject and text"); return; }
+    if(!em){ const prov = await CommunicationService.getActiveProvider(); if(!prov || prov.id!=="interakt"){ showToast("Turn on the WhatsApp Business API (Interakt) in Admin → Communication first"); return; } }
+    else { const st = await emailApiStatus(); if(!st.configured){ showToast("Email sending isn't set up on the server yet"); return; } }
+    await recount();
+    const already = new Set(c.sentIds||[]);
+    const list = audience.filter(p=> !p.marketingOptOut && !already.has(p.id) && (em? p.email : (p.whatsappNumber||p.mobile)));
+    if(!list.length){ showToast("Nobody new to send to"); return; }
+    if(!confirm(`Send "${c.name}" by ${em?"email":"WhatsApp"} to ${list.length} patient${list.length>1?"s":""} now?`)) return;
+    const btn = $("cpgSend"); btn.disabled = true; btn.textContent = "Sending… (tap to stop)"; btn.disabled = false; btn.onclick = ()=>{ stop = true; btn.disabled = true; btn.textContent = "Stopping…"; };
+    $("cpgProg").style.display = ""; c.status = "Sending"; await dbPut("campaigns", c);
+    let ok = 0, fail = 0;
+    for(let i=0;i<list.length && !stop;i++){
+      const p = list[i];
+      $("cpgStat").textContent = `Sending ${i+1} of ${list.length} — ${p.name}`;
+      let r;
+      try{
+        r = em ? await sendEmailDirect({ to: p.email, subject: c.subject, text: c.body.split("{name}").join(p.name||"") })
+               : await CommunicationService.send("sendText", { toName:p.name, toNumber:p.whatsappNumber||p.mobile, message:c.name, patientId:p.id, recipientType:"Patient", templateName:c.templateName, templateParams: c.param2? [p.name||"Patient", c.param2] : [p.name||"Patient"] });
+      }catch(e){ r = {success:false, error:e.message}; }
+      if(r && r.success){ ok++; c.sentIds = (c.sentIds||[]).concat([p.id]); }
+      else { fail++; $("cpgErr").insertAdjacentHTML("beforeend", `<div>${escapeHtml(p.name)}: ${escapeHtml((r&&r.error)||"failed")}</div>`); if(ok===0 && fail>=5){ $("cpgErr").insertAdjacentHTML("beforeend", `<div><b>Stopped — the first 5 all failed. Check the ${em?"email setup":"template name"}.</b></div>`); break; } }
+      $("cpgBar").style.width = Math.round((i+1)/list.length*100)+"%";
+      if(i%20===19){ c.sentCount = (c.sentIds||[]).length; await dbPut("campaigns", c).catch(()=>{}); }
+      await new Promise(res=> setTimeout(res, em? 400 : 250));
+    }
+    c.sentCount = (c.sentIds||[]).length; c.failedCount = (c.failedCount||0) + fail; c.status = "Sent"; c.sentAt = nowIso();
+    await dbPut("campaigns", c);
+    logActivity(`Campaign "${c.name}" sent to ${ok} patient(s) by ${em?"email":"WhatsApp"}`);
+    $("cpgStat").innerHTML = `<b>${ok} sent</b>${fail? " · "+fail+" failed":""}${stop? " · stopped":""}`;
+    btn.textContent = "Done"; btn.disabled = true;
+    if(ok) showSuccessTick("Campaign sent", ok+" patient"+(ok>1?"s":""));
+  };
+}
+
+// ---------- Automations ----------
+const CRM_AUTO_TYPES = {
+  recall:      {label:"Recall — no visit since", unit:"days after the last visit", hint:"e.g. 180 for a 6-monthly check-up, 365 for a yearly recall. Skips patients who already have an appointment booked."},
+  post_visit:  {label:"After a visit", unit:"days after a completed appointment", hint:"e.g. 1 for a thank-you / review request, 7 for a check-in. Up to 200 days."},
+  no_show:     {label:"Missed appointment", unit:"days after a no-show", hint:"e.g. 1 to invite them to re-book. Skips anyone who has already re-booked."},
+  unconverted: {label:"Registered but never treated", unit:"days after registration", hint:"e.g. 7 to follow up an enquiry that didn't book."}
+};
+CRM_RENDER.Automations = async (body)=>{
+  const [rules, logs, runs] = await Promise.all([dbGetAll("crmAutomations").catch(()=>[]), dbGetAll("automationLog").catch(()=>[]), dbGetAll("cronRuns").catch(()=>[])]);
+  const lastRun = runs.sort((a,b)=> (b.istDate||"").localeCompare(a.istDate||""))[0];
+  const stats = {}; logs.forEach(l=>{ const s = stats[l.ruleId] = stats[l.ruleId]||{sent:0, failed:0, last:""}; if(l.status==="sent") s.sent++; else if(l.status==="failed") s.failed++; if((l.createdAt||"")>s.last) s.last = l.createdAt; });
+  body.innerHTML = `
+    <div class="ais-card" style="font-size:12.5px;color:var(--grey);">Automations run by themselves every morning with the 9 AM WhatsApp job — no need to keep the PMS open. Each patient gets a rule's message only once for the same visit. Patients marked "No marketing messages" are skipped.
+      ${lastRun? `<br>Last daily run: <b>${escapeHtml(lastRun.istDate||"")}</b>${lastRun.summary && lastRun.summary.automations? ` — automations sent ${lastRun.summary.automations.sent}, skipped ${lastRun.summary.automations.skipped}, failed ${lastRun.summary.automations.failed}` : ""}` : ""}</div>
+    <div class="ais-actions"><button class="btn btn-primary btn-sm" id="crmNewAuto">+ New automation</button></div>
+    ${rules.length? `<div class="ais-table-wrap"><table class="ais-table"><thead><tr><th>Automation</th><th>When</th><th>Template</th><th>Sent</th><th>On</th><th></th></tr></thead><tbody>
+      ${rules.map(r=>{ const s = stats[r.id]||{sent:0,failed:0}; const t = CRM_AUTO_TYPES[r.type]||{}; return `<tr><td><b>${escapeHtml(r.name||"")}</b></td><td><small>${r.days} ${escapeHtml(t.unit||"")}</small></td><td><small>${escapeHtml(r.templateName||"")}</small></td><td>${s.sent}${s.failed? ` <small style="color:#b42318;">(${s.failed} failed)</small>`:""}</td>
+        <td><input type="checkbox" style="width:18px;height:18px;" data-autotog="${r.id}" ${r.enabled?'checked':''}></td><td><button class="btn btn-outline btn-sm" data-autoedit="${r.id}">Edit</button></td></tr>`; }).join("")}
+    </tbody></table></div>` : `<div class="empty-card"><b>No automations yet</b>Try: "Yearly recall" — 365 days after the last visit, or "Review request" — 1 day after a visit. Each needs an approved WhatsApp template ({{1}} = name).</div>`}
+    ${logs.length? `<div class="section-title">Recent automatic messages</div><div class="list-card">${logs.sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||"")).slice(0,25).map(l=>`<div class="clinic-row"><div><div class="name">${escapeHtml(l.patientName||"")}</div><div class="addr">${escapeHtml(l.ruleName||"")} · ${new Date(l.createdAt).toLocaleString()}</div></div>${aisBadge(l.status==="sent"?"OK":l.status==="failed"?"HIGH":"NORMAL").replace(/>(OK|HIGH|NORMAL)</, ">"+escapeHtml(l.status||"")+"<")}</div>`).join("")}</div>` : ""}`;
+  document.getElementById("crmNewAuto").onclick = ()=> openAutomationEditor(null);
+  body.querySelectorAll("[data-autoedit]").forEach(b=> b.onclick = ()=> openAutomationEditor(b.dataset.autoedit));
+  body.querySelectorAll("[data-autotog]").forEach(cb=> cb.onchange = async ()=>{ const r = rules.find(x=>x.id===cb.dataset.autotog); r.enabled = cb.checked; r.updatedAt = nowIso(); await dbPut("crmAutomations", r); showToast(r.name+(cb.checked? " turned on" : " turned off")); });
+};
+async function openAutomationEditor(id){
+  const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived);
+  let r = id ? (await dbGetAll("crmAutomations")).find(x=>x.id===id) : null;
+  if(!r) r = { id: uid("auto"), name:"", type:"recall", days:180, templateName:"", param2:"", maxPerDay:100, clinicId:"", enabled:true, createdAt: nowIso() };
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>${id? "Edit" : "New"} Automation</h2>
+    <div class="field"><label>Name</label><input id="atName" value="${escapeAttr(r.name)}" placeholder="e.g. Yearly recall"></div>
+    <div class="field"><label>Send when</label><select id="atType">${Object.entries(CRM_AUTO_TYPES).map(([k,t])=>`<option value="${k}" ${r.type===k?'selected':''}>${t.label}</option>`).join("")}</select></div>
+    <div class="field"><label id="atDaysLbl">Days</label><input type="number" id="atDays" min="1" max="1500" value="${escapeAttr(r.days)}"></div>
+    <p id="atHint" style="font-size:11.5px;color:var(--grey);margin-top:-6px;"></p>
+    <div class="field"><label>Approved Interakt template name</label><input id="atTpl" value="${escapeAttr(r.templateName)}" placeholder="e.g. recall_checkup"></div>
+    <div class="field"><label>Value for {{2}} (optional)</label><input id="atP2" value="${escapeAttr(r.param2||"")}"></div>
+    <div class="field-row"><div class="field"><label>Only patients of</label><select id="atClinic"><option value="">All clinics</option>${clinics.map(x=>`<option value="${x.id}" ${r.clinicId===x.id?'selected':''}>${escapeHtml(x.name)}</option>`).join("")}</select></div>
+      <div class="field"><label>Max messages per day</label><input type="number" id="atMax" min="1" value="${escapeAttr(r.maxPerDay||100)}"></div></div>
+    <label style="display:flex;gap:8px;align-items:center;margin:6px 0 12px;"><input type="checkbox" id="atOn" ${r.enabled?'checked':''}> Turned on</label>
+    <button class="btn btn-primary btn-block" id="atSave">Save automation</button>
+    ${id? `<button class="btn btn-outline btn-block" id="atDel" style="margin-top:8px;color:var(--red);">Delete</button>` : ""}
+  `);
+  const $ = (x)=> document.getElementById(x);
+  const sync = ()=>{ const t = CRM_AUTO_TYPES[$("atType").value]; $("atDaysLbl").textContent = "Days ("+t.unit+")"; $("atHint").textContent = t.hint; };
+  $("atType").onchange = sync; sync();
+  $("atSave").onclick = async ()=>{
+    const days = Math.round(Number($("atDays").value)||0), type = $("atType").value;
+    if(!$("atName").value.trim()){ showToast("Give it a name"); return; }
+    if(days<1){ showToast("Enter the number of days"); return; }
+    if(type==="post_visit" && days>200){ showToast("After-visit automations can be up to 200 days"); return; }
+    if(!$("atTpl").value.trim()){ showToast("Enter the approved template name"); return; }
+    Object.assign(r, { name:$("atName").value.trim(), type, days, templateName:$("atTpl").value.trim(), param2:$("atP2").value.trim(), clinicId:$("atClinic").value, maxPerDay: Math.max(1, Math.round(Number($("atMax").value)||100)), enabled:$("atOn").checked, updatedAt: nowIso() });
+    await dbPut("crmAutomations", r);
+    logActivity("Saved automation "+r.name);
+    showSuccessTick("Automation saved", r.enabled? "Runs every morning at 9 AM" : "Turned off");
+    closeSheet(); if(currentPage==="crm") renderCrm();
+  };
+  const del = $("atDel"); if(del) del.onclick = async ()=>{ if(!confirm("Delete this automation?")) return; await dbDelete("crmAutomations", r.id); closeSheet(); if(currentPage==="crm") renderCrm(); };
+}
+
+// ---------- Settings ----------
+CRM_RENDER.Settings = async (body)=>{
+  const cfg = await crmSettings();
+  if(!currentUserIsAdmin){ body.innerHTML = `<div class="empty-card">Only the admin can change loyalty settings.</div>`; return; }
+  body.innerHTML = `<div class="ais-card">
+    <div class="field"><label>Programme start date (payments from this date earn points)</label><input type="date" id="lsStart" value="${escapeAttr(cfg.startDate)}"></div>
+    <div class="field-row"><div class="field"><label>Points per ₹100 paid</label><input type="number" step="0.1" id="lsEarn" value="${cfg.earnPer100}"></div><div class="field"><label>Value of 1 point (₹)</label><input type="number" step="0.1" id="lsVal" value="${cfg.pointValue}"></div></div>
+    <div class="field-row"><div class="field"><label>Referrer bonus (points)</label><input type="number" id="lsRef" value="${cfg.referrerBonus}"></div><div class="field"><label>New patient bonus (points)</label><input type="number" id="lsNew" value="${cfg.refereeBonus}"></div></div>
+    <div class="field-row"><div class="field"><label>Minimum points to redeem</label><input type="number" id="lsMin" value="${cfg.minRedeem}"></div><div class="field"><label>Gold / Platinum from (lifetime points)</label><div style="display:flex;gap:6px;"><input type="number" id="lsGold" value="${cfg.gold}"><input type="number" id="lsPlat" value="${cfg.platinum}"></div></div></div>
+    <p style="font-size:11.5px;color:var(--grey);">A referral counts once the referred patient has paid or had a visit. Points are worked out from your payment records, so editing or deleting a payment updates them automatically.</p>
+    <button class="btn btn-primary btn-block" id="lsSave">Save settings</button></div>`;
+  document.getElementById("lsSave").onclick = async ()=>{
+    const all = await dbGetAll("settings"); const s = all[0]; if(!s){ showToast("Settings not found"); return; }
+    const n = (id)=> Number(document.getElementById(id).value)||0;
+    s.loyalty = { enabled:true, startDate: document.getElementById("lsStart").value || CRM_DEFAULTS.startDate, earnPer100: n("lsEarn"), pointValue: n("lsVal"), referrerBonus: n("lsRef"), refereeBonus: n("lsNew"), minRedeem: Math.max(1, n("lsMin")), gold: n("lsGold"), platinum: n("lsPlat") };
+    await dbPut("settings", s); crmCtxCache = null;
+    logActivity("Updated loyalty programme settings");
+    showSuccessTick("Loyalty settings saved", "");
+  };
+};
+
 function aiBtnHtml(id, label, extraStyle){
   return `<button type="button" class="ai-btn" id="${id}" style="${extraStyle||''}">${icon('sparkle',15)} ${escapeHtml(label)}</button>`;
 }
@@ -32207,6 +32693,7 @@ async function renderMore(){
         <div class="list-row" id="rowTrash"><span class="row-ico">${icon('trash',18)}</span><span class="txt">Trash</span><span class="meta"></span><span class="chev">${icon('chevron',16)}</span></div>
   ` : "";
   const businessRows = `
+        <div class="list-row" id="rowCrm"><span class="row-ico">${icon('ticket',18)}</span><span class="txt">Loyalty &amp; CRM</span><span class="meta">Points, referrals, campaigns</span><span class="chev">${icon('chevron',16)}</span></div>
         <div class="list-row" id="rowAiSkills"><span class="row-ico">${icon('sparkle',18)}</span><span class="txt">AI Skills</span><span class="meta">14 AI assistants for your clinic</span><span class="chev">${icon('chevron',16)}</span></div>
         ${canAccessModule("financial")? `<div class="list-row" id="rowFinancial"><span class="row-ico">${icon('wallet',18)}</span><span class="txt">Financial</span><span class="meta">Income, expenses, budgets</span><span class="chev">${icon('chevron',16)}</span></div>` : ""}
         ${canAccessModule("inventory")? `<div class="list-row" id="rowInventory"><span class="row-ico">${icon('box',18)}</span><span class="txt">Inventory</span><span class="meta">Materials, stock, alerts</span><span class="chev">${icon('chevron',16)}</span></div>` : ""}
@@ -32232,6 +32719,7 @@ async function renderMore(){
   const wire = (id, fn)=>{ const el=document.getElementById(id); if(el) el.onclick = fn; };
   wire("rowAdmin", ()=> goTo("admin"));
   wire("rowAiSkills", ()=>{ aisOpenKey = null; goTo("aiskills"); });
+  wire("rowCrm", ()=> goTo("crm"));
   wire("rowClinics", openClinicsSheet);
   wire("rowDoctors", openDoctorsSheet);
   wire("rowConsultants", openConsultantsSheet);
