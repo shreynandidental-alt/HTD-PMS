@@ -568,6 +568,32 @@
   .ais-err{background:#fdecec;border:1px solid #f5c2c2;color:#b42318;border-radius:12px;padding:10px 12px;font-size:13px;margin-bottom:12px;}
   .ais-warn{margin-top:8px;font-size:12px;color:#92400e;}
   .ais-warnbox{background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;padding:10px 12px;margin-bottom:10px;font-size:13px;color:#9a3412;}
+  .img-arch-wrap{display:flex;flex-direction:column;align-items:center;margin:10px 0 4px;overflow:hidden;}
+  .img-arch{position:relative;width:560px;height:170px;transform-origin:top center;flex-shrink:0;}
+  .img-arch-mid{font-size:11px;color:var(--grey);margin:4px 0;letter-spacing:.04em;}
+  .img-tooth{position:absolute;transform:translate(-50%,-50%);width:34px;display:flex;flex-direction:column;align-items:center;gap:1px;background:none;border:2px solid transparent;border-radius:10px;padding:2px 0;cursor:pointer;transition:transform .15s,border-color .15s,background .15s;}
+  .img-tooth:hover{transform:translate(-50%,-50%) scale(1.12);background:var(--off-white);}
+  .img-tooth.on{border-color:#0f766e;background:color-mix(in srgb,#0f766e 10%,var(--white));}
+  .img-tooth-svg{display:block;width:26px;height:34px;}
+  .img-tooth-svg svg{width:100%;height:100%;}
+  .img-tooth b{font-size:10px;color:var(--charcoal-2);}
+  .img-dot{position:absolute;top:0;width:8px;height:8px;border-radius:50%;border:1.5px solid var(--white);}
+  .img-dot.x{right:0;background:#0891b2;} .img-dot.t{left:0;background:#f59e0b;}
+  .img-legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11.5px;color:var(--grey);margin-top:6px;}
+  .img-legend .img-dot{position:static;display:inline-block;vertical-align:middle;border:none;}
+  .xv-overlay{position:fixed;inset:0;z-index:760;background:#0b0b0c;display:flex;flex-direction:column;color:#eee;}
+  .xv-top{display:flex;align-items:center;gap:12px;padding:8px 12px;background:#18181b;flex-wrap:wrap;}
+  .xv-tools{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-left:auto;font-size:12px;}
+  .xv-tools label{display:flex;align-items:center;gap:4px;}
+  .xv-tools input[type=range]{width:90px;}
+  .xv-btn{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.15);color:#eee;padding:6px 10px;border-radius:8px;font-size:12px;cursor:pointer;}
+  .xv-btn.on{background:#0f766e;border-color:#14b8a6;}
+  .xv-panes{flex:1;display:flex;gap:4px;min-height:0;}
+  .xv-pane{flex:1;position:relative;min-width:0;}
+  .xv-pane canvas{display:block;touch-action:none;cursor:crosshair;}
+  .xv-cap{position:absolute;left:8px;top:8px;background:rgba(0,0,0,.6);padding:3px 8px;border-radius:6px;font-size:11.5px;}
+  .xv-hint{padding:6px 12px;font-size:12px;color:#a1a1aa;background:#18181b;}
+  @media (max-width:700px){ .xv-panes{flex-direction:column;} }
   .str-setpick{display:flex;flex-wrap:wrap;gap:6px;max-height:190px;overflow:auto;padding:2px;}
   .str-chip{display:inline-flex;align-items:center;gap:5px;padding:6px 10px;border-radius:999px;border:1px solid var(--grey-light,#e2e5e7);background:var(--white);font-size:12.5px;cursor:pointer;}
   .str-chip small{color:var(--grey);}
@@ -2212,6 +2238,9 @@
       <div class="nav-item" data-page="pharmacy"><span class="ico" data-icon="pill"></span><span class="lbl"> Pharmacy</span></div>
       <div class="nav-item" data-page="labcases"><span class="ico" data-icon="flask"></span><span class="lbl"> Lab Cases</span></div>
       <div class="nav-item" data-page="maintenance"><span class="ico" data-icon="wrench"></span><span class="lbl"> Maintenance</span></div>
+      <div class="nav-item" data-page="insurance"><span class="ico" data-icon="shield"></span><span class="lbl"> Insurance</span></div>
+      <div class="nav-item" data-page="tele"><span class="ico" data-icon="camera"></span><span class="lbl"> Tele-Consult</span></div>
+      <div class="nav-item" data-page="imaging"><span class="ico" data-icon="tooth"></span><span class="lbl"> Imaging</span></div>
       <div class="nav-item" data-page="steril"><span class="ico" data-icon="shield"></span><span class="lbl"> Sterilization</span></div>
       <div class="nav-item" data-page="audit"><span class="ico" data-icon="reports"></span><span class="lbl"> Audit Trail</span></div>
       <div class="sidebar-divider"></div>
@@ -3283,6 +3312,9 @@ const PAGE_RENDERERS = {
   aiskills: renderAiSkills,
   crm: renderCrm,
   steril: renderSteril,
+  insurance: renderInsurance,
+  tele: renderTele,
+  imaging: renderImaging,
   audit: renderAudit,
   more: renderMore,
   admin: renderAdminPanel,
@@ -5586,6 +5618,7 @@ function calMinutesFromStart(timeStr){
 // elsewhere in this file for the tooth-chart auto-sync.
 function apptTypeIcon(a){
   if(a.status==="Reserved") return "bell";
+  if(a.videoConsult) return "camera";
   const t = (a.treatmentType||"").toLowerCase();
   if(/child|pediatric|bubbles/.test(t)) return "child";
   if(/crown/.test(t)) return "crown";
@@ -7397,6 +7430,11 @@ function renderApptFormSheet(a, clinics, isEdit, doctors){
       </select>
     </div>
     <label style="display:flex;align-items:center;gap:8px;margin:12px 0 4px;font-size:13px;">
+      <input type="checkbox" id="apVideo" ${a.videoConsult?'checked':''} style="width:16px;height:16px;flex-shrink:0;">
+      ${icon('camera',14)} Video consult (online — a private video link is created)
+    </label>
+    ${a.meetLink? `<div style="font-size:11.5px;color:var(--grey);margin:0 0 4px 24px;word-break:break-all;">${escapeHtml(a.meetLink)}</div>` : ""}
+    <label style="display:flex;align-items:center;gap:8px;margin:12px 0 4px;font-size:13px;">
       <input type="checkbox" id="apSendWhatsapp" checked style="width:16px;height:16px;flex-shrink:0;">
       Send WhatsApp update to patient
     </label>
@@ -7473,6 +7511,8 @@ function renderApptFormSheet(a, clinics, isEdit, doctors){
       status: document.getElementById("apStatus").value,
       updatedAt: nowIso()
     });
+    updated.videoConsult = !!(document.getElementById("apVideo") && document.getElementById("apVideo").checked);
+    if(updated.videoConsult && !updated.meetLink) updated.meetLink = teleNewRoom();
     await dbPut("appointments", updated);
     if(patient && updated.doctor && patient.treatingDoctor!==updated.doctor){
       patient.treatingDoctor = updated.doctor;
@@ -7486,6 +7526,8 @@ function renderApptFormSheet(a, clinics, isEdit, doctors){
     if(sendWhatsapp && patient){
       sendAppointmentWhatsApp(updated, patient);
     }
+    if(updated.videoConsult && patient && !["Cancelled","Completed"].includes(updated.status) && (!a.videoConsult || !isEdit)) setTimeout(()=> teleSendLink(updated, patient), sendWhatsapp? 1200 : 0);
+    if(currentPage==="tele") renderTele();
   };
 }
 
@@ -10723,7 +10765,7 @@ async function publishDocLink(html, meta){
     // Stored alongside receipts so it uses the same, already-public read rule.
     await window.__fb.put("publicReceipts", {
       id: token, docType: "html", title: meta.title||"Document", html: body,
-      patientName: meta.patientName||"", createdAt: nowIso()
+      patientName: meta.patientName||"", createdAt: nowIso(), expiresAt: meta.expiresAt||null
     });
     return base + (base.includes("?")?"&":"?") + "t=" + token;
   }catch(err){
@@ -25685,7 +25727,7 @@ async function openUseSetSheet(prePatient){
       <div class="str-setpick">${ready.length? ready.map(s=>`<label class="str-chip"><input type="checkbox" value="${s.id}"> ${escapeHtml(s.code||"")} · ${escapeHtml(s.name)} <small>till ${new Date(s.sterileUntil+"T00:00:00").toLocaleDateString(undefined,{day:"numeric",month:"short"})}</small></label>`).join("") : `<small style="color:#b42318;">No sterile sets available — log an autoclave cycle first.</small>`}</div></div>
     <div class="field"><label>Procedure (optional)</label><input id="usProc" placeholder="e.g. Extraction 38"></div>
     <button class="btn btn-primary btn-block" id="usSave" ${ready.length?'':'disabled'}>Record</button>`);
-  aisPatientPicker("usPt", (p)=> patient = p, "Choose patient");
+  if(!prePatient) sheetPatientPicker("usPt", (p)=> patient = p, "Patient");
   if(prePatient) setTimeout(()=>{ const slot = document.getElementById("usPt"); if(slot) slot.innerHTML = `<div class="ais-picked"><b>${escapeHtml(prePatient.name)}</b></div>`; }, 0);
   document.getElementById("usSave").onclick = async ()=>{
     const ids = [...document.querySelectorAll(".str-setpick input:checked")].map(x=>x.value);
@@ -25830,6 +25872,554 @@ async function auditLoadAndDraw(){
   bind("auUser","user"); bind("auStore","store"); bind("auAct","action"); bind("auQ","q","input");
   document.getElementById("auXlsx").onclick = ()=> downloadXlsx("audit-trail-"+auditState.from+"-to-"+auditState.to, [{ name:"Audit trail", columns:["When","User","Action","Record type","Record","Record ID","Field","Old value","New value"],
     rows: filtered().flatMap(r=>{ const ch = Object.entries(r.changes||{}).map(([k,v])=>[k, Array.isArray(v)? v : [v&&v.o, v&&v.n]]); const base = [new Date(r.at).toLocaleString(), r.user||"", r.action, AUDIT_STORE_LABELS[r.store]||r.store||"", r.label||"", r.docId||""]; return ch.length? ch.map(([k,v])=> base.concat([k, fmtV(v[0]), fmtV(v[1])])) : [base.concat(["","",""])]; }) }]);
+}
+
+
+// Patient search that works inside an open sheet (the standard picker opens
+// its own sheet, which would replace the form underneath).
+function sheetPatientPicker(slotId, onPick, label){
+  const slot = document.getElementById(slotId); if(!slot) return;
+  slot.innerHTML = `<div class="field"><label>${escapeHtml(label||"Patient")}</label><input id="${slotId}Q" placeholder="Search patient by name or mobile…" autocomplete="off"><div id="${slotId}R"></div></div>`;
+  const q = document.getElementById(slotId+"Q"), res = document.getElementById(slotId+"R");
+  let t = null;
+  q.addEventListener("input", ()=>{
+    clearTimeout(t); const v = q.value.trim(); if(!v){ res.innerHTML = ""; return; }
+    t = setTimeout(async ()=>{
+      const nq = normalizeStr(v);
+      const m = (await dbGetAll("patients")).filter(p=> p.status!=="Archived" && (normalizeStr(p.name).includes(nq) || (p.mobile||"").includes(v))).slice(0,8);
+      res.innerHTML = m.map(p=>`<div class="patient-picker-result" data-spid="${p.id}">${escapeHtml(p.name)} · ${escapeHtml(p.mobile||"")}</div>`).join("") || `<div class="patient-picker-result" style="color:var(--grey);">No matches.</div>`;
+      res.querySelectorAll("[data-spid]").forEach(el=> el.onclick = ()=>{ const p = m.find(x=>x.id===el.dataset.spid); res.innerHTML = ""; q.value = p.name; onPick(p); });
+    }, 200);
+  });
+  setTimeout(()=>{ try{ q.focus(); }catch(e){} }, 50);
+}
+
+// =====================================================================
+// INSURANCE & CLAIMS (sidebar → Insurance). One place for every cashless /
+// reimbursement claim: status pipeline, ageing, insurer performance, insurance
+// patients, and a secure, expiring "claim pack" link for the insurer / TPA.
+// Uses the same insuranceClaims records the patient Billing tab creates.
+// =====================================================================
+const INS_STATUSES = ["Pending","Submitted","Query raised","Approved","Reimbursed","Rejected"];
+const INS_COLORS = { "Pending":["#fef3c7","#92400e"], "Submitted":["#e0f2fe","#075985"], "Query raised":["#ffedd5","#9a3412"], "Approved":["#ede9fe","#5b21b6"], "Reimbursed":["#dcfce7","#166534"], "Rejected":["#fde7e4","#b42318"] };
+let insTab = "Claims";
+let insFilter = { status:"open", insurer:"", q:"" };
+function insBadge(st){ const c = INS_COLORS[st] || ["#f1f5f9","#334155"]; return `<span class="ais-badge" style="background:${c[0]};color:${c[1]};">${escapeHtml(st||"Pending")}</span>`; }
+function insAgeDays(c){ const end = c.status==="Reimbursed" && c.reimbursedDate ? new Date(c.reimbursedDate) : new Date(); return Math.max(0, Math.round((end - new Date(c.claimDate||c.createdAt||Date.now()))/86400000)); }
+function insInsurerName(c){ return String(c.insurer||"").split(/[,·|]/)[0].trim() || "Not specified"; }
+async function insLoad(){
+  const [claims, patients, invoices, payments, cur] = await Promise.all([dbGetAll("insuranceClaims"), dbGetAll("patients"), dbGetAll("invoices"), dbGetAll("payments"), finCurrency()]);
+  const pMap = {}; patients.forEach(p=> pMap[p.id] = p);
+  const copay = {}; payments.forEach(p=>{ if(p.claimId && p.type==="Co-payment") copay[p.claimId] = (copay[p.claimId]||0) + (Number(p.amount)||0); });
+  claims.sort((a,b)=> (b.claimDate||"").localeCompare(a.claimDate||""));
+  return { claims, patients, pMap, invoices, payments, copay, cur };
+}
+async function renderInsurance(){
+  const main = document.getElementById("main");
+  const tabs = ["Claims","Insurers","Insurance Patients"];
+  main.innerHTML = `<div class="page ais-page">
+    <div class="ais-hero" style="background:linear-gradient(135deg,color-mix(in srgb,#2E5A96 14%,transparent),color-mix(in srgb,var(--green) 10%,transparent));"><div class="ais-hero-ico" style="background:#2E5A96;">${icon('shield',22)}</div><div><h2 style="margin:0;">Insurance &amp; Claims</h2>
+      <p style="margin:2px 0 0;color:var(--grey);font-size:13px;">Every claim in one place — status, ageing, insurer performance and secure claim packs for the TPA.</p></div></div>
+    <div id="insKpis"></div>
+    <div class="hb-tabs" style="margin-top:10px;">${tabs.map(t=>`<button type="button" class="hb-tab ${t===insTab?'on':''}" data-instab="${t}">${escapeHtml(t)}</button>`).join("")}</div>
+    <div id="insBody"><div class="ais-loading"><span class="ai-spin"></span> Loading…</div></div></div>`;
+  main.querySelectorAll("[data-instab]").forEach(b=> b.onclick = ()=>{ insTab = b.dataset.instab; renderInsurance(); });
+  const d = await insLoad();
+  const open = d.claims.filter(c=> !["Reimbursed","Rejected"].includes(c.status));
+  const yr = String(new Date().getFullYear());
+  const reimb = d.claims.filter(c=> c.status==="Reimbursed");
+  const avgDays = reimb.length ? Math.round(reimb.reduce((s,c)=> s+insAgeDays(c), 0)/reimb.length) : 0;
+  const overdue = open.filter(c=> insAgeDays(c) > 30);
+  document.getElementById("insKpis").innerHTML = `<div class="ais-kpis">
+    <div class="ais-kpi"><b>${open.length}</b><span>Open claims</span></div>
+    <div class="ais-kpi" style="--k:#92400e;"><b>${finMoney(open.reduce((s,c)=>s+(Number(c.amountClaimed)||0),0), d.cur)}</b><span>Awaiting from insurers</span></div>
+    <div class="ais-kpi" style="--k:#b42318;"><b>${overdue.length}</b><span>Pending over 30 days</span></div>
+    <div class="ais-kpi" style="--k:#166534;"><b>${finMoney(reimb.filter(c=>(c.reimbursedDate||"").startsWith(yr)).reduce((s,c)=>s+(Number(c.amountReimbursed)||0),0), d.cur)}</b><span>Received in ${yr}</span></div>
+    <div class="ais-kpi"><b>${avgDays} days</b><span>Average time to reimburse</span></div>
+    <div class="ais-kpi" style="--k:#b42318;"><b>${d.claims.filter(c=>c.status==="Rejected").length}</b><span>Rejected</span></div></div>`;
+  const body = document.getElementById("insBody");
+  try{ await INS_RENDER[insTab](body, d); }catch(e){ console.warn(e); body.innerHTML = `<div class="ais-err">${escapeHtml(e.message||String(e))}</div>`; }
+  aisAnimate(main);
+}
+const INS_RENDER = {};
+INS_RENDER.Claims = async (body, d)=>{
+  const insurers = [...new Set(d.claims.map(insInsurerName))].sort();
+  body.innerHTML = `<div class="ais-actions">
+      <button class="btn btn-primary btn-sm" id="insNew">+ New claim</button>
+      <select id="insSt" class="ais-select"><option value="open">Open (not settled)</option><option value="">All statuses</option>${INS_STATUSES.map(s=>`<option ${s===insFilter.status?'selected':''}>${s}</option>`).join("")}<option value="overdue" ${insFilter.status==="overdue"?'selected':''}>Pending over 30 days</option></select>
+      <select id="insIns" class="ais-select"><option value="">All insurers</option>${insurers.map(i=>`<option ${i===insFilter.insurer?'selected':''}>${escapeHtml(i)}</option>`).join("")}</select>
+      <input id="insQ" class="ais-select" placeholder="Search patient / treatment / claim no." value="${escapeAttr(insFilter.q)}">
+      <button class="btn btn-outline btn-sm" id="insXlsx">Export Excel</button></div>
+    <div class="ais-table-wrap" style="max-height:620px;"><table class="ais-table"><thead><tr><th>Claimed</th><th>Patient</th><th>Treatment</th><th>Insurer / claim no.</th><th>Claimed</th><th>Received</th><th>Age</th><th>Status</th><th></th></tr></thead><tbody id="insRows"></tbody></table></div>`;
+  document.getElementById("insSt").value = insFilter.status;
+  const list = ()=>{
+    const q = normalizeStr(insFilter.q).trim();
+    return d.claims.filter(c=>{
+      if(insFilter.status==="open" && ["Reimbursed","Rejected"].includes(c.status)) return false;
+      if(insFilter.status==="overdue" && (["Reimbursed","Rejected"].includes(c.status) || insAgeDays(c)<=30)) return false;
+      if(insFilter.status && !["open","overdue"].includes(insFilter.status) && (c.status||"Pending")!==insFilter.status) return false;
+      if(insFilter.insurer && insInsurerName(c)!==insFilter.insurer) return false;
+      if(q){ const p = d.pMap[c.patientId]||{}; if(!normalizeStr([p.name, p.mobile, c.treatment, c.insurer, c.claimNo, c.tpa].join(" ")).includes(q)) return false; }
+      return true;
+    });
+  };
+  const draw = ()=>{
+    const rows = list();
+    document.getElementById("insRows").innerHTML = rows.map(c=>{
+      const p = d.pMap[c.patientId]||{}; const age = insAgeDays(c);
+      const settled = ["Reimbursed","Rejected"].includes(c.status);
+      return `<tr><td>${c.claimDate? new Date(c.claimDate).toLocaleDateString() : "—"}</td>
+        <td><a href="#" data-inspt="${c.patientId}"><b>${escapeHtml(p.name||"Unknown")}</b></a><br><small>${escapeHtml(p.mobile||"")}</small></td>
+        <td>${escapeHtml(c.treatment||"")}${c.tooth? "<br><small>Tooth "+escapeHtml(c.tooth)+"</small>":""}</td>
+        <td>${escapeHtml(c.insurer||"—")}${c.tpa? "<br><small>TPA: "+escapeHtml(c.tpa)+"</small>":""}${c.claimNo? "<br><small>#"+escapeHtml(c.claimNo)+"</small>":""}</td>
+        <td>${finMoney(Number(c.amountClaimed)||0, d.cur)}${d.copay[c.id]? `<br><small>Co-pay ${finMoney(d.copay[c.id], d.cur)}</small>`:""}</td>
+        <td>${c.amountReimbursed? finMoney(Number(c.amountReimbursed), d.cur) : (c.approvedAmount? `<small>Approved ${finMoney(Number(c.approvedAmount), d.cur)}</small>` : "—")}</td>
+        <td><span style="color:${settled? 'var(--grey)' : age>30? '#b42318' : age>15? '#92400e' : 'inherit'};font-weight:600;">${age}d</span></td>
+        <td>${insBadge(c.status||"Pending")}</td>
+        <td style="white-space:nowrap;"><button class="btn btn-outline btn-sm" data-insupd="${c.id}">Update</button> ${c.status!=="Reimbursed"? `<button class="btn btn-primary btn-sm" data-insreimb="${c.id}">Received</button> `:""}<button class="btn btn-outline btn-sm" data-inspack="${c.id}" title="Secure claim pack link for the insurer / TPA">Claim pack</button></td></tr>`;
+    }).join("") || `<tr><td colspan="9" class="ais-empty">No claims match.</td></tr>`;
+    body.querySelectorAll("[data-inspt]").forEach(a=> a.onclick = (e)=>{ e.preventDefault(); openPatientProfile(a.dataset.inspt); });
+    body.querySelectorAll("[data-insupd]").forEach(b=> b.onclick = ()=> openInsClaimUpdate(d.claims.find(c=>c.id===b.dataset.insupd), d));
+    body.querySelectorAll("[data-insreimb]").forEach(b=> b.onclick = ()=>{ const c = d.claims.find(x=>x.id===b.dataset.insreimb); const p = d.pMap[c.patientId]; if(!p){ showToast("Patient not found"); return; } openRecordReimbursementSheet(c.id, p, null, p.id, ()=>{ if(currentPage==="insurance") renderInsurance(); }); });
+    body.querySelectorAll("[data-inspack]").forEach(b=> b.onclick = ()=> openInsClaimPack(d.claims.find(c=>c.id===b.dataset.inspack), d));
+  };
+  draw();
+  const bind = (id, key, ev)=>{ const el = document.getElementById(id); el.addEventListener(ev||"change", ()=>{ insFilter[key] = el.value; draw(); }); };
+  bind("insSt","status"); bind("insIns","insurer"); bind("insQ","q","input");
+  document.getElementById("insNew").onclick = ()=> openInsNewClaim(d);
+  document.getElementById("insXlsx").onclick = ()=> downloadXlsx("insurance-claims", [{ name:"Claims", columns:["Claim date","Patient","Mobile","Treatment","Tooth","Insurer","TPA","Claim no.","Policy no.","Amount claimed","Approved","Co-payment","Reimbursed","Reimbursed on","Days","Status","Notes"],
+    rows: list().map(c=>{ const p = d.pMap[c.patientId]||{}; return [c.claimDate? new Date(c.claimDate).toLocaleDateString():"", p.name||"", p.mobile||"", c.treatment||"", c.tooth||"", c.insurer||"", c.tpa||"", c.claimNo||"", c.policyNo||"", Number(c.amountClaimed)||0, Number(c.approvedAmount)||"", d.copay[c.id]||"", Number(c.amountReimbursed)||"", c.reimbursedDate? new Date(c.reimbursedDate).toLocaleDateString():"", insAgeDays(c), c.status||"Pending", c.notes||""]; }) }]);
+};
+INS_RENDER.Insurers = async (body, d)=>{
+  const g = {};
+  d.claims.forEach(c=>{ const k = insInsurerName(c); const x = g[k] = g[k] || {n:0, claimed:0, received:0, open:0, openAmt:0, rejected:0, days:[]};
+    x.n++; x.claimed += Number(c.amountClaimed)||0;
+    if(c.status==="Reimbursed"){ x.received += Number(c.amountReimbursed)||0; x.days.push(insAgeDays(c)); }
+    else if(c.status==="Rejected") x.rejected++;
+    else { x.open++; x.openAmt += Number(c.amountClaimed)||0; } });
+  const rows = Object.entries(g).sort((a,b)=> b[1].claimed-a[1].claimed);
+  const max = Math.max(1, ...rows.map(r=>r[1].claimed));
+  body.innerHTML = `<div class="ais-card"><div class="ais-card-title">Insurer performance</div>
+    <div class="ais-table-wrap"><table class="ais-table"><thead><tr><th>Insurer</th><th>Claims</th><th>Claimed</th><th>Received</th><th>Recovery</th><th>Avg days</th><th>Open</th><th>Rejected</th></tr></thead><tbody>
+    ${rows.map(([k,x])=>{ const settledClaimed = x.claimed - x.openAmt; const rec = settledClaimed>0? Math.round(x.received/settledClaimed*100) : 0; return `<tr><td><b>${escapeHtml(k)}</b><div class="ais-bar" style="margin-top:4px;"><span class="ais-bar-fill" data-w="${x.claimed/max*100}"></span></div></td><td>${x.n}</td><td>${finMoney(x.claimed,d.cur)}</td><td>${finMoney(x.received,d.cur)}</td><td>${settledClaimed? rec+"%" : "—"}</td><td>${x.days.length? Math.round(x.days.reduce((a,b)=>a+b,0)/x.days.length) : "—"}</td><td>${x.open? `${x.open} · ${finMoney(x.openAmt,d.cur)}` : "—"}</td><td>${x.rejected||"—"}</td></tr>`; }).join("") || `<tr><td colspan="8" class="ais-empty">No claims yet.</td></tr>`}
+    </tbody></table></div><p style="font-size:11.5px;color:var(--grey);margin:8px 0 0;">Recovery = amount received ÷ amount claimed on settled claims. The insurer name is taken from the first part of the "Insurer" field.</p></div>`;
+  body.querySelectorAll(".ais-bar-fill[data-w]").forEach(el=> setTimeout(()=> el.style.width = el.dataset.w+"%", 40));
+};
+INS_RENDER["Insurance Patients"] = async (body, d)=>{
+  const byP = {};
+  d.claims.forEach(c=>{ (byP[c.patientId] = byP[c.patientId] || []).push(c); });
+  const ids = new Set(Object.keys(byP));
+  d.patients.forEach(p=>{ if(p.membershipTier==="Insurance" || p.insurer) ids.add(p.id); });
+  const list = [...ids].map(id=> d.pMap[id]).filter(Boolean).sort((a,b)=> (a.name||"").localeCompare(b.name||""));
+  body.innerHTML = `<div class="ais-actions"><input id="insPq" class="ais-select" style="min-width:220px;" placeholder="Search patient"><button class="btn btn-outline btn-sm" id="insPx">Export Excel</button></div>
+    <div class="ais-table-wrap" style="max-height:620px;"><table class="ais-table"><thead><tr><th>Patient</th><th>Insurer / policy</th><th>Claims</th><th>Claimed</th><th>Received</th><th>Open</th><th></th></tr></thead><tbody id="insPr"></tbody></table></div>`;
+  const rowsOf = ()=>{ const q = normalizeStr(document.getElementById("insPq").value).trim(); return list.filter(p=> !q || normalizeStr(p.name+" "+(p.mobile||"")).includes(q)); };
+  const stat = (p)=>{ const cs = byP[p.id]||[]; return { n: cs.length, claimed: cs.reduce((s,c)=>s+(Number(c.amountClaimed)||0),0), recv: cs.reduce((s,c)=>s+(Number(c.amountReimbursed)||0),0), open: cs.filter(c=>!["Reimbursed","Rejected"].includes(c.status)).length, ins: p.insurer || (cs[0]&&cs[0].insurer) || "", pol: p.policyNo || (cs.find(c=>c.policyNo)||{}).policyNo || "" }; };
+  const draw = ()=>{ document.getElementById("insPr").innerHTML = rowsOf().map(p=>{ const s = stat(p); return `<tr><td><b>${escapeHtml(p.name)}</b><br><small>${escapeHtml(p.mobile||"")}</small></td><td>${escapeHtml(s.ins||"—")}${s.pol? "<br><small>Policy "+escapeHtml(s.pol)+"</small>":""}</td><td>${s.n}</td><td>${finMoney(s.claimed,d.cur)}</td><td>${finMoney(s.recv,d.cur)}</td><td>${s.open? `<b style="color:#92400e;">${s.open}</b>`:"—"}</td><td style="white-space:nowrap;"><button class="btn btn-outline btn-sm" data-inspol="${p.id}">Policy details</button> <button class="btn btn-outline btn-sm" data-insopen="${p.id}">Profile</button></td></tr>`; }).join("") || `<tr><td colspan="7" class="ais-empty">No insurance patients yet. Patients appear here once they have a claim or their membership is set to "Insurance".</td></tr>`;
+    body.querySelectorAll("[data-insopen]").forEach(b=> b.onclick = ()=> openPatientProfile(b.dataset.insopen));
+    body.querySelectorAll("[data-inspol]").forEach(b=> b.onclick = ()=> openInsPolicySheet(d.pMap[b.dataset.inspol])); };
+  draw(); document.getElementById("insPq").oninput = draw;
+  document.getElementById("insPx").onclick = ()=> downloadXlsx("insurance-patients", [{ name:"Insurance patients", columns:["Patient","Mobile","Insurer","Policy no.","TPA","Valid till","Claims","Claimed","Received","Open claims"], rows: rowsOf().map(p=>{ const s = stat(p); return [p.name, p.mobile||"", s.ins, s.pol, p.tpa||"", p.policyValidTill||"", s.n, s.claimed, s.recv, s.open]; }) }]);
+};
+function openInsPolicySheet(p){
+  if(!p) return;
+  openSheet(`<button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>Insurance details — ${escapeHtml(p.name)}</h2>
+    <div class="field-row"><div class="field"><label>Insurer</label><input id="ipIns" value="${escapeAttr(p.insurer||"")}" placeholder="e.g. Star Health"></div><div class="field"><label>TPA</label><input id="ipTpa" value="${escapeAttr(p.tpa||"")}" placeholder="e.g. Medi Assist"></div></div>
+    <div class="field-row"><div class="field"><label>Policy number</label><input id="ipPol" value="${escapeAttr(p.policyNo||"")}"></div><div class="field"><label>Member / card ID</label><input id="ipMem" value="${escapeAttr(p.insuranceMemberId||"")}"></div></div>
+    <div class="field-row"><div class="field"><label>Policy holder / employer</label><input id="ipHold" value="${escapeAttr(p.policyHolder||"")}"></div><div class="field"><label>Valid till</label><input type="date" id="ipTill" value="${escapeAttr(p.policyValidTill||"")}"></div></div>
+    <div class="field"><label>Dental cover / sum insured (notes)</label><input id="ipCover" value="${escapeAttr(p.insuranceCover||"")}" placeholder="e.g. OPD dental ₹15,000 per year"></div>
+    <button class="btn btn-primary btn-block" id="ipSave">Save</button>`);
+  document.getElementById("ipSave").onclick = async ()=>{
+    const g = (id)=> document.getElementById(id).value.trim();
+    Object.assign(p, { insurer:g("ipIns"), tpa:g("ipTpa"), policyNo:g("ipPol"), insuranceMemberId:g("ipMem"), policyHolder:g("ipHold"), policyValidTill:g("ipTill"), insuranceCover:g("ipCover"), updatedAt: nowIso() });
+    await dbPut("patients", p); showSuccessTick("Saved", p.name); closeSheet(); if(currentPage==="insurance") renderInsurance();
+  };
+}
+function openInsClaimUpdate(c, d){
+  if(!c) return;
+  const p = d.pMap[c.patientId]||{};
+  openSheet(`<button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>Update claim</h2>
+    <p style="margin:-4px 0 10px;"><b>${escapeHtml(p.name||"")}</b> · ${escapeHtml(c.treatment||"")}${c.tooth? " · Tooth "+escapeHtml(c.tooth):""} · ${finMoney(Number(c.amountClaimed)||0, d.cur)}</p>
+    <div class="field"><label>Status</label><select id="icSt">${INS_STATUSES.map(s=>`<option ${s===(c.status||"Pending")?'selected':''}>${s}</option>`).join("")}</select></div>
+    <div class="field-row"><div class="field"><label>Insurer</label><input id="icIns" value="${escapeAttr(c.insurer||p.insurer||"")}"></div><div class="field"><label>TPA</label><input id="icTpa" value="${escapeAttr(c.tpa||p.tpa||"")}"></div></div>
+    <div class="field-row"><div class="field"><label>Claim / pre-auth no.</label><input id="icNo" value="${escapeAttr(c.claimNo||"")}"></div><div class="field"><label>Policy no.</label><input id="icPol" value="${escapeAttr(c.policyNo||p.policyNo||"")}"></div></div>
+    <div class="field-row"><div class="field"><label>Amount claimed</label><input type="number" id="icAmt" value="${escapeAttr(c.amountClaimed||0)}"></div><div class="field"><label>Approved amount</label><input type="number" id="icAppr" value="${escapeAttr(c.approvedAmount||"")}"></div></div>
+    <div class="field-row"><div class="field"><label>Submitted on</label><input type="date" id="icSub" value="${escapeAttr(c.submittedDate||"")}"></div><div class="field"><label>Next follow-up</label><input type="date" id="icFu" value="${escapeAttr(c.reminderDate? toDateKey(new Date(c.reminderDate)) : "")}"></div></div>
+    <div class="field"><label>Notes (query from insurer, rejection reason…)</label><textarea id="icNotes" rows="3">${escapeHtml(c.notes||"")}</textarea></div>
+    <p style="font-size:12px;color:var(--grey);margin:0 0 8px;">To record money received, use <b>Received</b> on the claim — that creates the receipt and updates the invoice.</p>
+    <button class="btn btn-primary btn-block" id="icSave">Save</button>`);
+  document.getElementById("icSave").onclick = async ()=>{
+    const g = (id)=> document.getElementById(id).value.trim();
+    const prev = c.status;
+    Object.assign(c, { status:g("icSt"), insurer:g("icIns"), tpa:g("icTpa"), claimNo:g("icNo"), policyNo:g("icPol"), amountClaimed: Number(g("icAmt"))||0, approvedAmount: g("icAppr")? Number(g("icAppr")) : null, submittedDate:g("icSub"), notes:g("icNotes"), updatedAt: nowIso() });
+    if(g("icFu")) c.reminderDate = new Date(g("icFu")+"T10:00:00").toISOString();
+    await dbPut("insuranceClaims", c);
+    const rem = (await dbGetAll("reminders")).find(r=> r.claimId===c.id);
+    if(rem){ if(["Reimbursed","Rejected"].includes(c.status)) rem.status = "Completed"; else if(g("icFu")){ rem.dueDate = c.reminderDate; rem.status = "Pending"; } await dbPut("reminders", rem); }
+    if(c.planId && c.itemId){ const plan = (await dbGetAll("treatmentPlans")).find(x=>x.id===c.planId); const it = plan && (plan.items||[]).find(x=>x.id===c.itemId); if(it){ it.insuranceStatus = c.status; plan.updatedAt = nowIso(); await dbPut("treatmentPlans", plan); } }
+    logActivity(`Insurance claim for ${p.name||"patient"}: ${prev||"Pending"} → ${c.status}`, {patientId: c.patientId});
+    showSuccessTick("Claim updated", c.status); closeSheet(); if(currentPage==="insurance") renderInsurance();
+  };
+}
+async function openInsNewClaim(d){
+  let patient = null;
+  openSheet(`<button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>New insurance claim</h2>
+    <div id="inPt"></div>
+    <div id="inForm" style="display:none;margin-top:10px;">
+      <div class="field"><label>Treatment (from the patient's plan)</label><select id="inItem"></select></div>
+      <div class="field-row"><div class="field"><label>Treatment</label><input id="inTx"></div><div class="field"><label>Tooth</label><input id="inTooth"></div></div>
+      <div class="field-row"><div class="field"><label>Insurer</label><input id="inIns" placeholder="e.g. Star Health"></div><div class="field"><label>TPA</label><input id="inTpa"></div></div>
+      <div class="field-row"><div class="field"><label>Policy no.</label><input id="inPol"></div><div class="field"><label>Amount claimed</label><input type="number" id="inAmt"></div></div>
+      <div class="field"><label>Link to invoice (optional)</label><select id="inInv"><option value="">— none —</option></select></div>
+      <p style="font-size:12px;color:var(--grey);margin:0 0 8px;">A follow-up reminder is set for 15 days from today. To mark a plan treatment as cashless and bill it at the same time, you can still use "Cashless (Insurance)" in the patient's Treatment tab.</p>
+      <button class="btn btn-primary btn-block" id="inSave">Create claim</button></div>`);
+  sheetPatientPicker("inPt", async (p)=>{
+    patient = p;
+    const plans = (await dbGetAll("treatmentPlans")).filter(x=>x.patientId===p.id);
+    const items = []; plans.forEach(pl=> (pl.items||[]).forEach(it=>{ if(!it.insuranceClaimId) items.push({pl, it}); }));
+    const invs = d.invoices.filter(i=> i.patientId===p.id).sort((a,b)=> (b.date||b.createdAt||"").localeCompare(a.date||a.createdAt||""));
+    document.getElementById("inItem").innerHTML = `<option value="">— type it below —</option>` + items.map((x,i)=>`<option value="${i}">${escapeHtml(x.it.treatment||"Treatment")}${x.it.tooth? " · "+escapeHtml(x.it.tooth):""} · ${finMoney(computeItemNetAmount(x.it), d.cur)}</option>`).join("");
+    document.getElementById("inInv").innerHTML = `<option value="">— none —</option>` + invs.map(i=>`<option value="${i.id}">${escapeHtml(i.invoiceNumber||"Invoice")} · ${finMoney(Number(i.totalNet)||0, d.cur)}</option>`).join("");
+    document.getElementById("inIns").value = p.insurer||""; document.getElementById("inTpa").value = p.tpa||""; document.getElementById("inPol").value = p.policyNo||"";
+    document.getElementById("inItem").onchange = ()=>{ const x = items[document.getElementById("inItem").value]; if(!x) return; document.getElementById("inTx").value = x.it.treatment||""; document.getElementById("inTooth").value = x.it.tooth||""; document.getElementById("inAmt").value = computeItemNetAmount(x.it); };
+    document.getElementById("inForm").style.display = "";
+    document.getElementById("inSave").onclick = async ()=>{
+      const g = (id)=> document.getElementById(id).value.trim();
+      if(!g("inTx")){ showToast("Enter the treatment"); return; }
+      const x = items[g("inItem")];
+      const rem = new Date(); rem.setDate(rem.getDate()+15);
+      const claim = { id: uid("ins"), patientId: p.id, planId: x? x.pl.id : null, itemId: x? x.it.id : null, clinicId: (x&&x.pl.clinicId) || p.preferredClinicId || "", treatment: g("inTx"), tooth: g("inTooth"),
+        insurer: g("inIns"), tpa: g("inTpa"), policyNo: g("inPol"), status:"Pending", claimDate: nowIso(), reminderDate: rem.toISOString(), amountClaimed: Number(g("inAmt"))||0, amountReimbursed:null, reimbursedDate:null, notes:"", invoiceId: g("inInv")||null };
+      await dbAdd("insuranceClaims", claim);
+      await dbAdd("reminders", { id: uid("rem"), patientId: p.id, title: "Insurance reimbursement follow-up — "+claim.treatment+" for "+p.name, type:"Insurance", claimId: claim.id, dueDate: claim.reminderDate, status:"Pending", createdAt: nowIso() });
+      if(x){ x.it.insuranceClaimId = claim.id; x.it.insuranceStatus = "Pending"; x.pl.updatedAt = nowIso(); await dbPut("treatmentPlans", x.pl); }
+      if(!p.insurer && claim.insurer){ p.insurer = claim.insurer; p.tpa = p.tpa || claim.tpa; p.policyNo = p.policyNo || claim.policyNo; await dbPut("patients", p); }
+      logActivity("Insurance claim created for "+p.name, {patientId: p.id});
+      showSuccessTick("Claim created", p.name); closeSheet(); if(currentPage==="insurance") renderInsurance();
+    };
+  }, "Choose patient");
+}
+async function buildInsClaimPackHtml(c, d, opts){
+  const p = d.pMap[c.patientId]||{};
+  const inv = c.invoiceId ? d.invoices.find(i=>i.id===c.invoiceId) : null;
+  const pays = d.payments.filter(x=> x.claimId===c.id || (inv && x.invoiceId===inv.id));
+  const xr = opts.xrays ? (await dbGetAll("xrays")).filter(x=> x.patientId===c.patientId && (!c.tooth || !x.tooth || String(x.tooth).split(/[^0-9]+/).some(t=> String(c.tooth).split(/[^0-9]+/).includes(t)))).sort((a,b)=> (b.date||"").localeCompare(a.date||"")).slice(0, 4) : [];
+  const rx = opts.rx ? (await dbGetAll("prescriptions")).filter(x=> x.patientId===c.patientId).sort((a,b)=> (b.date||b.createdAt||"").localeCompare(a.date||a.createdAt||""))[0] : null;
+  const exam = opts.exam ? (await dbGetAll("examinations")).filter(x=> x.patientId===c.patientId).sort((a,b)=> (b.date||b.createdAt||"").localeCompare(a.date||a.createdAt||""))[0] : null;
+  const row = (k,v)=> v? `<tr><td style="padding:3px 8px 3px 0;color:#555;width:38%;">${k}</td><td style="padding:3px 0;"><b>${escapeHtml(String(v))}</b></td></tr>` : "";
+  const money = (v)=> finMoney(Number(v)||0, d.cur);
+  const examTxt = exam ? Object.entries(exam).filter(([k,v])=> typeof v==="string" && v.trim() && /complaint|finding|diagnos|history|note|advice/i.test(k)).map(([k,v])=> `<div><b>${escapeHtml(k.replace(/([A-Z])/g," $1").replace(/^./,s=>s.toUpperCase()))}:</b> ${escapeHtml(v)}</div>`).join("") : "";
+  const rxTxt = rx ? (rx.medicines||rx.items||[]).map(m=> `<li>${escapeHtml([m.name||m.medicine, m.dose||m.dosage, m.frequency, m.duration].filter(Boolean).join(" · "))}</li>`).join("") : "";
+  return `<h3 style="margin:0 0 6px;">Dental Insurance Claim — Supporting Documents</h3>
+    <p style="font-size:11px;color:#555;margin:0 0 10px;">Prepared ${new Date().toLocaleDateString()} for ${escapeHtml(c.tpa||c.insurer||"the insurer")}${c.claimNo? " · Claim / pre-auth no. "+escapeHtml(c.claimNo):""}</p>
+    <h4 style="margin:10px 0 4px;">Patient</h4><table style="width:100%;font-size:12px;border-collapse:collapse;">
+      ${row("Name", p.name)}${row("Age / Gender", [patientAgeYears(p)!=null && patientAgeYears(p)!==""? patientAgeYears(p)+" yrs":"", p.gender].filter(Boolean).join(" / "))}${row("Mobile", p.mobile)}${row("Address", p.address)}
+      ${row("Insurer", c.insurer||p.insurer)}${row("TPA", c.tpa||p.tpa)}${row("Policy no.", c.policyNo||p.policyNo)}${row("Member / card ID", p.insuranceMemberId)}${row("Policy holder", p.policyHolder)}</table>
+    <h4 style="margin:12px 0 4px;">Treatment claimed</h4><table style="width:100%;font-size:12px;border-collapse:collapse;">
+      ${row("Treatment", c.treatment)}${row("Tooth (FDI)", c.tooth)}${row("Date", c.claimDate? new Date(c.claimDate).toLocaleDateString():"")}${row("Amount claimed", money(c.amountClaimed))}${row("Treating dentist", p.treatingDoctor? "Dr. "+p.treatingDoctor.replace(/^Dr\.?\s*/i,"") : "")}</table>
+    ${examTxt? `<h4 style="margin:12px 0 4px;">Clinical findings (${new Date(exam.date||exam.createdAt).toLocaleDateString()})</h4><div style="font-size:12px;line-height:1.5;">${examTxt}</div>`:""}
+    ${inv? `<h4 style="margin:12px 0 4px;">Invoice ${escapeHtml(inv.invoiceNumber||"")} (${new Date(inv.date||inv.createdAt).toLocaleDateString()})</h4>
+      <table style="width:100%;font-size:11.5px;border-collapse:collapse;"><thead><tr><th style="text-align:left;border-bottom:1px solid #999;padding:3px;">Item</th><th style="text-align:right;border-bottom:1px solid #999;padding:3px;">Amount</th></tr></thead><tbody>
+      ${(inv.items||[]).map(it=>`<tr><td style="padding:3px;border-bottom:1px solid #eee;">${escapeHtml(it.treatment||it.description||it.name||"")}${it.tooth? " · "+escapeHtml(it.tooth):""}</td><td style="padding:3px;text-align:right;border-bottom:1px solid #eee;">${money(typeof computeItemNetAmount==="function"? computeItemNetAmount(it) : it.fee)}</td></tr>`).join("")}
+      <tr><td style="padding:3px;"><b>Total</b></td><td style="padding:3px;text-align:right;"><b>${money(inv.totalNet)}</b></td></tr></tbody></table>`:""}
+    ${pays.length? `<h4 style="margin:12px 0 4px;">Payments received</h4><table style="width:100%;font-size:11.5px;border-collapse:collapse;">${pays.map(x=>`<tr><td style="padding:2px 3px;">${new Date(x.date).toLocaleDateString()} · ${escapeHtml(x.type||"Payment")} · ${escapeHtml(x.mode||"")}${x.receiptNumber? " · Receipt "+escapeHtml(x.receiptNumber):""}</td><td style="text-align:right;padding:2px 3px;">${money(x.amount)}</td></tr>`).join("")}</table>`:""}
+    ${rxTxt? `<h4 style="margin:12px 0 4px;">Prescription (${new Date(rx.date||rx.createdAt).toLocaleDateString()})</h4><ul style="font-size:12px;margin:0;padding-left:18px;">${rxTxt}</ul>`:""}
+    ${xr.length? `<h4 style="margin:12px 0 4px;">Radiographs</h4><div style="display:flex;flex-wrap:wrap;gap:8px;">${xr.map(x=>`<figure style="margin:0;width:48%;"><img src="${x.imageData}" style="width:100%;border:1px solid #ccc;border-radius:4px;"><figcaption style="font-size:10.5px;color:#555;">${escapeHtml(x.category||"X-ray")}${x.tooth? " · Tooth "+escapeHtml(x.tooth):""} · ${new Date(x.date).toLocaleDateString()}</figcaption></figure>`).join("")}</div>`:""}
+    <p style="font-size:10.5px;color:#666;margin-top:14px;">This page is a confidential medical record shared only for processing the above claim.</p>`;
+}
+async function openInsClaimPack(c, d){
+  if(!c) return;
+  const p = d.pMap[c.patientId]||{};
+  openSheet(`<button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>Claim pack for the insurer / TPA</h2>
+    <p style="margin:-4px 0 10px;">${escapeHtml(p.name||"")} · ${escapeHtml(c.treatment||"")} · ${finMoney(Number(c.amountClaimed)||0, d.cur)}</p>
+    <div class="field"><label>Include</label>
+      <label class="str-chip"><input type="checkbox" id="cpX" checked> X-rays${c.tooth? " of tooth "+escapeHtml(c.tooth):""}</label>
+      <label class="str-chip"><input type="checkbox" id="cpE" checked> Clinical findings</label>
+      <label class="str-chip"><input type="checkbox" id="cpR"> Latest prescription</label></div>
+    <div class="field"><label>Link valid for</label><select id="cpDays"><option value="3">3 days</option><option value="7" selected>7 days</option><option value="15">15 days</option><option value="30">30 days</option></select></div>
+    <div class="field"><label>TPA / insurer WhatsApp or email (optional)</label><input id="cpTo" placeholder="e.g. 98XXXXXXXX or claims@tpa.com"></div>
+    <div style="display:flex;gap:8px;"><button class="btn btn-outline" style="flex:1;" id="cpPrint">${icon('print',15)} Print / PDF</button><button class="btn btn-primary" style="flex:1;" id="cpLink">Create secure link</button></div>
+    <div id="cpOut" style="margin-top:10px;"></div>`);
+  const clinicOf = async ()=>{ const cl = await dbGetAll("clinics"); return cl.find(x=>x.id===c.clinicId) || cl.find(x=>x.isDefault) || cl[0] || {}; };
+  const opts = ()=>({ xrays: document.getElementById("cpX").checked, exam: document.getElementById("cpE").checked, rx: document.getElementById("cpR").checked });
+  const printFn = async ()=> printDocument({ title:"Insurance Claim Pack", clinic: await clinicOf(), docDate: new Date().toLocaleDateString(), bodyHtml: await buildInsClaimPackHtml(c, d, opts()), signHtml: "" });
+  document.getElementById("cpPrint").onclick = ()=> printFn();
+  document.getElementById("cpLink").onclick = async ()=>{
+    const btn = document.getElementById("cpLink"); btn.disabled = true; btn.textContent = "Creating…";
+    const html = await captureDocHtml(printFn);
+    btn.disabled = false; btn.textContent = "Create secure link";
+    if(!html){ showToast("Couldn't prepare the claim pack"); return; }
+    const days = Number(document.getElementById("cpDays").value)||7;
+    const exp = new Date(Date.now()+days*86400000);
+    const link = await publishDocLink(html, { title:"Insurance Claim Pack", patientName: p.name, expiresAt: exp.toISOString() });
+    if(!link) return;
+    c.packLinks = (c.packLinks||[]).concat([{ at: nowIso(), expiresAt: exp.toISOString(), to: document.getElementById("cpTo").value.trim() }]).slice(-10);
+    if(!c.submittedDate && (c.status||"Pending")==="Pending"){ c.status = "Submitted"; c.submittedDate = toDateKey(new Date()); }
+    await dbPut("insuranceClaims", c);
+    logActivity("Claim pack link created for "+p.name+" (valid "+days+" days)", {patientId: c.patientId});
+    const to = document.getElementById("cpTo").value.trim();
+    const msg = `Dear Sir/Madam,\nPlease find the supporting documents for the dental claim of ${p.name}${c.claimNo? " (Claim no. "+c.claimNo+")":""}${c.policyNo||p.policyNo? ", policy "+(c.policyNo||p.policyNo):""}: ${c.treatment||""}${c.tooth? " – tooth "+c.tooth:""}, amount ${finMoney(Number(c.amountClaimed)||0, d.cur)}.\n\nSecure link (valid till ${exp.toLocaleDateString()}): ${link}\n\nRegards,\nHealing Touch Dental`;
+    document.getElementById("cpOut").innerHTML = `<div class="ais-card" style="margin:0;"><div style="font-size:12px;word-break:break-all;">${escapeHtml(link)}</div><small style="color:var(--grey);">Expires ${exp.toLocaleString()}</small>
+      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;"><button class="btn btn-outline btn-sm" id="cpCopy">Copy message</button>${/@/.test(to)? `<a class="btn btn-outline btn-sm" href="mailto:${escapeAttr(to)}?subject=${encodeURIComponent("Dental claim documents – "+(p.name||""))}&body=${encodeURIComponent(msg)}">Email</a>` : ""}${to && !/@/.test(to)? `<button class="btn btn-primary btn-sm" id="cpWa">WhatsApp</button>`:""}</div></div>`;
+    document.getElementById("cpCopy").onclick = async ()=>{ try{ await navigator.clipboard.writeText(msg); showToast("Message copied"); }catch(e){ showToast("Couldn't copy — select the link manually"); } };
+    const wa = document.getElementById("cpWa"); if(wa) wa.onclick = ()=> openWhatsAppBusinessApp(to, msg);
+  };
+}
+
+// =====================================================================
+// TELE-DENTISTRY (sidebar → Tele-Consult). Video consults are ordinary
+// appointments marked "Video consult": each gets a private Jitsi Meet room
+// (free, no install — opens in a new tab), a WhatsApp link for the patient,
+// and consult notes saved on the appointment and the patient's notes.
+// =====================================================================
+let teleTab = "Upcoming";
+function teleNewRoom(){ const a = "abcdefghjkmnpqrstuvwxyz23456789"; let s = ""; const r = crypto.getRandomValues(new Uint8Array(12)); r.forEach(x=> s += a[x % a.length]); return "https://meet.jit.si/HealingTouchDental-" + s; }
+function teleWhen(a){ return fromDateKey(a.date).toLocaleDateString(undefined,{weekday:"short", day:"numeric", month:"short"}) + " · " + formatTime(a.startTime); }
+async function teleSendLink(a, patient){
+  patient = patient || (await dbGetAll("patients")).find(p=>p.id===a.patientId);
+  if(!patient){ showToast("Patient not found"); return; }
+  if(!a.meetLink){ a.meetLink = teleNewRoom(); await dbPut("appointments", a); }
+  openWhatsAppComposer({ title:"Send video consult link", toName: patient.name, toNumber: patient.whatsappNumber || patient.mobile, patientId: patient.id, recipientType:"patient",
+    message: `Hi ${patient.name}, your video consultation with Healing Touch Dental${a.doctor? " (Dr. "+a.doctor.replace(/^Dr\.?\s*/i,"")+")":""} is on ${teleWhen(a)}.\n\nJoin from your phone or computer at that time: ${a.meetLink}\n\nNo app needed — just open the link and allow camera & microphone. Please keep any X-rays or reports handy.` });
+}
+async function renderTele(){
+  const main = document.getElementById("main");
+  const tabs = ["Upcoming","Past consults"];
+  const [appts, patients] = await Promise.all([dbGetAll("appointments"), dbGetAll("patients")]);
+  const pMap = {}; patients.forEach(p=> pMap[p.id] = p);
+  const vids = appts.filter(a=> a.videoConsult && a.status!=="Cancelled");
+  const today = toDateKey(new Date());
+  const up = vids.filter(a=> a.date>=today && !["Completed","NoShow","No-Show"].includes(a.status)).sort((a,b)=> (a.date+a.startTime).localeCompare(b.date+b.startTime));
+  const past = vids.filter(a=> a.date<today || ["Completed","NoShow","No-Show"].includes(a.status)).sort((a,b)=> (b.date+b.startTime).localeCompare(a.date+a.startTime));
+  const month = today.slice(0,7);
+  main.innerHTML = `<div class="page ais-page">
+    <div class="ais-hero" style="background:linear-gradient(135deg,color-mix(in srgb,#7c3aed 12%,transparent),color-mix(in srgb,var(--green) 10%,transparent));"><div class="ais-hero-ico" style="background:#7c3aed;">${icon('camera',22)}</div><div><h2 style="margin:0;">Tele-Consult</h2>
+      <p style="margin:2px 0 0;color:var(--grey);font-size:13px;">Video consultations — private room per consult, link on WhatsApp, notes saved to the patient.</p></div></div>
+    <div class="ais-actions"><button class="btn btn-primary btn-sm" id="tlNew">+ Schedule video consult</button><button class="btn btn-outline btn-sm" id="tlNow">${icon('camera',14)} Start instant consult</button></div>
+    <div class="ais-kpis"><div class="ais-kpi"><b>${up.filter(a=>a.date===today).length}</b><span>Today</span></div><div class="ais-kpi"><b>${up.length}</b><span>Upcoming</span></div><div class="ais-kpi" style="--k:#166534;"><b>${past.filter(a=>a.date.startsWith(month) && a.status==="Completed").length}</b><span>Completed this month</span></div><div class="ais-kpi" style="--k:#92400e;"><b>${past.filter(a=>a.status==="Completed" && !a.consultNotes).length}</b><span>Completed without notes</span></div></div>
+    <div class="hb-tabs">${tabs.map(t=>`<button type="button" class="hb-tab ${t===teleTab?'on':''}" data-tltab="${t}">${t}</button>`).join("")}</div>
+    <div id="tlBody"></div>
+    <p style="font-size:11.5px;color:var(--grey);margin-top:10px;">Calls use Jitsi Meet (free, encrypted, nothing to install). The first time you start a room, Jitsi may ask the doctor to sign in with Google to open it — patients just join.</p></div>`;
+  main.querySelectorAll("[data-tltab]").forEach(b=> b.onclick = ()=>{ teleTab = b.dataset.tltab; renderTele(); });
+  const list = teleTab==="Upcoming" ? up : past.slice(0, 200);
+  document.getElementById("tlBody").innerHTML = list.map(a=>{ const p = pMap[a.patientId]||{}; return `<div class="ais-card" style="margin-bottom:8px;"><div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center;">
+      <div><b>${escapeHtml(a.patientName||p.name||"")}</b> <small style="color:var(--grey);">${escapeHtml(p.mobile||"")}</small><br><small>${teleWhen(a)}${a.doctor? " · Dr. "+escapeHtml(a.doctor.replace(/^Dr\.?\s*/i,"")):""} · ${escapeHtml(a.treatmentType||"Video consult")}</small>
+        ${a.consultNotes? `<div style="font-size:12px;margin-top:4px;color:var(--charcoal-2);">📝 ${escapeHtml(a.consultNotes.slice(0,140))}${a.consultNotes.length>140?"…":""}</div>`:""}</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">${teleTab==="Upcoming"? `<button class="btn btn-primary btn-sm" data-tlstart="${a.id}">${icon('camera',14)} Start call</button><button class="btn btn-outline btn-sm" data-tlsend="${a.id}">Send link</button>`:""}
+        <button class="btn btn-outline btn-sm" data-tlnotes="${a.id}">${a.consultNotes? "Edit notes" : "Consult notes"}</button><button class="btn btn-outline btn-sm" data-tlpt="${a.patientId}">Profile</button><button class="btn btn-outline btn-sm" data-tledit="${a.id}">Edit</button></div></div></div>`; }).join("") || `<div class="empty-card">${teleTab==="Upcoming"? "No video consults scheduled. Tick <b>Video consult</b> on any appointment, or use the buttons above." : "No past video consults yet."}</div>`;
+  const byId = (id)=> vids.find(a=>a.id===id);
+  main.querySelectorAll("[data-tlstart]").forEach(b=> b.onclick = async ()=>{ const a = byId(b.dataset.tlstart); if(!a.meetLink){ a.meetLink = teleNewRoom(); } if(a.status==="Scheduled"||a.status==="Confirmed"){ a.status = "InChair"; } a.updatedAt = nowIso(); await dbPut("appointments", a); window.open(a.meetLink, "_blank", "noopener"); logActivity("Video consult started with "+a.patientName, {patientId: a.patientId}); renderTele(); });
+  main.querySelectorAll("[data-tlsend]").forEach(b=> b.onclick = ()=> teleSendLink(byId(b.dataset.tlsend), pMap[byId(b.dataset.tlsend).patientId]));
+  main.querySelectorAll("[data-tlnotes]").forEach(b=> b.onclick = ()=> openTeleNotes(byId(b.dataset.tlnotes)));
+  main.querySelectorAll("[data-tlpt]").forEach(b=> b.onclick = ()=> openPatientProfile(b.dataset.tlpt));
+  main.querySelectorAll("[data-tledit]").forEach(b=> b.onclick = ()=> openAppointmentForm(b.dataset.tledit));
+  document.getElementById("tlNew").onclick = ()=> openAppointmentForm(null, { videoConsult:true, treatmentType:"Video Consultation", durationMinutes:15, chair:"Online" });
+  document.getElementById("tlNow").onclick = ()=>{
+    openSheet(`<button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button><h2>Start instant video consult</h2><div id="tlPt"></div>
+      <p style="font-size:12.5px;color:var(--grey);">Creates today's appointment, opens the call in a new tab, and lets you WhatsApp the link to the patient.</p>`);
+    sheetPatientPicker("tlPt", async (p)=>{
+      const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived);
+      const now = new Date(); const hh = String(now.getHours()).padStart(2,"0"), mm = String(Math.floor(now.getMinutes()/5)*5).padStart(2,"0");
+      const a = { id: uid("appt"), patientId: p.id, patientName: p.name, clinicId: selectedClinicId!=="ALL"? selectedClinicId : getDefaultClinicId(clinics), doctor: p.treatingDoctor||"", date: toDateKey(now), startTime: hh+":"+mm, durationMinutes:15, treatmentType:"Video Consultation", chair:"Online", notes:"", status:"InChair", videoConsult:true, meetLink: teleNewRoom(), createdAt: nowIso() };
+      await dbPut("appointments", a);
+      logActivity("Instant video consult with "+p.name, {patientId: p.id});
+      window.open(a.meetLink, "_blank", "noopener");
+      closeSheet(); teleSendLink(a, p);
+      if(currentPage==="tele") setTimeout(renderTele, 400);
+    }, "Choose patient");
+  };
+}
+function openTeleNotes(a){
+  if(!a) return;
+  openSheet(`<button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>Consult notes — ${escapeHtml(a.patientName||"")}</h2><p style="margin:-4px 0 10px;color:var(--grey);font-size:12.5px;">${teleWhen(a)}</p>
+    <div class="field"><label>Chief complaint</label><input id="tnCc" value="${escapeAttr(a.consultComplaint||"")}"></div>
+    <div class="field"><label>Findings / impression (what you saw on camera, photos, X-rays shared)</label><textarea id="tnNotes" rows="4">${escapeHtml(a.consultNotes||"")}</textarea></div>
+    <div class="field"><label>Advice &amp; next step</label><select id="tnNext">${["","Visit clinic for examination","Visit clinic for X-ray","Medication prescribed — review in 3 days","Home care advice only","Emergency — come today","Follow-up video consult"].map(x=>`<option ${x===(a.consultNext||"")?'selected':''}>${x}</option>`).join("")}</select></div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:8px 0;"><input type="checkbox" id="tnDone" ${a.status==="Completed"||a.status==="InChair"||a.status==="Scheduled"||a.status==="Confirmed"?'checked':''}> Mark consult as completed</label>
+    <button class="btn btn-primary btn-block" id="tnSave">Save notes</button>
+    <button class="btn btn-outline btn-block" id="tnRx" style="margin-top:8px;">Save &amp; write prescription</button>
+    <button class="btn btn-outline btn-block" id="tnBook" style="margin-top:8px;">Save &amp; book clinic visit</button>`);
+  const save = async ()=>{
+    const cc = document.getElementById("tnCc").value.trim(), notes = document.getElementById("tnNotes").value.trim(), next = document.getElementById("tnNext").value;
+    const first = !a.consultNotes;
+    Object.assign(a, { consultComplaint: cc, consultNotes: notes, consultNext: next, updatedAt: nowIso() });
+    if(document.getElementById("tnDone").checked) a.status = "Completed";
+    await dbPut("appointments", a);
+    if(first && (notes || cc)) await dbAdd("patientNotes", { id: uid("note"), patientId: a.patientId, text: `Video consult (${teleWhen(a)})${cc? "\nComplaint: "+cc:""}${notes? "\nFindings: "+notes:""}${next? "\nAdvice: "+next:""}`, date: nowIso(), createdAt: nowIso(), type:"Tele-consult" }).catch(()=>{});
+    logActivity("Video consult notes saved for "+a.patientName, {patientId: a.patientId});
+  };
+  document.getElementById("tnSave").onclick = async ()=>{ await save(); showSuccessTick("Notes saved", a.patientName); closeSheet(); if(currentPage==="tele") renderTele(); };
+  document.getElementById("tnRx").onclick = async ()=>{ await save(); closeSheet(); openPatientProfile(a.patientId); showToast("Open the Prescription tab to write the prescription"); };
+  document.getElementById("tnBook").onclick = async ()=>{ await save(); closeSheet(); const t = new Date(); t.setDate(t.getDate()+1); openAppointmentForm(null, { patientId: a.patientId, patientName: a.patientName, doctor: a.doctor||"", date: toDateKey(t), treatmentType: "Follow-up after video consult" }); };
+}
+
+// =====================================================================
+// DENTAL IMAGING (sidebar → Imaging). Interactive dental arch for a patient
+// — click a tooth to see its chart status, planned / done treatments, claims
+// and every X-ray tagged to it — plus a diagnostic X-ray viewer: zoom, pan,
+// brightness, contrast, invert, calibrated length & angle measurement, and
+// side-by-side comparison of two X-rays.
+// =====================================================================
+let imgPatient = null, imgTooth = null, imgPrimary = false;
+async function renderImaging(){
+  const main = document.getElementById("main");
+  main.innerHTML = `<div class="page ais-page">
+    <div class="ais-hero" style="background:linear-gradient(135deg,color-mix(in srgb,#0f766e 14%,transparent),color-mix(in srgb,var(--green) 10%,transparent));"><div class="ais-hero-ico" style="background:#0f766e;">${icon('tooth',22)}</div><div><h2 style="margin:0;">Dental Imaging</h2>
+      <p style="margin:2px 0 0;color:var(--grey);font-size:13px;">Interactive arch, tooth history and an X-ray viewer with measurements and comparison.</p></div></div>
+    <div id="imgPt"></div><div id="imgBody"></div></div>`;
+  aisPatientPicker("imgPt", (p)=>{ imgPatient = p; imgTooth = null; drawImagingFor(); }, "Choose patient");
+  if(imgPatient){ document.getElementById("imgPt").insertAdjacentHTML("afterbegin", ""); drawImagingFor(); }
+}
+async function drawImagingFor(){
+  const body = document.getElementById("imgBody"); if(!body || !imgPatient) return;
+  const p = imgPatient;
+  body.innerHTML = `<div class="ais-loading"><span class="ai-spin"></span> Loading ${escapeHtml(p.name)}…</div>`;
+  const [cond, xrays, plans, claims] = await Promise.all([computeToothConditionsUpto(p.id, null), dbGetAll("xrays"), dbGetAll("treatmentPlans"), dbGetAll("insuranceClaims")]);
+  const xr = xrays.filter(x=> x.patientId===p.id).sort((a,b)=> (b.date||"").localeCompare(a.date||""));
+  const items = []; plans.filter(x=>x.patientId===p.id).forEach(pl=> (pl.items||[]).forEach(it=> items.push(Object.assign({planDate: pl.date||pl.createdAt}, it))));
+  const toothNums = (s)=> String(s||"").split(/[^0-9]+/).filter(Boolean);
+  const perTooth = {};
+  const add = (t, k)=>{ (perTooth[t] = perTooth[t] || {x:0, tx:0})[k]++; };
+  xr.forEach(x=> toothNums(x.tooth).forEach(t=> add(t,"x")));
+  items.forEach(it=> toothNums(it.tooth).forEach(t=> add(t,"tx")));
+  const age = patientAgeYears(p);
+  if(age!=null && age!=="" && Number(age)<6 && !imgPrimary && imgTooth==null) imgPrimary = true;
+  const upper = imgPrimary ? [55,54,53,52,51,61,62,63,64,65] : [18,17,16,15,14,13,12,11,21,22,23,24,25,26,27,28];
+  const lower = imgPrimary ? [85,84,83,82,81,71,72,73,74,75] : [48,47,46,45,44,43,42,41,31,32,33,34,35,36,37,38];
+  const arch = (teeth, isUpper)=>{
+    const n = teeth.length, W = 560, H = 170, cx = W/2, rx = W/2-30, ry = H-40;
+    return teeth.map((t, i)=>{
+      const ang = Math.PI * (1 - (i+0.5)/n);
+      const x = cx + rx*Math.cos(ang), y = isUpper ? (H-10) - ry*Math.sin(ang) : 10 + ry*Math.sin(ang);
+      const c = cond[t] || cond[String(t)] || "Sound";
+      const colorKey = TOOTH_CONDITION_COLOR[c] || "sound";
+      const pt = perTooth[t] || {};
+      return `<button type="button" class="img-tooth ${String(imgTooth)===String(t)?'on':''}" data-imgtooth="${t}" title="Tooth ${t} — ${escapeAttr(c)}" style="left:${x}px;top:${y}px;">
+        <span class="img-tooth-svg">${toothSvg(t, colorKey)}</span><b>${t}</b>${pt.x? `<i class="img-dot x" title="${pt.x} X-ray(s)"></i>`:""}${pt.tx? `<i class="img-dot t" title="${pt.tx} treatment(s)"></i>`:""}</button>`;
+    }).join("");
+  };
+  body.innerHTML = `
+    <div class="ais-card"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;"><div class="ais-card-title" style="margin:0;">${escapeHtml(p.name)}${age!=null && age!==""? " · "+age+" yrs":""}</div>
+      <div style="display:flex;gap:6px;"><button class="btn btn-outline btn-sm" id="imgSwap">${imgPrimary? "Show permanent teeth" : "Show milk teeth"}</button><button class="btn btn-outline btn-sm" id="imgProfile">Profile</button></div></div>
+      <div class="img-arch-wrap"><div class="img-arch upper">${arch(upper, true)}</div><div class="img-arch-mid">R &nbsp;·&nbsp; click a tooth &nbsp;·&nbsp; L</div><div class="img-arch lower">${arch(lower, false)}</div></div>
+      <div class="img-legend"><span><i class="img-dot x"></i> has X-rays</span><span><i class="img-dot t"></i> has treatments</span><span>Colours follow the patient's dental chart</span></div></div>
+    <div id="imgTooth"></div>
+    <div class="ais-card"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;"><div class="ais-card-title" style="margin:0;">All X-rays (${xr.length})</div>
+      ${xr.length>1? `<button class="btn btn-outline btn-sm" id="imgCmp">Compare two X-rays</button>`:""}</div>
+      ${xr.length? `<div class="file-grid" style="margin-top:8px;">${xr.map(x=>`<div class="file-thumb" data-imgx="${x.id}"><img src="${x.imageData}" alt=""><div class="file-thumb-label">${escapeHtml(x.category||"X-ray")}${x.tooth? " · "+escapeHtml(x.tooth):""} · ${new Date(x.date).toLocaleDateString(undefined,{day:"numeric",month:"short",year:"2-digit"})}</div></div>`).join("")}</div>` : `<div class="ais-empty">No X-rays for this patient yet — add them in the patient's Files tab (or send them from the RVG app).</div>`}</div>`;
+  const fit = ()=>{ body.querySelectorAll(".img-arch").forEach(a=>{ const w = a.parentElement.clientWidth; a.style.transform = `scale(${Math.min(1, w/560)})`; a.style.height = (170*Math.min(1, w/560))+"px"; }); };
+  fit(); window.addEventListener("resize", fit, {once:true});
+  body.querySelectorAll("[data-imgtooth]").forEach(b=> b.onclick = ()=>{ imgTooth = b.dataset.imgtooth; body.querySelectorAll(".img-tooth").forEach(x=> x.classList.toggle("on", x===b)); drawToothPanel(); });
+  body.querySelectorAll("[data-imgx]").forEach(el=> el.onclick = ()=> openXrayViewer([xr.find(x=>x.id===el.dataset.imgx)], p));
+  document.getElementById("imgSwap").onclick = ()=>{ imgPrimary = !imgPrimary; imgTooth = null; drawImagingFor(); };
+  document.getElementById("imgProfile").onclick = ()=> openPatientProfile(p.id);
+  const cmp = document.getElementById("imgCmp"); if(cmp) cmp.onclick = ()=> pickTwoXrays(xr, p);
+  const drawToothPanel = ()=>{
+    const t = String(imgTooth); const box = document.getElementById("imgTooth"); if(!box) return;
+    const c = cond[t] || "Sound";
+    const tx = items.filter(it=> toothNums(it.tooth).includes(t));
+    const tx2 = xr.filter(x=> toothNums(x.tooth).includes(t));
+    const cl = claims.filter(x=> x.patientId===p.id && toothNums(x.tooth).includes(t));
+    box.innerHTML = `<div class="ais-card"><div class="ais-card-title">Tooth ${escapeHtml(t)} — ${escapeHtml(c)}</div>
+      <div class="field-row" style="align-items:flex-start;"><div class="field"><label>Treatments</label>${tx.length? tx.map(it=>`<div class="ais-row"><span>${escapeHtml(it.treatment||"")}<br><small>${escapeHtml(it.status||"Planned")}${it.planDate? " · "+new Date(it.planDate).toLocaleDateString():""}${it.insuranceStatus? " · Insurance: "+escapeHtml(it.insuranceStatus):""}</small></span></div>`).join("") : `<small style="color:var(--grey);">None recorded</small>`}
+        ${cl.length? `<label style="margin-top:8px;">Insurance claims</label>${cl.map(x=>`<div class="ais-row"><span>${escapeHtml(x.treatment||"")}</span>${insBadge(x.status)}</div>`).join("")}`:""}</div>
+      <div class="field"><label>X-rays of this tooth (${tx2.length})</label>${tx2.length? `<div class="file-grid">${tx2.map(x=>`<div class="file-thumb" data-imgtx="${x.id}"><img src="${x.imageData}" alt=""><div class="file-thumb-label">${escapeHtml(x.category||"")} · ${new Date(x.date).toLocaleDateString()}</div></div>`).join("")}</div>${tx2.length>1? `<button class="btn btn-outline btn-sm" id="imgToothCmp" style="margin-top:6px;">Compare first &amp; latest</button>`:""}` : `<small style="color:var(--grey);">No X-rays tagged with tooth ${escapeHtml(t)}.</small>`}</div></div></div>`;
+    box.querySelectorAll("[data-imgtx]").forEach(el=> el.onclick = ()=> openXrayViewer([tx2.find(x=>x.id===el.dataset.imgtx)], p));
+    const tc = document.getElementById("imgToothCmp"); if(tc) tc.onclick = ()=> openXrayViewer([tx2[tx2.length-1], tx2[0]], p);
+    box.scrollIntoView({block:"nearest", behavior:"smooth"});
+  };
+  if(imgTooth) drawToothPanel();
+}
+function pickTwoXrays(xr, p){
+  openSheet(`<button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button><h2>Compare X-rays</h2><p style="margin:-4px 0 8px;font-size:12.5px;color:var(--grey);">Tick two X-rays (e.g. before and after treatment).</p>
+    <div class="file-grid">${xr.map(x=>`<label class="file-thumb" style="cursor:pointer;"><img src="${x.imageData}" alt=""><div class="file-thumb-label"><input type="checkbox" value="${x.id}"> ${escapeHtml(x.category||"")}${x.tooth? " · "+escapeHtml(x.tooth):""} · ${new Date(x.date).toLocaleDateString()}</div></label>`).join("")}</div>
+    <button class="btn btn-primary btn-block" id="cmpGo" style="margin-top:10px;">Compare</button>`);
+  document.getElementById("cmpGo").onclick = ()=>{ const uniq = [...document.querySelectorAll("#sheetContent input[type=checkbox]:checked")].map(x=>x.value); if(uniq.length!==2){ showToast("Tick exactly two X-rays"); return; } closeSheet(); openXrayViewer(uniq.map(id=> xr.find(x=>x.id===id)).sort((a,b)=> (a.date||"").localeCompare(b.date||"")), p); };
+}
+async function openXrayViewer(list, patient){
+  list = (list||[]).filter(Boolean); if(!list.length) return;
+  const st = (await dbGetAll("settings"))[0] || {};
+  let pxPerMm = Number((st.imaging||{}).pxPerMm) || 0;
+  const ov = document.createElement("div"); ov.className = "xv-overlay";
+  ov.innerHTML = `<div class="xv-top"><b>${escapeHtml(patient? patient.name : "X-ray")}</b>
+      <div class="xv-tools">
+        <label>Brightness <input type="range" id="xvB" min="40" max="200" value="100"></label>
+        <label>Contrast <input type="range" id="xvC" min="40" max="250" value="100"></label>
+        <button class="xv-btn" id="xvInv">Invert</button><button class="xv-btn" id="xvGamma">Enhance</button>
+        <button class="xv-btn" data-mode="pan" title="Drag to move, wheel to zoom">Move</button><button class="xv-btn" data-mode="len">Measure length</button><button class="xv-btn" data-mode="ang">Measure angle</button><button class="xv-btn" data-mode="cal">Calibrate</button>
+        <button class="xv-btn" id="xvClr">Clear</button><button class="xv-btn" id="xvReset">Reset</button>${list.length===1? `<button class="xv-btn" id="xvAnn">Annotate</button>`:""}<button class="xv-btn" id="xvClose">Close ✕</button></div></div>
+    <div class="xv-panes">${list.map((x,i)=>`<div class="xv-pane" data-i="${i}"><canvas></canvas><div class="xv-cap">${escapeHtml(x.category||"X-ray")}${x.tooth? " · Tooth "+escapeHtml(x.tooth):""} · ${new Date(x.date).toLocaleDateString()}</div></div>`).join("")}</div>
+    <div class="xv-hint" id="xvHint">Wheel / pinch to zoom · drag to move${pxPerMm? "" : " · Calibrate once (draw over something of known length) to get measurements in mm"}</div>`;
+  document.body.appendChild(ov);
+  document.body.style.overflow = "hidden";
+  let mode = "pan", invert = false, enhance = false;
+  const panes = [...ov.querySelectorAll(".xv-pane")].map((el, i)=>({ el, cv: el.querySelector("canvas"), img: new Image(), z:1, ox:0, oy:0, marks:[], pts:[] }));
+  const filt = ()=> `brightness(${ov.querySelector("#xvB").value}%) contrast(${ov.querySelector("#xvC").value}%)${invert? " invert(1)":""}${enhance? " saturate(0) contrast(1.15)":""}`;
+  const fmtLen = (px)=> pxPerMm ? (px/pxPerMm).toFixed(1)+" mm" : Math.round(px)+" px";
+  const draw = (P)=>{
+    const {cv, img} = P; const ctx = cv.getContext("2d");
+    const r = P.el.getBoundingClientRect(); const dpr = window.devicePixelRatio||1;
+    cv.width = r.width*dpr; cv.height = r.height*dpr; cv.style.width = r.width+"px"; cv.style.height = r.height+"px";
+    ctx.setTransform(dpr,0,0,dpr,0,0); ctx.fillStyle = "#000"; ctx.fillRect(0,0,r.width,r.height);
+    if(!img.naturalWidth) return;
+    ctx.save(); ctx.translate(P.ox, P.oy); ctx.scale(P.z, P.z); ctx.filter = filt(); ctx.drawImage(img, 0, 0); ctx.filter = "none";
+    const lw = 2/P.z, fs = 14/P.z;
+    ctx.lineWidth = lw; ctx.font = `bold ${fs}px system-ui`;
+    const allMarks = P.marks.concat(P.pts.length? [{type: mode, pts: P.pts, live:true}] : []);
+    allMarks.forEach(m=>{
+      ctx.strokeStyle = m.type==="cal"? "#facc15" : "#22d3ee"; ctx.fillStyle = ctx.strokeStyle;
+      ctx.beginPath(); m.pts.forEach((q,i)=> i? ctx.lineTo(q.x,q.y) : ctx.moveTo(q.x,q.y)); ctx.stroke();
+      m.pts.forEach(q=>{ ctx.beginPath(); ctx.arc(q.x,q.y,3/P.z,0,7); ctx.fill(); });
+      let label = "";
+      if((m.type==="len"||m.type==="cal") && m.pts.length===2){ label = m.type==="cal"? (m.mm? m.mm+" mm (reference)" : "") : fmtLen(Math.hypot(m.pts[1].x-m.pts[0].x, m.pts[1].y-m.pts[0].y)); }
+      if(m.type==="ang" && m.pts.length===3){ const [a,b,c] = m.pts; const a1 = Math.atan2(a.y-b.y,a.x-b.x), a2 = Math.atan2(c.y-b.y,c.x-b.x); let deg = Math.abs((a1-a2)*180/Math.PI); if(deg>180) deg = 360-deg; label = deg.toFixed(1)+"°"; }
+      if(label){ const q = m.pts[m.pts.length-1]; ctx.strokeStyle = "#000"; ctx.lineWidth = 3/P.z; ctx.strokeText(label, q.x+6/P.z, q.y-6/P.z); ctx.fillText(label, q.x+6/P.z, q.y-6/P.z); ctx.lineWidth = lw; }
+    });
+    ctx.restore();
+  };
+  const fitPane = (P)=>{ const r = P.el.getBoundingClientRect(); if(!P.img.naturalWidth) return; P.z = Math.min(r.width/P.img.naturalWidth, r.height/P.img.naturalHeight)*0.95; P.ox = (r.width - P.img.naturalWidth*P.z)/2; P.oy = (r.height - P.img.naturalHeight*P.z)/2; };
+  const redrawAll = ()=> panes.forEach(draw);
+  panes.forEach((P, i)=>{
+    P.img.onload = ()=>{ fitPane(P); draw(P); }; P.img.src = list[i].imageData;
+    const toImg = (e)=>{ const r = P.cv.getBoundingClientRect(); return { x: (e.clientX - r.left - P.ox)/P.z, y: (e.clientY - r.top - P.oy)/P.z }; };
+    let drag = null;
+    P.cv.addEventListener("wheel", (e)=>{ e.preventDefault(); const r = P.cv.getBoundingClientRect(); const mx = e.clientX-r.left, my = e.clientY-r.top; const f = e.deltaY<0? 1.15 : 1/1.15; P.ox = mx - (mx-P.ox)*f; P.oy = my - (my-P.oy)*f; P.z *= f; draw(P); }, {passive:false});
+    P.cv.addEventListener("pointerdown", (e)=>{
+      if(mode==="pan"){ drag = {x:e.clientX, y:e.clientY, ox:P.ox, oy:P.oy}; P.cv.setPointerCapture(e.pointerId); return; }
+      const need = mode==="ang"? 3 : 2;
+      P.pts.push(toImg(e));
+      if(P.pts.length>=need){
+        const m = {type: mode, pts: P.pts.slice(0, need)}; P.pts = [];
+        if(mode==="cal"){
+          const px = Math.hypot(m.pts[1].x-m.pts[0].x, m.pts[1].y-m.pts[0].y);
+          const mm = parseFloat(prompt("Real length of the line you drew, in mm (e.g. 25 for a 25 mm file, or the sensor width):", "25")||"");
+          if(mm>0){ pxPerMm = px/mm; m.mm = mm; P.marks = P.marks.filter(x=>x.type!=="cal"); P.marks.push(m);
+            dbGetAll("settings").then(all=>{ const s = all[0]; if(s){ s.imaging = Object.assign({}, s.imaging||{}, {pxPerMm, calibratedAt: nowIso()}); return dbPut("settings", s); } }).catch(()=>{});
+            ov.querySelector("#xvHint").textContent = "Calibrated: "+pxPerMm.toFixed(2)+" px per mm — saved for future X-rays from the same sensor."; }
+        } else P.marks.push(m);
+      }
+      redrawAll();
+    });
+    P.cv.addEventListener("pointermove", (e)=>{ if(drag){ P.ox = drag.ox + e.clientX - drag.x; P.oy = drag.oy + e.clientY - drag.y; draw(P); } });
+    P.cv.addEventListener("pointerup", ()=>{ drag = null; });
+  });
+  const setMode = (m)=>{ mode = m; panes.forEach(P=> P.pts = []); ov.querySelectorAll("[data-mode]").forEach(b=> b.classList.toggle("on", b.dataset.mode===m)); ov.querySelector("#xvHint").textContent = {pan:"Wheel to zoom · drag to move", len:"Click two points to measure"+(pxPerMm? "" : " (calibrate first for mm)"), ang:"Click three points — the middle one is the vertex", cal:"Draw a line over something of known length, then enter its length in mm"}[m]; redrawAll(); };
+  ov.querySelectorAll("[data-mode]").forEach(b=> b.onclick = ()=> setMode(b.dataset.mode)); setMode("pan");
+  ov.querySelector("#xvB").oninput = redrawAll; ov.querySelector("#xvC").oninput = redrawAll;
+  ov.querySelector("#xvInv").onclick = (e)=>{ invert = !invert; e.target.classList.toggle("on", invert); redrawAll(); };
+  ov.querySelector("#xvGamma").onclick = (e)=>{ enhance = !enhance; e.target.classList.toggle("on", enhance); redrawAll(); };
+  ov.querySelector("#xvClr").onclick = ()=>{ panes.forEach(P=>{ P.marks = P.marks.filter(m=>m.type==="cal"); P.pts = []; }); redrawAll(); };
+  ov.querySelector("#xvReset").onclick = ()=>{ ov.querySelector("#xvB").value = 100; ov.querySelector("#xvC").value = 100; invert = enhance = false; ov.querySelectorAll("#xvInv,#xvGamma").forEach(b=>b.classList.remove("on")); panes.forEach(P=>{ fitPane(P); P.marks = []; }); redrawAll(); };
+  const close = ()=>{ ov.remove(); document.body.style.overflow = ""; window.removeEventListener("resize", onRs); document.removeEventListener("keydown", onKey); };
+  const onRs = ()=> panes.forEach(P=>{ fitPane(P); draw(P); }); window.addEventListener("resize", onRs);
+  const onKey = (e)=>{ if(e.key==="Escape") close(); }; document.addEventListener("keydown", onKey);
+  ov.querySelector("#xvClose").onclick = close;
+  const ann = ov.querySelector("#xvAnn"); if(ann) ann.onclick = ()=>{ close(); if(typeof openXrayAnnotationTool==="function") openXrayAnnotationTool(list[0].id, patient, null); };
 }
 
 function aiBtnHtml(id, label, extraStyle){
@@ -28872,7 +29462,7 @@ async function renderFilesTab(body, patientId, patient){
       </div>
     `).join("")}</div>` : `<div class="empty-card" style="margin-bottom:16px;"><b>No signed consents yet</b>Use the "Consent Forms" button at the top of this patient's profile to collect one.</div>`}
 
-    <div class="section-title">X-Rays</div>
+    <div class="section-title" style="display:flex;justify-content:space-between;align-items:center;">X-Rays ${xrays.length? `<button class="btn btn-outline btn-sm" id="btnOpenImaging" style="text-transform:none;letter-spacing:0;">${icon('tooth',14)} Arch view &amp; X-ray viewer</button>`:""}</div>
     <div class="field-row">
       <div class="field"><label>Category</label><select id="xrayCategorySelect">${XRAY_CATEGORIES.map(c=>`<option value="${c}">${c}</option>`).join("")}</select></div>
       <div class="field"><label>Tooth (optional)</label><input id="xrayToothInput" placeholder="e.g. 36"></div>
@@ -28904,6 +29494,8 @@ async function renderFilesTab(body, patientId, patient){
       </div>
     `).join("")}</div>` : `<div class="empty-card"><b>No documents uploaded yet</b></div>`}
   `;
+  const btnImg = document.getElementById("btnOpenImaging");
+  if(btnImg) btnImg.onclick = ()=>{ imgPatient = patient; imgTooth = null; closeSheet(); goTo("imaging"); };
   // RVG Imaging link panel (X-rays / photos sent with "Export to PMS")
   try{ if(window.HTD_RVG) window.HTD_RVG.renderPanel(body, patientId, patient); }catch(_){ }
   body.querySelectorAll("[data-consentfile]").forEach(el=>{
@@ -33115,6 +33707,9 @@ async function renderMore(){
   ` : "";
   const businessRows = `
         <div class="list-row" id="rowCrm"><span class="row-ico">${icon('ticket',18)}</span><span class="txt">Loyalty &amp; CRM</span><span class="meta">Points, referrals, campaigns</span><span class="chev">${icon('chevron',16)}</span></div>
+        <div class="list-row" id="rowInsurance"><span class="row-ico">${icon('shield',18)}</span><span class="txt">Insurance &amp; Claims</span><span class="meta">Claims, insurers, claim packs</span><span class="chev">${icon('chevron',16)}</span></div>
+        <div class="list-row" id="rowTele"><span class="row-ico">${icon('camera',18)}</span><span class="txt">Tele-Consult</span><span class="meta">Video consultations</span><span class="chev">${icon('chevron',16)}</span></div>
+        <div class="list-row" id="rowImaging"><span class="row-ico">${icon('tooth',18)}</span><span class="txt">Dental Imaging</span><span class="meta">Arch view, X-ray viewer &amp; compare</span><span class="chev">${icon('chevron',16)}</span></div>
         <div class="list-row" id="rowSteril"><span class="row-ico">${icon('shield',18)}</span><span class="txt">Sterilization</span><span class="meta">Autoclave cycles, sets, traceability</span><span class="chev">${icon('chevron',16)}</span></div>
         <div class="list-row" id="rowAiSkills"><span class="row-ico">${icon('sparkle',18)}</span><span class="txt">AI Skills</span><span class="meta">14 AI assistants for your clinic</span><span class="chev">${icon('chevron',16)}</span></div>
         ${canAccessModule("financial")? `<div class="list-row" id="rowFinancial"><span class="row-ico">${icon('wallet',18)}</span><span class="txt">Financial</span><span class="meta">Income, expenses, budgets</span><span class="chev">${icon('chevron',16)}</span></div>` : ""}
@@ -33143,6 +33738,9 @@ async function renderMore(){
   wire("rowAiSkills", ()=>{ aisOpenKey = null; goTo("aiskills"); });
   wire("rowCrm", ()=> goTo("crm"));
   wire("rowSteril", ()=> goTo("steril"));
+  wire("rowInsurance", ()=> goTo("insurance"));
+  wire("rowTele", ()=> goTo("tele"));
+  wire("rowImaging", ()=> goTo("imaging"));
   wire("rowAudit", ()=> goTo("audit"));
   wire("rowClinics", openClinicsSheet);
   wire("rowDoctors", openDoctorsSheet);

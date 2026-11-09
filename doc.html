@@ -56,6 +56,7 @@
       const snap = await getDoc(doc(db, "publicReceipts", token));
       const d = snap.exists() ? snap.data() : null;
       if(!d || d.docType!=="html" || !d.html){ showMsg("We couldn't find this document. Please contact the clinic."); }
+      else if(d.expiresAt && new Date(d.expiresAt) < new Date()){ showMsg("This link has expired. Please ask Healing Touch Dental to send a new one."); }
       else render(d);
     }catch(err){
       console.error(err);
