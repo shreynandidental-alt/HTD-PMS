@@ -16,6 +16,8 @@
 //      without removing the existing "shows as a reminder 7 days before"
 //      behavior on Home, which still works exactly as it did.
 //
+//   5. Marketing automations set up in Loyalty & CRM -> Automations.
+//
 // Everything else in the PMS's WhatsApp features stays exactly as it was
 // - manual, staff-triggered sends. This file only adds these three
 // specific automated ones.
@@ -352,6 +354,69 @@ export default async function handler(req, res) {
         await db.collection("biannualFollowUpActions").add({ patientId: patient.id, visitDate: visitDateKey, action: "Reminded", source: "auto-cron", createdAt: new Date().toISOString(), ...TS() });
         summary.sixMonthFollowUps.sent++;
       } else { summary.sixMonthFollowUps.failed++; summary.errors.push("6-month follow-up for " + (patient.name || patient.id) + ": " + result.error); }
+    }
+
+    // ---------- 5. Marketing automations (PMS -> Loyalty & CRM -> Automations) ----------
+    // Each rule fires on an exact day (e.g. 365 days after the last visit),
+    // so a patient is messaged once per visit; the automationLog record is
+    // created first with a fixed id, so a second run the same day can never
+    // send twice. Patients marked "No marketing messages" are skipped.
+    try {
+      const rules = (await getAllDocs(db, "crmAutomations")).filter(r => r.enabled && r.templateName && Number(r.days) > 0);
+      if (rules.length) {
+        summary.automations = { sent: 0, skipped: 0, failed: 0 };
+        const keyOf = (t) => dateKeyIST(new Date(t));
+        const daysBetween = (a, b) => Math.round((new Date(b + "T00:00:00Z") - new Date(a + "T00:00:00Z")) / 86400000);
+        const byId = {}; patients.forEach(p => { byId[p.id] = p; });
+        for (const rule of rules) {
+          const N = Math.round(Number(rule.days));
+          const targets = new Map();
+          if (rule.type === "recall") {
+            for (const p of patients) {
+              const lv = lastVisitByPatient[p.id];
+              if (!lv || hasFutureAppt.has(p.id)) continue;
+              const k = keyOf(lv);
+              if (daysBetween(k, todayKey) === N) targets.set(p.id, k);
+            }
+          } else if (rule.type === "post_visit" || rule.type === "no_show") {
+            const want = rule.type === "post_visit" ? ["Completed"] : ["NoShow", "No-Show"];
+            for (const a of appointments) {
+              if (!a.patientId || !a.date || !want.includes(a.status)) continue;
+              const k = String(a.date).slice(0, 10);
+              if (daysBetween(k, todayKey) !== N) continue;
+              if (rule.type === "no_show" && hasFutureAppt.has(a.patientId)) continue;
+              targets.set(a.patientId, k);
+            }
+          } else if (rule.type === "unconverted") {
+            for (const p of patients) {
+              const reg = p.registrationDate || p.createdAt;
+              if (!reg || lastVisitByPatient[p.id] || hasFutureAppt.has(p.id)) continue;
+              const k = keyOf(reg);
+              if (daysBetween(k, todayKey) === N) targets.set(p.id, k);
+            }
+          }
+          const cap = Math.max(1, Number(rule.maxPerDay) || 100);
+          let sentForRule = 0;
+          for (const [pid, ref] of targets) {
+            const p = byId[pid];
+            if (!p || p.status === "Archived") continue;
+            if (rule.clinicId && (p.preferredClinicId || "") !== rule.clinicId) continue;
+            if (p.marketingOptOut) { summary.automations.skipped++; continue; }
+            const phone = p.whatsappNumber || p.mobile;
+            if (!phone || sentForRule >= cap) { summary.automations.skipped++; continue; }
+            const logRef = db.collection("automationLog").doc(String(rule.id + "_" + pid + "_" + ref).replace(/[\/\s]/g, "-"));
+            try {
+              await logRef.create({ ruleId: rule.id, ruleName: rule.name || "", patientId: pid, patientName: p.name || "", ref, status: "sending", createdAt: new Date().toISOString(), ...TS() });
+            } catch (e) { summary.automations.skipped++; continue; }
+            const result = await sendWhatsAppTemplate({ phoneNumber: phone, templateName: rule.templateName, bodyValues: [v(p.name)].concat(rule.param2 ? [v(rule.param2)] : []) });
+            await logRef.update({ status: result.success ? "sent" : "failed", error: result.success ? null : String(result.error || ""), ...TS() }).catch(() => {});
+            if (result.success) { sentForRule++; summary.automations.sent++; }
+            else { summary.automations.failed++; summary.errors.push("Automation " + (rule.name || rule.id) + " for " + (p.name || pid) + ": " + result.error); }
+          }
+        }
+      }
+    } catch (err) {
+      summary.errors.push("Automations crashed: " + err.message);
     }
   } catch (err) {
     summary.errors.push("Birthdays/6-month follow-ups crashed: " + err.message);
