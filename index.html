@@ -25049,6 +25049,17 @@ async function aisLoadCore(){
   return {patients: patients.filter(p=>p.status!=="Archived"), appts, plans, payments, dues, refunds, visitsByPatient};
 }
 
+// Outstanding invoices, matching Home → Outstanding Balance: when the
+// counter has been reset, only invoices raised after the reset count
+// (older balances were cleared by the clinic and aren't real dues).
+let aisBillScope = "reset";
+async function aisOpenInvoices(scope){
+  const [invoices, st] = await Promise.all([dbGetAll("invoices"), dbGetAll("settings")]);
+  const resetAt = (st[0]||{}).outstandingResetAt || null;
+  const useReset = (scope||aisBillScope)==="reset" && resetAt;
+  return { resetAt, list: invoices.filter(i=> Number(i.balance)>0.5 && (!useReset || new Date(i.date) >= new Date(resetAt))) };
+}
+
 // ---------- individual skills ----------
 const AIS_RENDER = {};
 
@@ -25061,10 +25072,10 @@ AIS_RENDER.noshow = async (body)=>{
   ctx.appts.forEach(a=>{
     if(!a.patientId || !a.date || a.date>=today) return;
     const h = past[a.patientId] = past[a.patientId] || {total:0, noShow:0, cancel:0};
-    h.total++; if(a.status==="NoShow") h.noShow++; if(a.status==="Cancelled") h.cancel++;
+    h.total++; if(a.status==="NoShow" || a.status==="No-Show") h.noShow++; if(a.status==="Cancelled") h.cancel++;
   });
   const pById = {}; ctx.patients.forEach(p=> pById[p.id] = p);
-  const upcoming = ctx.appts.filter(a=> a.date>=today && a.date<=horizon && !["Cancelled","NoShow","Completed","Reserved","Rescheduled"].includes(a.status))
+  const upcoming = ctx.appts.filter(a=> a.date>=today && a.date<=horizon && !["Cancelled","NoShow","No-Show","Completed","Reserved","Rescheduled"].includes(a.status))
     .sort((a,b)=> (a.date+(a.startTime||"")).localeCompare(b.date+(b.startTime||"")));
   const rows = upcoming.map(a=>{
     const h = past[a.patientId] || {total:0, noShow:0, cancel:0};
@@ -25118,7 +25129,7 @@ AIS_RENDER.noshow = async (body)=>{
 AIS_RENDER.cashflow = async (body)=>{
   const ctx = await aisLoadCore();
   const cur = await finCurrency();
-  const invoices = await dbGetAll("invoices");
+  const { list: openInv } = await aisOpenInvoices("reset");
   const daily = {};
   const add = (d, v)=>{ const k = aisDateOnly(d); if(k) daily[k] = (daily[k]||0) + v; };
   ctx.payments.forEach(p=> add(p.date, Number(p.amount)||0));
@@ -25129,7 +25140,7 @@ AIS_RENDER.cashflow = async (body)=>{
   const last56 = hist.slice(-56);
   const dowAvg = [0,1,2,3,4,5,6].map(w=>{ const xs = last56.filter(h=>h.dow===w).map(h=>h.amount); return xs.length? xs.reduce((a,b)=>a+b,0)/xs.length : 0; });
   const prev30 = hist.slice(-30).reduce((a,h)=>a+h.amount,0), prior30 = hist.slice(-60,-30).reduce((a,h)=>a+h.amount,0);
-  const outstanding = invoices.filter(i=> Number(i.balance)>0).reduce((a,i)=>a+Number(i.balance),0);
+  const outstanding = openInv.reduce((a,i)=>a+Number(i.balance),0);
   const upcomingAppts = ctx.appts.filter(a=> a.date>=toDateKey(today) && !["Cancelled","NoShow","Reserved"].includes(a.status)).length;
   const proj = []; for(let i=0;i<30;i++){ const d = new Date(today); d.setDate(d.getDate()+i); proj.push({date: toDateKey(d), dow:d.getDay(), projected: Math.round(dowAvg[d.getDay()] + (outstanding*0.35)/30)}); }
   const total30 = proj.reduce((a,p)=>a+p.projected,0), avgDay = total30/30;
@@ -25347,12 +25358,12 @@ AIS_RENDER.lab = async (body)=>{
 
 // 7. Billing agent
 AIS_RENDER.billing = async (body)=>{
-  const [invoices, patients] = await Promise.all([dbGetAll("invoices"), dbGetAll("patients")]);
+  const [{list: openInv, resetAt}, patients] = await Promise.all([aisOpenInvoices(), dbGetAll("patients")]);
   const cur = await finCurrency();
   const pById = {}; patients.forEach(p=> pById[p.id] = p);
   const today = toDateKey(new Date());
   const byP = {};
-  invoices.filter(i=> Number(i.balance)>0.5).forEach(i=>{
+  openInv.forEach(i=>{
     const b = byP[i.patientId] = byP[i.patientId] || {p: pById[i.patientId], balance:0, oldest: i.date, invoices:[]};
     b.balance += Number(i.balance); b.invoices.push(i); if(i.date < b.oldest) b.oldest = i.date;
   });
@@ -25367,7 +25378,8 @@ AIS_RENDER.billing = async (body)=>{
       <div class="ais-kpi" style="--k:#b42318;"><b>${rows.filter(r=>r.days>=21).length}</b><span>21+ days overdue</span></div>
     </div>
     <div class="ais-card"><div class="ais-card-title">Outstanding by reminder stage</div>${aisBars(["Friendly reminder","WhatsApp + payment link","Staff call","Escalate to doctor","Recent — no action yet"].map(k=>({label:k, value:Math.round(stageTot[k]||0)})), {fmt:v=>finMoney(v,cur), color:"#b45309"})}</div>
-    <div class="ais-actions"><button class="ai-btn" id="aisBillAi">${icon('sparkle',15)} Get collection plan</button></div>
+    <div class="ais-actions"><button class="ai-btn" id="aisBillAi">${icon('sparkle',15)} Get collection plan</button>
+      ${resetAt? `<select id="aisBillScope" class="ais-select"><option value="reset" ${aisBillScope==="reset"?"selected":""}>Invoices since counter reset (${new Date(resetAt).toLocaleDateString(undefined,{day:"numeric",month:"short",year:"numeric"})})</option><option value="all" ${aisBillScope==="all"?"selected":""}>All invoices ever</option></select>` : ""}</div>
     ${aisInsightsBox("aisBillIns")}
     <div class="ais-table-wrap" style="max-height:460px;"><table class="ais-table"><thead><tr><th>Patient</th><th>Balance</th><th>Oldest bill</th><th>Stage</th><th></th></tr></thead><tbody>
       ${rows.map((r,i)=>`<tr><td><b>${escapeHtml(r.p.name)}</b><br><small>${r.invoices.length} invoice(s)</small></td><td><b>${finMoney(r.balance,cur)}</b></td><td>${r.days} days</td>
@@ -25375,6 +25387,8 @@ AIS_RENDER.billing = async (body)=>{
         <td style="white-space:nowrap;">${r.p.mobile? `<button class="btn btn-outline btn-sm" data-billrem="${i}">Remind</button>`:""} <button class="btn btn-outline btn-sm" data-billopen="${i}">Open</button></td></tr>`).join("") || `<tr><td colspan="5" class="ais-empty">No outstanding balances 🎉</td></tr>`}
     </tbody></table></div>
     <p style="font-size:11.5px;color:var(--grey);">Stages: 3 days friendly reminder · 7 days WhatsApp + payment link · 14 days staff call · 21+ days escalate to the doctor. Discounts and write-offs stay with the doctor/admin.</p>`;
+  const scopeSel = document.getElementById("aisBillScope");
+  if(scopeSel) scopeSel.onchange = ()=>{ aisBillScope = scopeSel.value; renderAiSkills(); };
   body.querySelectorAll("[data-billrem]").forEach(b=> b.onclick = ()=>{
     const r = rows[parseInt(b.dataset.billrem)];
     const soft = r.days<14;
@@ -25583,7 +25597,7 @@ AIS_RENDER.analyst = async (body)=>{
         const top = (o)=> Object.entries(o).sort((a,b)=>b[1].amount-a[1].amount).slice(0,8).map(([n,v])=>({name:n, amount:Math.round(v.amount), count:v.count}));
         return {month:k, treatmentDone:Math.round(m.treat), treatments:m.treatCount, invoiced:Math.round(m.invoiced), receipts:Math.round(m.receipts), paymentToBeMadeCollected:Math.round(m.dueColl), refunds:Math.round(m.refunds), totalCollection:Math.round(m.collection), notInvoiced:Math.round(m.unbilled), pharmacy:Math.round(m.pharmacy), newPatients:m.newPatients, byDoctor:top(m.byDoctor), topTreatments:top(m.byTreatment)}; }); };
       const appts = await dbGetAll("appointments");
-      const apptStats = {}; appts.forEach(a=>{ const k = (a.date||"").slice(0,7); if(!k || k < (y-1)+"-01") return; const s = apptStats[k] = apptStats[k] || {booked:0, completed:0, noShow:0, cancelled:0}; s.booked++; if(a.status==="Completed") s.completed++; if(a.status==="NoShow") s.noShow++; if(a.status==="Cancelled") s.cancelled++; });
+      const apptStats = {}; appts.forEach(a=>{ const k = (a.date||"").slice(0,7); if(!k || k < (y-1)+"-01") return; const s = apptStats[k] = apptStats[k] || {booked:0, completed:0, noShow:0, cancelled:0}; s.booked++; if(a.status==="Completed") s.completed++; if(a.status==="NoShow" || a.status==="No-Show") s.noShow++; if(a.status==="Cancelled") s.cancelled++; });
       const data = { today: toDateKey(new Date()), currency:"INR", thisYear: await pack(y), lastYear: (await pack(y-1)).map(m=>({month:m.month, treatmentDone:m.treatmentDone, totalCollection:m.totalCollection, invoiced:m.invoiced, newPatients:m.newPatients})), appointmentsByMonth: apptStats };
       const r = await aiRequest("clinic_analyst", { question: q, data });
       out.innerHTML = `<div class="ais-card"><div class="ais-answer">${escapeHtml(r.answer||"").replace(/\n/g,"<br>")}</div>
