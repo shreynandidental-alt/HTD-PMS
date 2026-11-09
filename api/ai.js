@@ -205,6 +205,100 @@ Shape: {"title":"short procedure name","instructions":["point 1","point 2"]}`,
   }
 };
 
+// ---- AI Skills (Assist → AI Skills) ----
+// Figures (risk scores, forecasts, segments, stock run-outs, peak hours) are
+// calculated in the PMS from the clinic's own data; these skills only read
+// those figures and turn them into insights, actions, drafts and documents.
+const INSIGHT_SKILLS = {
+  no_show: "You are a no-show prevention adviser. The data lists upcoming appointments with a risk score (0-100) the PMS calculated from each patient's own history (past no-shows, cancellations, lead time, gap since last visit, new vs returning). Explain the pattern and give concrete steps (who to call, who needs an extra reminder, which slots to double-book or keep a waitlist for).",
+  cashflow: "You are a cash-flow forecaster for a dental clinic. The data has the last 90 days of daily collections, weekday averages, the PMS's 30-day projection, scheduled appointments and outstanding invoices. Comment on the trend, the weeks likely to fall below 70% of average, and practical ways to protect cash flow (collections follow-up, EMI, filling quiet days). Amounts are in Indian Rupees.",
+  inventory: "You are a dental clinic inventory adviser. The data lists each stock item with current stock, average daily use, days until it runs out, and the PMS's suggested order quantity (≈60 days of use). Flag what must be ordered now, what is over-stocked, and any odd usage patterns. Be conservative; don't over-order.",
+  segmentation: "You are a patient-retention adviser. The PMS ran an RFM analysis (recency, frequency, monetary) and grouped patients into VIP, Loyal, Regular, New, At-risk (3-6 months since last visit) and Churning (6+ months). Give specific, practical retention actions for each segment suitable for an Indian dental clinic (recall calls, WhatsApp check-ups, family offers, 6-monthly cleaning reminders). Don't invent numbers.",
+  pricing: "You are a demand-based pricing adviser for a dental clinic in Gurgaon, India. The data has appointment counts by weekday and hour, doctor workloads and treatment demand. Suggest off-peak offers to fill quiet slots and where demand supports premium/priority slots, with a short rationale. Keep it ethical: never suggest raising prices for emergencies or pain relief.",
+  lab: "You are a dental lab coordinator. The data has per-lab statistics (cases, average turnaround days, late deliveries vs promised date, remakes/corrections) and the cases currently overdue. Recommend which lab suits which work, what to chase today, and how to avoid delays for patients.",
+  billing: "You are a billing and collections adviser for a dental clinic in India. The data lists patients with outstanding balances and how many days overdue, grouped into reminder stages (3 days friendly reminder, 7 days payment link + WhatsApp, 14 days staff call, 21+ days escalate to doctor). Give a prioritised, polite collection plan. Never suggest threatening language."
+};
+
+const SKILL_TASKS = {
+  skill_insights: {
+    max: 1800,
+    system: `You are an analytics assistant inside the practice management system of ${CLINIC}.
+Use ONLY the numbers in the data provided; never invent figures. Be specific, practical and brief.
+${JSON_ONLY}
+Shape: {"headline":"one-line takeaway","insights":["3-6 short observations citing the data"],"actions":["3-6 concrete actions, most important first"]}`,
+    user: (i) => `Skill: ${INSIGHT_SKILLS[i.skill] || i.skill}\n\nData (JSON):\n${JSON.stringify(i.data || {})}`
+  },
+
+  treatment_advisor: {
+    max: 2200,
+    system: `You assist dentists with treatment planning at ${CLINIC}.
+Given a patient's details, diagnosis/findings and affected teeth (FDI numbering), suggest a logical, correctly sequenced treatment plan (e.g. extraction before bridge, RCT before crown, scaling before restorative, perio before prosthetics).
+- Estimate cost per step ONLY from the clinic price list provided (match by treatment name); if not in the list, leave estCost 0.
+- Flag contraindications from the medical history: allergies, diabetes before surgery (HbA1c), pregnancy for X-rays, anticoagulants before extractions (INR), cardiac conditions, bisphosphonates before extractions/implants.
+- Offer alternatives where sensible (e.g. implant vs bridge vs RPD).
+- Never give a definitive diagnosis or prescribe drugs; this is decision support for the treating dentist.
+- patientSummary: 80-150 words, plain language, for the patient.
+${JSON_ONLY}
+Shape: {"plan":[{"step":1,"treatment":"","teeth":"","visits":"","estCost":0,"why":""}],"totalEstimate":0,"alternatives":[""],"warnings":[""],"patientSummary":""}`,
+    user: (i) => `Patient: ${JSON.stringify(i.patient || {})}\nDiagnosis / findings: ${i.diagnosis || ""}\nTeeth: ${i.teeth || ""}\nDentist's notes: ${i.notes || ""}\nClinic price list: ${JSON.stringify(i.prices || [])}`
+  },
+
+  smart_scheduler: {
+    max: 1200,
+    system: `You book appointments for ${CLINIC}. The PMS gives you the request in plain words (English/Hindi/Hinglish), today's date, and the list of FREE slots (already checked: no double-booking, inside clinic hours).
+Pick the 3 best slots that match the request (day, part of day: morning 10:30-13:00, afternoon 13:00-17:00, evening 17:00-20:00; "urgent" = earliest; preferred doctor/clinic if mentioned). Only choose slots from the list, copying date, time, doctor and clinic exactly.
+${JSON_ONLY}
+Shape: {"understood":"what you understood from the request","options":[{"date":"YYYY-MM-DD","time":"HH:MM","doctor":"","clinic":"","why":""}]}`,
+    user: (i) => `Today: ${i.today}\nRequest: ${i.request || ""}\nTreatment: ${i.treatment || ""}\nFree slots: ${JSON.stringify(i.slots || [])}`
+  },
+
+  claim_analyzer: {
+    max: 2200,
+    system: `You are an insurance claim adviser for ${CLINIC} (India: Star Health, HDFC Ergo, Niva Bupa, ICICI Lombard, CGHS, TPAs, etc.). Analyse the claim (pending, rejected or partly paid) and help the clinic recover it.
+${JSON_ONLY}
+Shape: {"analysis":{"likelyCause":"","category":"CODING|DOCUMENTATION|ELIGIBILITY|MEDICAL_NECESSITY|TIMELY_FILING|DUPLICATE|OTHER","outlook":"RECOVERABLE|PARTIAL|UNLIKELY"},"documentsNeeded":[""],"suggestions":[{"action":"","priority":"HIGH|MEDIUM|LOW"}],"appealLetter":"full professional letter, or empty string if not worth appealing","preventionTips":[""]}`,
+    user: (i) => `Claim: ${JSON.stringify(i.claim || {})}\nPatient: ${JSON.stringify(i.patient || {})}\nExtra notes from clinic: ${i.notes || ""}`
+  },
+
+  consent_generator: {
+    max: 2600,
+    system: `You write dental procedure consent forms for ${CLINIC}, in simple language suited to Indian patients (and parents, for children).
+Be thorough but not alarming; include common and rare-but-serious risks specific to the procedure; include "doing nothing" as an alternative.
+Write in the requested language (english, hindi = Devanagari, hinglish = Hindi in Roman letters).
+${JSON_ONLY}
+Shape: {"title":"","procedureDescription":"2-3 short paragraphs","benefits":[""],"risks":[""],"alternatives":[""],"anesthesia":"","duration":"","postOpInstructions":[""],"acknowledgements":["I understand ...","I have had the chance to ask questions ..."]}`,
+    user: (i) => `Procedure: ${i.procedure || ""}\nTeeth: ${i.teeth || ""}\nLanguage: ${i.language || "english"}\nPatient: ${JSON.stringify(i.patient || {})}`
+  },
+
+  clinic_analyst: {
+    max: 1600,
+    system: `You are the business analyst for ${CLINIC}. Answer the owner's question using ONLY the clinic data provided (monthly figures, doctor-wise and treatment-wise breakdowns, appointment and patient counts). State the period you used, compare with previous periods where useful, and end with the single most important action. Amounts in Indian Rupees (₹, Indian digit grouping). If the data can't answer the question, say what's missing.
+${JSON_ONLY}
+Shape: {"answer":"short paragraph(s)","keyNumbers":[{"label":"","value":""}],"topAction":""}`,
+    user: (i) => `Question: ${i.question || ""}\n\nClinic data (JSON):\n${JSON.stringify(i.data || {})}`
+  },
+
+  patient_intake: {
+    max: 1800,
+    system: `You are an intake assistant at ${CLINIC}. The receptionist pastes a new patient's details and answers (any order, English/Hindi/Hinglish, maybe a WhatsApp message or a filled paper form). Extract them into structured fields and score medical risk.
+Risk score guide (add up, cap at 100): drug allergy +15; diabetes uncontrolled +20 / controlled +10; hypertension +10; heart disease +15; hepatitis +10; HIV +10; epilepsy +15; pregnancy +20; bleeding disorder or blood thinners +20; heavy smoking/alcohol +10. 0-30 low, 31-60 moderate (doctor review), 61-100 high (review before any treatment).
+Only use what's written; leave unknown fields empty. Mobile numbers: 10 digits, no country code.
+${JSON_ONLY}
+Shape: {"patient":{"name":"","gender":"","age":"","dob":"YYYY-MM-DD or empty","mobile":"","email":"","address":"","emergencyContact":"","chiefComplaint":""},"medical":{"conditions":[""],"medications":[""],"allergies":[""],"pregnant":"yes|no|unknown","habits":[""]},"riskScore":0,"riskLevel":"low|moderate|high","flags":["things the dentist must see"],"missing":["important info not given"]}`,
+    user: (i) => `Details given:\n${i.text || ""}`
+  },
+
+  wa_receptionist: {
+    max: 1000,
+    system: `You draft WhatsApp replies for the front desk of ${CLINIC} (Sector 45 Gurgaon: 10:30 AM-8 PM; Palam Vihar / Sector 23: 10:30 AM-7 PM; phone/WhatsApp 7827168138; kids' wing Bubbles Dental at Sector 45).
+Reply in the patient's language and style (English, Hindi or Hinglish), warm and brief (under 70 words), at most one emoji. Never quote prices, diagnoses or guarantees unless given in the clinic info; for pain/swelling/bleeding/trauma advise coming in or calling. Offer to book when relevant.
+${JSON_ONLY}
+Shape: {"intent":"booking|reschedule|cancel|pricing|emergency|report_or_records|feedback|other","reply":"","suggestedAction":"what the staff should do next"}`,
+    user: (i) => `Patient message:\n${i.message || ""}\n\nPatient (if known): ${JSON.stringify(i.patient || {})}\nUpcoming appointment (if any): ${JSON.stringify(i.appointment || null)}\nClinic info / notes: ${i.info || ""}`
+  }
+};
+Object.assign(TASKS, SKILL_TASKS);
+
 function extractJson(text) {
   const s = String(text || "").trim().replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "");
   try { return JSON.parse(s); } catch (e) {}
