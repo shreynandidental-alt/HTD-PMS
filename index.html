@@ -594,6 +594,10 @@
   .xv-cap{position:absolute;left:8px;top:8px;background:rgba(0,0,0,.6);padding:3px 8px;border-radius:6px;font-size:11.5px;}
   .xv-hint{padding:6px 12px;font-size:12px;color:#a1a1aa;background:#18181b;}
   @media (max-width:700px){ .xv-panes{flex-direction:column;} }
+  .ld-pipe{display:grid;grid-template-columns:repeat(auto-fit,minmax(92px,1fr));gap:6px;}
+  .ld-stage{background:var(--off-white);border-radius:10px;padding:8px;text-align:center;border-top:3px solid #0891b2;}
+  .ld-stage.good{border-top-color:var(--green);} .ld-stage.bad{border-top-color:#dc2626;}
+  .ld-stage b{display:block;font-size:20px;} .ld-stage span{font-size:11px;color:var(--grey);}
   .str-setpick{display:flex;flex-wrap:wrap;gap:6px;max-height:190px;overflow:auto;padding:2px;}
   .str-chip{display:inline-flex;align-items:center;gap:5px;padding:6px 10px;border-radius:999px;border:1px solid var(--grey-light,#e2e5e7);background:var(--white);font-size:12.5px;cursor:pointer;}
   .str-chip small{color:var(--grey);}
@@ -9394,11 +9398,13 @@ let labCaseSearchQuery = "";
 let labBillsReportPage = 1;
 let labCaseDateFrom = "", labCaseDateTo = "";
 let labCasePage = 1;
-let labCasesActiveTab = "All Cases";
+let labCasesActiveTab = "Dashboard";
+let labDashRange = "90", labDashLab = "ALL";
 
 async function renderAssistLab(body){
   body.innerHTML = `
     <div class="filter-row" id="labCasesTabRow" style="flex-wrap:wrap;overflow-x:visible;margin-bottom:12px;">
+      <button class="filter-chip ${labCasesActiveTab==='Dashboard'?'active':''}" data-lctab="Dashboard">${icon('reports',13)} Dashboard</button>
       <button class="filter-chip ${labCasesActiveTab==='All Cases'?'active':''}" data-lctab="All Cases">All Cases</button>
       <button class="filter-chip ${labCasesActiveTab==='Prosthesis Ready'?'active':''}" data-lctab="Prosthesis Ready">Prosthesis Ready to Deliver</button>
       <button class="filter-chip ${labCasesActiveTab==='Aligner Cases'?'active':''}" data-lctab="Aligner Cases">Aligner Cases</button>
@@ -9409,13 +9415,126 @@ async function renderAssistLab(body){
     btn.onclick = ()=>{ labCasesActiveTab = btn.dataset.lctab; renderAssistLab(body); };
   });
   const tabBody = document.getElementById("labCasesTabBody");
-  if(labCasesActiveTab==="Prosthesis Ready") await renderProsthesisReadyTab(tabBody, body);
+  if(labCasesActiveTab==="Dashboard") await renderLabDashboard(tabBody, body);
+  else if(labCasesActiveTab==="Prosthesis Ready") await renderProsthesisReadyTab(tabBody, body);
   else if(labCasesActiveTab==="Aligner Cases") await renderAlignerLabCasesTab(tabBody, body);
   else await renderAllLabCasesList(tabBody, body);
 }
 
 let alignerLabCaseSearch = "";
 let alignerLabCaseLabFilter = "ALL";
+
+// ---- Lab Cases dashboard: what's at the lab, what's late, what's ready,
+// patient promises at risk, lab turnaround / on-time / remake performance.
+const LAB_BACK_STATUSES = ["Received","Ready","Trial Pending","Delivered to Patient"];
+function labDayKey(v){ if(!v) return ""; return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : toDateKey(new Date(v)); }
+function labDaysBetween(a, b){ return Math.round((fromDateKey(labDayKey(b)) - fromDateKey(labDayKey(a)))/86400000); }
+async function renderLabDashboard(body, outerBody){
+  const cur = await finCurrency();
+  const labsList = await dbGetAll("labs").catch(()=>[]);
+  let all = await dbGetAll("labCases");
+  if(selectedClinicId!=="ALL") all = all.filter(lc=> !lc.clinicId || lc.clinicId===selectedClinicId);
+  const labNames = [...new Set(all.map(lc=> lc.labName||"No lab set"))].sort();
+  if(labDashLab!=="ALL") all = all.filter(lc=> (lc.labName||"No lab set")===labDashLab);
+  const today = toDateKey(new Date());
+  const inDays = (n)=>{ const d = new Date(); d.setDate(d.getDate()+n); return toDateKey(d); };
+  const isBack = (lc)=> LAB_BACK_STATUSES.includes(lc.status) || !!lc.receivedDate && lc.status!=="Sent Back for Correction" && lc.status!=="Remake";
+  const delivered = (lc)=> lc.status==="Delivered to Patient";
+  const atLab = all.filter(lc=> !isBack(lc) && !delivered(lc));
+  const overdue = atLab.filter(lc=> lc.labPromisedDate && labDayKey(lc.labPromisedDate) < today).sort((a,b)=> labDayKey(a.labPromisedDate).localeCompare(labDayKey(b.labPromisedDate)));
+  const dueSoon = atLab.filter(lc=> lc.labPromisedDate && labDayKey(lc.labPromisedDate) >= today && labDayKey(lc.labPromisedDate) <= inDays(7)).sort((a,b)=> labDayKey(a.labPromisedDate).localeCompare(labDayKey(b.labPromisedDate)));
+  const noDate = atLab.filter(lc=> !lc.labPromisedDate);
+  const ready = all.filter(lc=> !delivered(lc) && isBack(lc));
+  const atRisk = atLab.filter(lc=> lc.patientPromisedDate && labDayKey(lc.patientPromisedDate) <= inDays(3)).sort((a,b)=> labDayKey(a.patientPromisedDate).localeCompare(labDayKey(b.patientPromisedDate)));
+  const from = inDays(-Number(labDashRange));
+  const inRange = all.filter(lc=> labDayKey(lc.dateSent || lc.createdAt) >= from);
+  const month = today.slice(0,7);
+  const deliveredMonth = all.filter(lc=> delivered(lc) && labDayKey(lc.deliveryDate||lc.updatedAt).startsWith(month));
+  const redo = inRange.filter(lc=> (lc.corrections||[]).length || lc.status==="Remake" || lc.status==="Sent Back for Correction");
+  // per-lab performance over the selected period
+  const per = {};
+  inRange.forEach(lc=>{
+    const k = lc.labName||"No lab set"; const x = per[k] = per[k] || {n:0, tat:[], ontime:0, judged:0, redo:0, charges:0, open:0, late:0};
+    x.n++; x.charges += Number(lc.labCharges)||0;
+    if(lc.dateSent && lc.receivedDate){ const t = labDaysBetween(lc.dateSent, lc.receivedDate); if(t>=0 && t<120) x.tat.push(t); }
+    if(lc.labPromisedDate && lc.receivedDate){ x.judged++; if(labDayKey(lc.receivedDate) <= labDayKey(lc.labPromisedDate)) x.ontime++; }
+    if((lc.corrections||[]).length || lc.status==="Remake") x.redo++;
+    if(!isBack(lc) && !delivered(lc)){ x.open++; if(lc.labPromisedDate && labDayKey(lc.labPromisedDate) < today) x.late++; }
+  });
+  const perRows = Object.entries(per).sort((a,b)=> b[1].n-a[1].n);
+  const avg = (a)=> a.length? (a.reduce((s,v)=>s+v,0)/a.length) : null;
+  const allTat = [].concat(...perRows.map(r=>r[1].tat));
+  const judged = perRows.reduce((s,r)=>s+r[1].judged,0), ontime = perRows.reduce((s,r)=>s+r[1].ontime,0);
+  // monthly volume (last 6 months)
+  const months = []; for(let i=5;i>=0;i--){ const d = new Date(); d.setDate(1); d.setMonth(d.getMonth()-i); months.push(toDateKey(d).slice(0,7)); }
+  const vol = months.map(m=>({ m, sent: all.filter(lc=> labDayKey(lc.dateSent||lc.createdAt).startsWith(m)).length, del: all.filter(lc=> delivered(lc) && labDayKey(lc.deliveryDate||lc.updatedAt).startsWith(m)).length }));
+  const maxV = Math.max(1, ...vol.map(v=> Math.max(v.sent, v.del)));
+  // status pipeline + case types
+  const stCount = {}; all.filter(lc=>!delivered(lc)).forEach(lc=>{ const k = lc.status||"In Progress"; stCount[k] = (stCount[k]||0)+1; });
+  const typeCount = {}; inRange.forEach(lc=>{ const k = (lc.caseType||"Other").trim()||"Other"; typeCount[k] = (typeCount[k]||0)+1; });
+  const types = Object.entries(typeCount).sort((a,b)=> b[1]-a[1]).slice(0,8); const maxT = Math.max(1, ...types.map(t=>t[1]));
+  const fmtD = (v)=> v? fromDateKey(labDayKey(v)).toLocaleDateString(undefined,{day:"numeric",month:"short"}) : "—";
+  const row = (lc, extra)=> `<div class="clinic-row" data-labdash="${lc.id}" style="cursor:pointer;"><div><div class="name">${escapeHtml(lc.patientName||"—")}${lc.tooth? " · Tooth "+escapeHtml(lc.tooth):""}</div>
+      <div class="addr">${escapeHtml(lc.caseType||"")} — ${escapeHtml(lc.labName||"No lab set")} · sent ${fmtD(lc.dateSent)}</div>${extra||""}</div>
+      <span class="status-pill st-${labStatusPillClass(lc.status)}">${escapeHtml(lc.status||"In Progress")}</span></div>`;
+  const qa = (lc, acts)=> `<div class="lab-qa-row">${acts.map(a=>{ const L = {remind:["bell","Send Reminder"], received:["check","Received"], delivered:["tooth","Delivered to Patient"], jobcard:["message","Send Job Card"]}[a]; return `<button type="button" class="lab-qa" data-labqa="${a}" data-id="${lc.id}" title="${L[1]}">${icon(L[0],14)}<span>${L[1]}</span></button>`; }).join("")}</div>`;
+  const sec = (title, list, extraFn, acts, empty, limit)=> `<div class="ais-card"><div class="ais-card-title">${title} <span style="color:var(--grey);font-weight:500;">(${list.length})</span></div>
+      ${list.length? `<div class="list-card">${list.slice(0, limit||8).map(lc=> row(lc, extraFn(lc)) + qa(lc, acts)).join("")}</div>${list.length>(limit||8)? `<div style="font-size:12px;color:var(--grey);margin-top:6px;">+${list.length-(limit||8)} more — see All Cases</div>`:""}` : `<div class="ais-empty">${empty}</div>`}</div>`;
+  body.innerHTML = `
+    <div class="ais-actions" style="margin-bottom:10px;">
+      <select id="ldRange" class="ais-select">${[["30","Last 30 days"],["90","Last 3 months"],["180","Last 6 months"],["365","Last 12 months"]].map(([v,l])=>`<option value="${v}" ${labDashRange===v?'selected':''}>${l}</option>`).join("")}</select>
+      <select id="ldLab" class="ais-select"><option value="ALL">All labs</option>${labNames.map(n=>`<option ${labDashLab===n?'selected':''}>${escapeHtml(n)}</option>`).join("")}</select>
+      <button class="btn btn-primary btn-sm" id="ldNew">+ New Lab Case</button>
+      <button class="btn btn-outline btn-sm" id="ldXlsx">Export Excel</button>
+    </div>
+    <div class="ais-kpis">
+      <div class="ais-kpi" data-ldjump="atlab"><b>${atLab.length}</b><span>At the lab now</span></div>
+      <div class="ais-kpi" style="--k:#b42318;" data-ldjump="overdue"><b>${overdue.length}</b><span>Overdue from lab</span></div>
+      <div class="ais-kpi" style="--k:#92400e;" data-ldjump="due"><b>${dueSoon.length}</b><span>Due back in 7 days</span></div>
+      <div class="ais-kpi" style="--k:#166534;" data-ldjump="ready"><b>${ready.length}</b><span>Back — to deliver</span></div>
+      <div class="ais-kpi" style="--k:#b42318;" data-ldjump="risk"><b>${atRisk.length}</b><span>Patient date at risk</span></div>
+      <div class="ais-kpi"><b>${deliveredMonth.length}</b><span>Delivered this month</span></div>
+      <div class="ais-kpi"><b>${allTat.length? avg(allTat).toFixed(1)+" d" : "—"}</b><span>Avg lab turnaround</span></div>
+      <div class="ais-kpi" style="--k:${judged && ontime/judged<0.8? '#b42318':'#166534'};"><b>${judged? Math.round(ontime/judged*100)+"%" : "—"}</b><span>On time (vs lab promise)</span></div>
+      <div class="ais-kpi" style="--k:#92400e;"><b>${inRange.length? Math.round(redo.length/inRange.length*100)+"%" : "—"}</b><span>Remakes / corrections</span></div>
+      <div class="ais-kpi"><b>${finMoney(inRange.reduce((s,lc)=>s+(Number(lc.labCharges)||0),0), cur)}</b><span>Lab charges (period)</span></div>
+    </div>
+    <div class="ais-card"><div class="ais-card-title">Open cases by stage</div>
+      <div class="ld-pipe">${LAB_CASE_STATUSES.filter(st=> st!=="Delivered to Patient").map(st=>`<div class="ld-stage ${["Delayed","Sent Back for Correction","Remake"].includes(st)?'bad':["Received","Ready","Trial Pending"].includes(st)?'good':''}"><b>${stCount[st]||0}</b><span>${escapeHtml(st)}</span></div>`).join("")}</div></div>
+    <div id="ldSecOverdue">${sec("⚠ Overdue from lab", overdue, lc=> `<div class="addr" style="color:#b42318;font-weight:600;">Lab promised ${fmtD(lc.labPromisedDate)} · ${labDaysBetween(lc.labPromisedDate, today)} day(s) late${lc.patientPromisedDate? " · patient told "+fmtD(lc.patientPromisedDate):""}</div>`, ["remind","received"], "Nothing overdue — every lab is on schedule.")}</div>
+    <div id="ldSecRisk">${atRisk.length? sec("Patient promise at risk (next 3 days, still at lab)", atRisk, lc=> `<div class="addr" style="color:#b42318;">Patient promised ${fmtD(lc.patientPromisedDate)}${lc.labPromisedDate? " · lab promised "+fmtD(lc.labPromisedDate):""}</div>`, ["remind","received"], "") : ""}</div>
+    <div id="ldSecDue">${sec("Due back in the next 7 days", dueSoon, lc=> `<div class="addr">Lab promised <b>${fmtD(lc.labPromisedDate)}</b>${lc.patientPromisedDate? " · patient told "+fmtD(lc.patientPromisedDate):""}</div>`, ["remind","received"], "No cases due back this week.")}</div>
+    <div id="ldSecReady">${sec("Back from lab — ready to deliver", ready, lc=> `<div class="addr">Received ${fmtD(lc.receivedDate||lc.updatedAt)}${lc.patientPromisedDate? " · patient told "+fmtD(lc.patientPromisedDate):""}</div>`, ["delivered"], "Nothing waiting to be delivered.")}</div>
+    ${noDate.length? `<div class="ais-card"><div class="ais-card-title">At the lab without a promised date (${noDate.length})</div><div style="font-size:12.5px;color:var(--grey);margin-bottom:6px;">Add the lab's promised date so these can be tracked.</div><div class="list-card">${noDate.slice(0,6).map(lc=> row(lc, "")).join("")}</div></div>`:""}
+    <div class="ais-card"><div class="ais-card-title">Lab performance — ${escapeHtml({"30":"last 30 days","90":"last 3 months","180":"last 6 months","365":"last 12 months"}[labDashRange])}</div>
+      <div class="ais-table-wrap"><table class="ais-table"><thead><tr><th>Lab</th><th>Cases</th><th>Avg turnaround</th><th>On time</th><th>Remakes</th><th>At lab now</th><th>Charges</th></tr></thead><tbody>
+      ${perRows.map(([k,x])=>{ const t = avg(x.tat); const ot = x.judged? Math.round(x.ontime/x.judged*100) : null; return `<tr><td><b>${escapeHtml(k)}</b></td><td>${x.n}</td><td>${t!=null? t.toFixed(1)+" days" : "—"}</td><td>${ot!=null? `<span style="color:${ot<80?'#b42318':'#166534'};font-weight:600;">${ot}%</span> <small>(${x.ontime}/${x.judged})</small>` : "—"}</td><td>${x.redo? `<span style="color:#92400e;font-weight:600;">${x.redo}</span> <small>(${Math.round(x.redo/x.n*100)}%)</small>` : "0"}</td><td>${x.open}${x.late? ` <small style="color:#b42318;">(${x.late} late)</small>`:""}</td><td>${finMoney(x.charges, cur)}</td></tr>`; }).join("") || `<tr><td colspan="7" class="ais-empty">No lab cases in this period.</td></tr>`}
+      </tbody></table></div>
+      <p style="font-size:11.5px;color:var(--grey);margin:6px 0 0;">Turnaround = date sent → date marked Received. On time compares the received date with the lab's promised date.</p></div>
+    <div class="field-row" style="align-items:stretch;">
+      <div class="ais-card" style="flex:1;"><div class="ais-card-title">Cases sent vs delivered — last 6 months</div>
+        <div class="ais-col-chart" style="height:130px;">${vol.map(v=>`<div class="ais-col" title="${v.m}: ${v.sent} sent, ${v.del} delivered"><div style="display:flex;gap:2px;align-items:flex-end;height:100%;width:100%;"><span class="ais-col-fill" data-h="${v.sent/maxV*100}" style="background:#0891b2;"></span><span class="ais-col-fill" data-h="${v.del/maxV*100}" style="background:var(--green);"></span></div><small>${fromDateKey(v.m+"-01").toLocaleDateString(undefined,{month:"short"})}</small></div>`).join("")}</div>
+        <div class="img-legend"><span><i class="img-dot" style="position:static;display:inline-block;background:#0891b2;border:none;"></i> Sent</span><span><i class="img-dot" style="position:static;display:inline-block;background:var(--green);border:none;"></i> Delivered</span></div></div>
+      <div class="ais-card" style="flex:1;"><div class="ais-card-title">Work type (period)</div>
+        ${types.length? types.map(([k,n])=>`<div style="margin-bottom:6px;"><div style="display:flex;justify-content:space-between;font-size:12.5px;"><span>${escapeHtml(k)}</span><b>${n}</b></div><div class="ais-bar"><span class="ais-bar-fill" data-w="${n/maxT*100}"></span></div></div>`).join("") : `<div class="ais-empty">No cases in this period.</div>`}</div>
+    </div>`;
+  body.querySelectorAll(".ais-col-fill[data-h]").forEach(el=> setTimeout(()=> el.style.height = Math.max(2, el.dataset.h)+"%", 40));
+  body.querySelectorAll(".ais-bar-fill[data-w]").forEach(el=> setTimeout(()=> el.style.width = el.dataset.w+"%", 40));
+  const rerender = ()=> renderLabDashboard(body, outerBody);
+  document.getElementById("ldRange").onchange = (e)=>{ labDashRange = e.target.value; rerender(); };
+  document.getElementById("ldLab").onchange = (e)=>{ labDashLab = e.target.value; rerender(); };
+  document.getElementById("ldNew").onclick = ()=> openLabCaseForm(null);
+  body.querySelectorAll("[data-labdash]").forEach(el=> el.onclick = ()=> openLabCaseForm(el.dataset.labdash));
+  wireLabQuickActions(body, rerender);
+  const jump = {overdue:"ldSecOverdue", due:"ldSecDue", ready:"ldSecReady", risk:"ldSecRisk", atlab:"ldSecOverdue"};
+  body.querySelectorAll("[data-ldjump]").forEach(el=>{ el.style.cursor = "pointer"; el.onclick = ()=>{ const t = document.getElementById(jump[el.dataset.ldjump]); if(t && t.firstElementChild) t.scrollIntoView({behavior:"smooth", block:"start"}); }; });
+  document.getElementById("ldXlsx").onclick = ()=> downloadXlsx("lab-cases-dashboard", [
+    { name:"Open cases", columns:["Patient","Tooth","Work","Lab","Sent","Lab promised","Patient promised","Status","Days late","Charges"], rows: atLab.concat(ready).map(lc=>[lc.patientName||"", lc.tooth||"", lc.caseType||"", lc.labName||"", labDayKey(lc.dateSent), labDayKey(lc.labPromisedDate), labDayKey(lc.patientPromisedDate), lc.status||"", lc.labPromisedDate && !isBack(lc) && labDayKey(lc.labPromisedDate)<today? labDaysBetween(lc.labPromisedDate, today) : "", Number(lc.labCharges)||0]) },
+    { name:"Lab performance", columns:["Lab","Cases","Avg turnaround (days)","On time %","Remakes","At lab now","Late now","Charges"], rows: perRows.map(([k,x])=>[k, x.n, x.tat.length? Number(avg(x.tat).toFixed(1)) : "", x.judged? Math.round(x.ontime/x.judged*100) : "", x.redo, x.open, x.late, x.charges]) }
+  ]);
+  aisAnimate(body);
+}
+
 async function renderAlignerLabCasesTab(body, outerBody){
   const cur = await finCurrency();
   const patients = await dbGetAll("patients");
