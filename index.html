@@ -568,6 +568,10 @@
   .ais-err{background:#fdecec;border:1px solid #f5c2c2;color:#b42318;border-radius:12px;padding:10px 12px;font-size:13px;margin-bottom:12px;}
   .ais-warn{margin-top:8px;font-size:12px;color:#92400e;}
   .ais-warnbox{background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;padding:10px 12px;margin-bottom:10px;font-size:13px;color:#9a3412;}
+  .str-setpick{display:flex;flex-wrap:wrap;gap:6px;max-height:190px;overflow:auto;padding:2px;}
+  .str-chip{display:inline-flex;align-items:center;gap:5px;padding:6px 10px;border-radius:999px;border:1px solid var(--grey-light,#e2e5e7);background:var(--white);font-size:12.5px;cursor:pointer;}
+  .str-chip small{color:var(--grey);}
+  .str-chip:has(input:checked){border-color:#0891b2;background:color-mix(in srgb,#0891b2 10%,var(--white));}
   .ais-warnbox ul{margin:4px 0 0;padding-left:18px;}
   .ais-steps{display:grid;gap:6px;}
   .ais-step{display:grid;grid-template-columns:28px 1fr auto;gap:10px;align-items:center;padding:8px 10px;border-radius:12px;background:var(--off-white);animation:hbPanelIn .4s both;}
@@ -1749,7 +1753,7 @@
     getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
     collection, doc, getDoc, getDocs, setDoc, deleteDoc, writeBatch,
     enableIndexedDbPersistence, query, where, orderBy, onSnapshot,
-    getDocsFromCache, getCountFromServer, serverTimestamp, Timestamp, CACHE_SIZE_UNLIMITED
+    getDocsFromCache, getCountFromServer, serverTimestamp, Timestamp, CACHE_SIZE_UNLIMITED, limit
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
   const firebaseConfig = {
@@ -1965,19 +1969,68 @@
     }
     return v;
   };
+  // ---- Audit trail: every save / delete is recorded (who, when, what changed).
+  // Runs in the background after the real save, so it never slows anything down
+  // and a failure here never blocks the save itself.
+  const AUDIT_SKIP = new Set(["auditLog","activityLog","notificationLog","commsLog","cronRuns","communicationQueue","syncDeletes","automationLog","publicReceipts","teamChatMessages","directMessages","onlineBookings","consentSubmissions"]);
+  const AUDIT_IGNORE = new Set(["_ts","updatedAt","id","lastSyncedAt","lastSeenAt"]);
+  const auditVal = (v)=>{
+    if(v===undefined || v===null) return null;
+    if(typeof v==="string"){ if(v.startsWith("data:")) return "(file)"; return v.length>200? v.slice(0,200)+"…" : v; }
+    if(typeof v==="object"){ let t; try{ t = JSON.stringify(v); }catch(e){ t = String(v); } t = t.replace(/"data:[^"]{40,}"/g,'"(file)"'); return t.length>200? t.slice(0,200)+"…" : t; }
+    return v;
+  };
+  function auditDiff(before, after){
+    const ch = {}; let n = 0;
+    const keys = new Set([...Object.keys(before||{}), ...Object.keys(after||{})]);
+    for(const k of keys){
+      if(AUDIT_IGNORE.has(k) || !k || k.startsWith("__")) continue;
+      const a = before? before[k] : undefined, b = after? after[k] : undefined;
+      let sa, sb; try{ sa = JSON.stringify(a); sb = JSON.stringify(b); }catch(e){ continue; }
+      if(sa===sb) continue;
+      if(++n > 40){ ch["…"] = { o: null, n: "more fields changed" }; break; }
+      ch[k] = { o: auditVal(a), n: auditVal(b) };
+    }
+    return ch;
+  }
+  function auditWrite(store, id, action, before, after){
+    try{
+      if(AUDIT_SKIP.has(store)) return;
+      const u = fbAuth.currentUser; if(!u) return;
+      const changes = auditDiff(before, action==="delete"? null : after);
+      if(action==="update" && !Object.keys(changes).length) return;
+      const src = after || before || {};
+      const label = String(src.name || src.patientName || src.title || src.invoiceNumber || src.invoiceNo || src.receiptNo || src.itemName || src.description || src.code || "").slice(0,120);
+      const aid = Date.now().toString(36) + "-" + Math.random().toString(36).slice(2,8);
+      setDoc(doc(fbDb, "auditLog", aid), { id: aid, at: new Date().toISOString(), user: u.email || u.uid, store, docId: String(id), action, label,
+        patientId: String(src.patientId || (store==="patients"? id : "") || ""), changes, device: ((navigator.userAgent.match(/\(([^)]+)\)/)||[])[1]||"").slice(0,60), _ts: serverTimestamp() })
+        .catch(err=> console.warn("[audit] not recorded:", err && (err.code||err.message)));
+    }catch(err){ console.warn("[audit]", err); }
+  }
+  window.__fbAuditQuery = async (fromIso, toIso)=>{
+    const snap = await getDocs(query(collection(fbDb, "auditLog"), where("at", ">=", fromIso), where("at", "<=", toIso), orderBy("at", "desc"), limit(3000)));
+    return snap.docs.map(d=> d.data());
+  };
   async function fbWrite(storeName, obj){
     const clean = fbClean(obj); delete clean._ts;
     const e = __sync[storeName];
+    const prevEntry = e && e.map ? e.map.get(String(obj.id)) : undefined;
+    const before = prevEntry ? prevEntry.obj : undefined;
+    const auditAction = before ? "update" : (e && e.map && e.map.size ? "create" : "save");
     if(e && e.map && !FULL_LIVE.has(storeName)){ e.map.set(String(obj.id), { obj: structuredClone(Object.assign({}, clean, {id: obj.id})), ts: Date.now(), server: false }); bump(e); }
+    const after = Object.assign({}, clean);
     clean._ts = serverTimestamp();
     await setDoc(doc(fbDb, storeName, String(obj.id)), clean);
+    auditWrite(storeName, obj.id, auditAction, before, after);
     return obj;
   }
   async function fbRemove(storeName, id){
     id = String(id);
     const e = __sync[storeName];
+    const prevEntry = e && e.map ? e.map.get(id) : undefined;
     if(e && e.map){ e.map.delete(id); bump(e); }
     await deleteDoc(doc(fbDb, storeName, id));
+    auditWrite(storeName, id, "delete", prevEntry ? prevEntry.obj : { }, null);
     if(!FULL_LIVE.has(storeName) && storeName!==TOMBS){
       __tombs.set(storeName+"/"+id, Date.now());
       setDoc(doc(fbDb, TOMBS, tombId(storeName, id)), { id: tombId(storeName, id), store: storeName, docId: id, _ts: serverTimestamp() })
@@ -2159,6 +2212,8 @@
       <div class="nav-item" data-page="pharmacy"><span class="ico" data-icon="pill"></span><span class="lbl"> Pharmacy</span></div>
       <div class="nav-item" data-page="labcases"><span class="ico" data-icon="flask"></span><span class="lbl"> Lab Cases</span></div>
       <div class="nav-item" data-page="maintenance"><span class="ico" data-icon="wrench"></span><span class="lbl"> Maintenance</span></div>
+      <div class="nav-item" data-page="steril"><span class="ico" data-icon="shield"></span><span class="lbl"> Sterilization</span></div>
+      <div class="nav-item" data-page="audit"><span class="ico" data-icon="reports"></span><span class="lbl"> Audit Trail</span></div>
       <div class="sidebar-divider"></div>
       <div class="nav-item" data-page="more"><span class="ico" data-icon="more"></span><span class="lbl"> More</span></div>
       <button class="btn btn-primary btn-block side-fab" id="btnFabDesktop"><span class="ico" data-icon="plus" data-icon-size="16"></span><span class="lbl"> New</span></button>
@@ -3208,6 +3263,7 @@ function applyNavPermissions(){
     if(PERMISSION_MODULES.some(m=>m.key===page)){
       el.style.display = canAccessModule(page) ? "" : "none";
     }
+    if(page==="audit") el.style.display = currentUserIsAdmin ? "" : "none";
   });
 }
 
@@ -3226,6 +3282,8 @@ const PAGE_RENDERERS = {
   maintenance: renderMaintenance,
   aiskills: renderAiSkills,
   crm: renderCrm,
+  steril: renderSteril,
+  audit: renderAudit,
   more: renderMore,
   admin: renderAdminPanel,
   patientProfile: ()=> renderPatientProfileSheet(profilePatientId)
@@ -14744,7 +14802,7 @@ async function renderFinReports(body){
 
     <div class="section-title">Data Tools</div>
     <div class="list-card" style="padding:14px;">
-      <button class="btn btn-primary btn-block" id="btnExportFinCsv">Export CSV (filtered)</button>
+      <div style="display:flex;gap:8px;"><button class="btn btn-primary" style="flex:1;" id="btnExportFinXlsx">Export Excel (filtered)</button><button class="btn btn-outline" style="flex:1;" id="btnExportFinCsv">Export CSV</button></div>
       <button class="btn btn-outline btn-block" id="btnGoBackupFin" style="margin-top:8px;">Open Backup &amp; Restore</button>
       <p style="margin-top:10px;">A full JSON backup (including all finance records) is already available from More → Backup &amp; Restore — it covers every module in the app, not just Financial.</p>
     </div>
@@ -14757,6 +14815,11 @@ async function renderFinReports(body){
   if(startEl) startEl.onchange = (e)=>{ finReportFilter.customStart = e.target.value; renderFinReports(body); };
   if(endEl) endEl.onchange = (e)=>{ finReportFilter.customEnd = e.target.value; renderFinReports(body); };
   document.getElementById("btnExportFinCsv").onclick = ()=> exportFinanceCSV(all);
+  document.getElementById("btnExportFinXlsx").onclick = async ()=>{
+    const clinics = await dbGetAll("clinics");
+    downloadXlsx("finance", [{ name:"Finance", columns:["Date","Type","Amount","Clinic","Category","Payment mode","Description","Notes"],
+      rows: all.map(t=> [t.date, t.type, Number(t.amount)||0, finClinicLabel(clinics, t.clinicId), t.category, t.paymentMode, t.description, t.notes]) }]);
+  };
   document.getElementById("btnGoBackupFin").onclick = ()=>{ goTo("more"); setTimeout(openBackupSheet, 150); };
 }
 
@@ -14888,7 +14951,7 @@ async function openMonthlyConsolidatedReport(){
     <div class="section-title">Doctor-wise — Whole ${st.year}</div>
     ${Object.keys(yearDoc).length? `<div class="list-card">${Object.entries(yearDoc).sort((a,b)=>b[1].amount-a[1].amount).map(([d,v])=>`<div class="clinic-row"><div><div class="name">${escapeHtml(d)}</div><div class="addr">${v.count} treatments</div></div><b>${money(v.amount)}</b></div>`).join("")}</div>` : `<div class="empty-card">—</div>`}
 
-    <button class="btn btn-primary btn-block" id="mrCsv" style="margin-top:14px;">Export CSV</button>
+    <div style="display:flex;gap:8px;margin-top:14px;"><button class="btn btn-primary" style="flex:1;" id="mrXlsx">Export Excel</button><button class="btn btn-outline" style="flex:1;" id="mrCsv">Export CSV</button></div>
     <button class="btn btn-outline btn-block" id="mrPrint" style="margin-top:8px;">${icon('print',15)} Print / Save PDF</button>
   `);
   wireFormBack(()=>{ financeView = "Reports"; goTo("financial"); });
@@ -14897,6 +14960,12 @@ async function openMonthlyConsolidatedReport(){
   document.querySelectorAll("[data-mrmonth]").forEach(tr=> tr.onclick = ()=>{ st.month = tr.dataset.mrmonth; openMonthlyConsolidatedReport(); });
   const headers = ["Month","Treatment Done","Treatments Count","Invoiced","Invoices Count","Receipts","Payment to be Made Collected","Refunds","Total Collection","Not Invoiced","Pharmacy","New Patients"];
   const rowsFor = ()=> shown.map(k=>{ const m = M[k]; return [k, m.treat, m.treatCount, m.invoiced, m.invCount, m.receipts, m.dueColl, m.refunds, m.collection, m.unbilled, m.pharmacy, m.newPatients].map(v=> typeof v==="number"? Math.round(v*100)/100 : v); });
+  document.getElementById("mrXlsx").onclick = ()=>{
+    downloadXlsx("Monthly report "+st.year+(st.clinicId? " - "+((clinics.find(c=>c.id===st.clinicId)||{}).name||"") : ""), [
+      { name: "Monthly "+st.year, columns: headers, rows: rowsFor() },
+      { name: "Doctor-wise "+st.year, columns: ["Doctor","Amount","Treatments"], rows: Object.entries(yearDoc).sort((a,b)=>b[1].amount-a[1].amount).map(([d,v])=> [d, Math.round(v.amount*100)/100, v.count]) }
+    ]);
+  };
   document.getElementById("mrCsv").onclick = ()=>{
     const lines = [headers].concat(rowsFor());
     lines.push([]); lines.push(["Doctor-wise "+st.year, "Amount", "Treatments"]);
@@ -17133,7 +17202,7 @@ function wireReportExportButtons(getData){
   if(xlsBtn) xlsBtn.onclick = async ()=>{
     const d = await getData();
     if(!d.rows.length){ showToast("Nothing to export yet"); return; }
-    downloadCSV(d.title, d.headers, d.rows);
+    downloadXlsx(d.title, [{ name: d.title, columns: d.headers, rows: d.rows }]);
   };
 }
 
@@ -17318,11 +17387,11 @@ async function runAndRenderReport(def, preservePage){
       ${paginationBarHtml("report", result.rows.length, reportPage)}
     </div>` : `<div class="empty-card"><b>No data for this filter</b>Try widening the date range or clearing the clinic filter.</div>`}
     <div style="display:flex;gap:8px;margin-top:14px;">
-      <button class="btn btn-outline" style="flex:1;" id="btnExportRepCsv">Export Excel (CSV)</button>
+      <button class="btn btn-outline" style="flex:1;" id="btnExportRepCsv">Export Excel</button>
       <button class="btn btn-primary" style="flex:1;" id="btnExportRepPdf">Export PDF (Print)</button>
     </div>
   `;
-  document.getElementById("btnExportRepCsv").onclick = ()=> downloadCSV(def.title.replace(/\s+/g,"-").toLowerCase(), result.columns, result.rows);
+  document.getElementById("btnExportRepCsv").onclick = ()=> downloadXlsx(def.title.replace(/\s+/g,"-").toLowerCase(), [{ name: def.title, columns: result.columns, rows: result.rows }]);
   document.getElementById("btnExportRepPdf").onclick = ()=> printReport(def.title, result);
   wirePaginationBar("report", result.rows.length, reportPage, PAGE_SIZE, (newPage)=>{ reportPage = newPage; runAndRenderReport(def, true); });
 }
@@ -25412,6 +25481,357 @@ CRM_RENDER.Settings = async (body)=>{
   };
 };
 
+
+// =====================================================================
+// STERILIZATION TRACKING (sidebar → Sterilization)
+// Autoclave cycle log (parameters + chemical / biological indicators),
+// instrument-set register with sterile-until dates, set-to-patient usage
+// so any patient can be traced to the exact cycle, failed-cycle recall
+// lists, and a monthly compliance register (print / Excel).
+// =====================================================================
+const STR_PROGRAMS = ["134°C Wrapped (Class B)","134°C Unwrapped","121°C Wrapped","Prion / Long cycle","Bowie-Dick test","Vacuum leak test","Flash / Rapid"];
+const STR_SET_TYPES = ["Examination kit","RCT / Endo kit","Extraction kit","Surgical kit","Implant kit","Scaling / Prophy kit","Restorative kit","Ortho kit","Handpiece","Other"];
+let strTab = "Dashboard";
+async function strSettings(){
+  const s = (await dbGetAll("settings"))[0] || {};
+  return Object.assign({ autoclaves:["Autoclave 1"], shelfDays:30 }, s.steril||{});
+}
+function strSetStatus(set){
+  const today = toDateKey(new Date());
+  if(set.status==="Sterile" && set.sterileUntil && set.sterileUntil < today) return "Expired";
+  return set.status || "Needs processing";
+}
+function strBadge(st){
+  const c = {"Sterile":["#dcfce7","#166534"], "Pass":["#dcfce7","#166534"], "Used":["#e0f2fe","#075985"], "Needs processing":["#f1f5f9","#475569"], "Expired":["#fef3c7","#92400e"], "Pending":["#fef3c7","#92400e"], "Quarantine":["#fde7e4","#b42318"], "Fail":["#fde7e4","#b42318"], "Not done":["#f1f5f9","#475569"]}[st] || ["#f1f5f9","#334155"];
+  return `<span class="ais-badge" style="background:${c[0]};color:${c[1]};">${escapeHtml(st)}</span>`;
+}
+async function strLoad(){
+  const [sets, cycles, usage, cfg] = await Promise.all([dbGetAll("instrumentSets").catch(()=>[]), dbGetAll("sterilCycles").catch(()=>[]), dbGetAll("setUsage").catch(()=>[]), strSettings()]);
+  cycles.sort((a,b)=> (b.dateTime||"").localeCompare(a.dateTime||""));
+  usage.sort((a,b)=> (b.date||"").localeCompare(a.date||""));
+  return {sets, cycles, usage, cfg};
+}
+async function renderSteril(){
+  const main = document.getElementById("main");
+  const tabs = ["Dashboard","Cycles","Instrument Sets","Usage & Trace","Report"];
+  main.innerHTML = `<div class="page ais-page">
+    <div class="ais-hero" style="background:linear-gradient(135deg,color-mix(in srgb,#0891b2 14%,transparent),color-mix(in srgb,var(--green) 10%,transparent));"><div class="ais-hero-ico" style="background:#0891b2;">${icon('flask',22)}</div><div><h2 style="margin:0;">Sterilization</h2>
+      <p style="margin:2px 0 0;color:var(--grey);font-size:13px;">Autoclave cycles, indicators, instrument sets and patient traceability.</p></div></div>
+    <div class="hb-tabs" style="margin-top:10px;">${tabs.map(t=>`<button type="button" class="hb-tab ${t===strTab?'on':''}" data-strtab="${t}">${escapeHtml(t)}</button>`).join("")}</div>
+    <div id="strBody"><div class="ais-loading"><span class="ai-spin"></span> Loading…</div></div></div>`;
+  main.querySelectorAll("[data-strtab]").forEach(b=> b.onclick = ()=>{ strTab = b.dataset.strtab; renderSteril(); });
+  const body = document.getElementById("strBody");
+  try{ await STR_RENDER[strTab](body); }catch(e){ console.warn(e); body.innerHTML = `<div class="ais-err">${escapeHtml(e.message||String(e))}</div>`; }
+  aisAnimate(main);
+}
+const STR_RENDER = {};
+STR_RENDER.Dashboard = async (body)=>{
+  const d = await strLoad();
+  const today = toDateKey(new Date()), month = today.slice(0,7);
+  const cyToday = d.cycles.filter(c=> (c.dateTime||"").slice(0,10)===today);
+  const cyMonth = d.cycles.filter(c=> (c.dateTime||"").slice(0,7)===month);
+  const fails = cyMonth.filter(c=> c.result==="Fail");
+  const biPending = d.cycles.filter(c=> c.bi==="Pending");
+  const st = {}; d.sets.forEach(s=>{ const k = strSetStatus(s); st[k] = (st[k]||0)+1; });
+  const days = []; for(let i=29;i>=0;i--){ const x = new Date(); x.setDate(x.getDate()-i); const k = toDateKey(x); const cs = d.cycles.filter(c=>(c.dateTime||"").slice(0,10)===k); days.push({k, n:cs.length, f:cs.filter(c=>c.result==="Fail").length}); }
+  const maxN = Math.max(1, ...days.map(x=>x.n));
+  body.innerHTML = `
+    <div class="ais-actions"><button class="btn btn-primary btn-sm" id="strNewCycle">+ Log autoclave cycle</button><button class="btn btn-outline btn-sm" id="strUseSet">${icon('user',14)} Use a set on a patient</button></div>
+    ${fails.length || biPending.length || st.Quarantine ? `<div class="ais-warnbox">${fails.length? `<div>⚠ <b>${fails.length} failed cycle(s)</b> this month — sets were quarantined; see Usage &amp; Trace for any patients to recall.</div>`:""}${biPending.length? `<div>⏳ <b>${biPending.length}</b> biological indicator result(s) pending — update the cycle once read.</div>`:""}${st.Quarantine? `<div>🚫 <b>${st.Quarantine}</b> set(s) in quarantine — reprocess before use.</div>`:""}</div>` : ""}
+    <div class="ais-kpis">
+      <div class="ais-kpi"><b>${cyToday.length}</b><span>Cycles today</span></div>
+      <div class="ais-kpi"><b>${cyMonth.length}</b><span>Cycles this month</span></div>
+      <div class="ais-kpi" style="--k:#b42318;"><b>${fails.length}</b><span>Failed this month</span></div>
+      <div class="ais-kpi" style="--k:#166534;"><b>${st.Sterile||0}</b><span>Sets sterile &amp; ready</span></div>
+      <div class="ais-kpi" style="--k:#92400e;"><b>${st.Expired||0}</b><span>Sets past sterile date</span></div>
+      <div class="ais-kpi" style="--k:#075985;"><b>${(st.Used||0)+(st["Needs processing"]||0)}</b><span>Sets to reprocess</span></div>
+    </div>
+    <div class="ais-card"><div class="ais-card-title">Cycles per day — last 30 days</div>
+      <div class="ais-col-chart" style="height:120px;">${days.map(x=>`<div class="ais-col" title="${x.k}: ${x.n} cycle(s)${x.f? ", "+x.f+" failed":""}"><span class="ais-col-fill" data-h="${x.n/maxN*100}" style="background:${x.f?'#dc2626':'#0891b2'};"></span><small>${new Date(x.k+"T00:00:00").getDate()}</small></div>`).join("")}</div></div>
+    <div class="ais-card"><div class="ais-card-title">Latest cycles</div>${d.cycles.slice(0,8).map(c=>`<div class="ais-row"><span><b>${escapeHtml(c.autoclave||"")} #${escapeHtml(String(c.cycleNo||""))}</b> · ${escapeHtml(c.program||"")}<br><small>${new Date(c.dateTime).toLocaleString()} · ${(c.setIds||[]).length} set(s) · ${escapeHtml(c.operator||"")}</small></span>${strBadge(c.result||"Pass")}</div>`).join("") || `<div class="ais-empty">No cycles logged yet.</div>`}</div>`;
+  body.querySelectorAll(".ais-col-fill[data-h]").forEach(el=> setTimeout(()=> el.style.height = Math.max(2, el.dataset.h)+"%", 40));
+  document.getElementById("strNewCycle").onclick = ()=> openCycleForm(null);
+  document.getElementById("strUseSet").onclick = ()=> openUseSetSheet();
+};
+STR_RENDER.Cycles = async (body)=>{
+  const d = await strLoad();
+  const setName = {}; d.sets.forEach(s=> setName[s.id] = s.name);
+  body.innerHTML = `<div class="ais-actions"><button class="btn btn-primary btn-sm" id="strNewCycle">+ Log autoclave cycle</button></div>
+    <div class="ais-table-wrap" style="max-height:600px;"><table class="ais-table"><thead><tr><th>Date</th><th>Autoclave / cycle</th><th>Program</th><th>Parameters</th><th>CI</th><th>BI</th><th>Sets</th><th>Result</th><th></th></tr></thead><tbody>
+    ${d.cycles.map(c=>`<tr><td>${new Date(c.dateTime).toLocaleDateString()}<br><small>${new Date(c.dateTime).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}</small></td><td><b>${escapeHtml(c.autoclave||"")}</b> #${escapeHtml(String(c.cycleNo||""))}<br><small>${escapeHtml(c.operator||"")}</small></td><td><small>${escapeHtml(c.program||"")}</small></td>
+      <td><small>${c.temp? escapeHtml(String(c.temp))+"°C":""} ${c.pressure? "· "+escapeHtml(String(c.pressure))+" bar":""} ${c.holdMin? "· "+escapeHtml(String(c.holdMin))+" min":""}</small></td><td>${strBadge(c.ci||"Not done")}</td><td>${strBadge(c.bi||"Not done")}</td>
+      <td><small>${(c.setIds||[]).map(id=> escapeHtml(setName[id]||"?")).join(", ")}${c.pouches? (c.setIds||[]).length? " + "+c.pouches+" pouches" : c.pouches+" pouches":""}</small></td><td>${strBadge(c.result||"Pass")}</td><td><button class="btn btn-outline btn-sm" data-cyedit="${c.id}">Edit</button></td></tr>`).join("") || `<tr><td colspan="9" class="ais-empty">No cycles logged yet.</td></tr>`}
+    </tbody></table></div>`;
+  document.getElementById("strNewCycle").onclick = ()=> openCycleForm(null);
+  body.querySelectorAll("[data-cyedit]").forEach(b=> b.onclick = ()=> openCycleForm(b.dataset.cyedit));
+};
+async function openCycleForm(id){
+  const d = await strLoad();
+  const clinics = (await dbGetAll("clinics")).filter(c=>!c.archived);
+  let c = id? d.cycles.find(x=>x.id===id) : null;
+  const isNew = !c;
+  if(!c){
+    const ac = d.cfg.autoclaves[0]||"Autoclave 1";
+    const last = d.cycles.filter(x=>x.autoclave===ac)[0];
+    c = { id: uid("cyc"), dateTime: new Date().toISOString(), clinicId: selectedClinicId!=="ALL"? selectedClinicId : getDefaultClinicId(clinics), autoclave: ac, cycleNo: last? (Number(last.cycleNo)||0)+1 : 1,
+      program: STR_PROGRAMS[0], temp:134, pressure:2.1, holdMin:4, ci:"Pass", bi:"Not done", setIds:[], pouches:0, operator: (typeof fbCurrentUserEmail!=="undefined" && fbCurrentUserEmail)||"", notes:"", createdAt: nowIso() };
+  }
+  const local = new Date(new Date(c.dateTime).getTime() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,16);
+  const avail = d.sets.filter(s=> !s.archived);
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>${isNew? "Log Autoclave Cycle" : "Cycle "+escapeHtml(c.autoclave)+" #"+escapeHtml(String(c.cycleNo))}</h2>
+    <div class="field-row"><div class="field"><label>Date &amp; time</label><input type="datetime-local" id="cyDt" value="${local}"></div>
+      <div class="field"><label>Clinic</label><select id="cyClinic">${clinics.map(x=>`<option value="${x.id}" ${x.id===c.clinicId?'selected':''}>${escapeHtml(x.name)}</option>`).join("")}</select></div></div>
+    <div class="field-row"><div class="field"><label>Autoclave</label><select id="cyAc">${[...new Set(d.cfg.autoclaves.concat(c.autoclave? [c.autoclave]:[]))].map(a=>`<option ${a===c.autoclave?'selected':''}>${escapeHtml(a)}</option>`).join("")}<option value="__new">+ Add autoclave…</option></select></div>
+      <div class="field"><label>Cycle number</label><input type="number" id="cyNo" value="${escapeAttr(c.cycleNo)}"></div></div>
+    <div class="field"><label>Program</label><select id="cyProg">${STR_PROGRAMS.map(p=>`<option ${p===c.program?'selected':''}>${escapeHtml(p)}</option>`).join("")}</select></div>
+    <div class="field-row"><div class="field"><label>Temperature (°C)</label><input type="number" step="0.1" id="cyTemp" value="${escapeAttr(c.temp)}"></div>
+      <div class="field"><label>Pressure (bar)</label><input type="number" step="0.01" id="cyPres" value="${escapeAttr(c.pressure)}"></div>
+      <div class="field"><label>Hold time (min)</label><input type="number" step="0.5" id="cyHold" value="${escapeAttr(c.holdMin)}"></div></div>
+    <div class="field-row"><div class="field"><label>Chemical indicator (strip / tape)</label><select id="cyCi">${["Pass","Fail","Not done"].map(x=>`<option ${x===c.ci?'selected':''}>${x}</option>`).join("")}</select></div>
+      <div class="field"><label>Biological indicator (spore test)</label><select id="cyBi">${["Not done","Pending","Pass","Fail"].map(x=>`<option ${x===c.bi?'selected':''}>${x}</option>`).join("")}</select></div></div>
+    <div class="field"><label>Instrument sets in this load</label>
+      <div class="str-setpick">${avail.length? avail.map(s=>`<label class="str-chip"><input type="checkbox" value="${s.id}" ${ (c.setIds||[]).includes(s.id)?'checked':''}> ${escapeHtml(s.name)} <small>${escapeHtml(s.code||"")}</small></label>`).join("") : `<small style="color:var(--grey);">No instrument sets yet — add them in the Instrument Sets tab (you can still log loose pouches).</small>`}</div></div>
+    <div class="field-row"><div class="field"><label>Loose pouches (count)</label><input type="number" id="cyPouch" value="${escapeAttr(c.pouches||0)}"></div>
+      <div class="field"><label>Operator</label><input id="cyOp" value="${escapeAttr(c.operator||"")}"></div></div>
+    <div class="field"><label>Notes</label><input id="cyNotes" value="${escapeAttr(c.notes||"")}" placeholder="e.g. printout attached, load weight"></div>
+    <div id="cyResult" class="crm-count"></div>
+    <button class="btn btn-primary btn-block" id="cySave">Save cycle</button>
+    ${!isNew? `<button class="btn btn-outline btn-block" id="cyDel" style="margin-top:8px;color:var(--red);">Delete cycle</button>`:""}
+  `);
+  const $ = (x)=> document.getElementById(x);
+  const resultOf = ()=> ($("cyCi").value==="Fail" || $("cyBi").value==="Fail") ? "Fail" : "Pass";
+  const showRes = ()=>{ const r = resultOf(); $("cyResult").innerHTML = r==="Fail" ? `<b style="color:#b42318;">Result: FAIL</b> — the sets in this load will be quarantined and any patient they were used on will be listed for recall.` : `<b style="color:#166534;">Result: PASS</b> — sets become sterile until ${new Date(Date.now()+d.cfg.shelfDays*86400000).toLocaleDateString()} (${d.cfg.shelfDays}-day shelf life).${$("cyBi").value==="Pending"? " Update the biological indicator when it's read.":""}`; };
+  ["cyCi","cyBi"].forEach(k=> $(k).onchange = showRes); showRes();
+  $("cyProg").onchange = ()=>{ const p = $("cyProg").value; if(/^121/.test(p)){ $("cyTemp").value = 121; $("cyPres").value = 1.1; $("cyHold").value = 20; } else if(/^134/.test(p) || /Prion/.test(p)){ $("cyTemp").value = 134; $("cyPres").value = 2.1; $("cyHold").value = /Prion/.test(p)? 18 : /Unwrapped/.test(p)? 3.5 : 4; } };
+  $("cyAc").onchange = async ()=>{
+    if($("cyAc").value!=="__new"){ const last = d.cycles.filter(x=>x.autoclave===$("cyAc").value)[0]; if(isNew) $("cyNo").value = last? (Number(last.cycleNo)||0)+1 : 1; return; }
+    const name = (prompt("Autoclave name (e.g. Sector 45 — Runyes 23L)")||"").trim();
+    if(!name){ $("cyAc").value = c.autoclave; return; }
+    const all = await dbGetAll("settings"); const s = all[0]; if(s){ s.steril = Object.assign({}, d.cfg, {autoclaves: [...new Set(d.cfg.autoclaves.concat([name]))]}); await dbPut("settings", s); }
+    const o = document.createElement("option"); o.textContent = name; $("cyAc").insertBefore(o, $("cyAc").lastElementChild); $("cyAc").value = name; $("cyNo").value = 1;
+  };
+  $("cySave").onclick = async ()=>{
+    const prevResult = c.result, prevSets = c.setIds||[];
+    Object.assign(c, { dateTime: new Date($("cyDt").value).toISOString(), clinicId:$("cyClinic").value, autoclave:$("cyAc").value, cycleNo: Number($("cyNo").value)||0, program:$("cyProg").value,
+      temp: Number($("cyTemp").value)||null, pressure: Number($("cyPres").value)||null, holdMin: Number($("cyHold").value)||null, ci:$("cyCi").value, bi:$("cyBi").value,
+      setIds: [...document.querySelectorAll(".str-setpick input:checked")].map(x=>x.value), pouches: Number($("cyPouch").value)||0, operator:$("cyOp").value.trim(), notes:$("cyNotes").value.trim(), result: resultOf(), updatedAt: nowIso() });
+    if(c.autoclave==="__new"){ showToast("Choose the autoclave"); return; }
+    await dbPut("sterilCycles", c);
+    const until = toDateKey(new Date(new Date(c.dateTime).getTime() + d.cfg.shelfDays*86400000));
+    for(const s of d.sets){
+      if(!c.setIds.includes(s.id)) continue;
+      if(c.result==="Fail"){ s.status = "Quarantine"; s.lastCycleId = c.id; }
+      else if(isNew || s.lastCycleId===c.id || !s.lastCycleId || s.status==="Needs processing" || s.status==="Used"){ s.status = "Sterile"; s.sterileUntil = until; s.lastCycleId = c.id; }
+      s.updatedAt = nowIso(); await dbPut("instrumentSets", s);
+    }
+    logActivity(`Autoclave cycle ${c.autoclave} #${c.cycleNo} — ${c.result}${c.result!==prevResult && prevResult? " (was "+prevResult+")":""}`);
+    if(c.result==="Fail") showToast("Cycle FAILED — sets quarantined. Check Usage & Trace for patients to recall.");
+    else showSuccessTick("Cycle logged", c.autoclave+" #"+c.cycleNo+" · PASS");
+    closeSheet(); if(currentPage==="steril") renderSteril();
+  };
+  const del = $("cyDel"); if(del) del.onclick = async ()=>{ if(!confirm("Delete this cycle record?")) return; await dbDelete("sterilCycles", c.id); logActivity("Deleted autoclave cycle "+c.autoclave+" #"+c.cycleNo); closeSheet(); if(currentPage==="steril") renderSteril(); };
+}
+STR_RENDER["Instrument Sets"] = async (body)=>{
+  const d = await strLoad();
+  const sets = d.sets.filter(s=>!s.archived).sort((a,b)=> (a.code||"").localeCompare(b.code||""));
+  body.innerHTML = `<div class="ais-actions"><button class="btn btn-primary btn-sm" id="strNewSet">+ Add instrument set</button>
+      <span style="font-size:12px;color:var(--grey);">Sterile shelf life: <b>${d.cfg.shelfDays} days</b> <button class="btn btn-outline btn-sm" id="strShelf">Change</button></span></div>
+    <div class="ais-table-wrap"><table class="ais-table"><thead><tr><th>Code</th><th>Set</th><th>Status</th><th>Sterile until</th><th>Times used</th><th></th></tr></thead><tbody>
+    ${sets.map(s=>{ const st = strSetStatus(s); const n = d.usage.filter(u=>u.setId===s.id).length; return `<tr><td><b>${escapeHtml(s.code||"")}</b></td><td><b>${escapeHtml(s.name)}</b><br><small>${escapeHtml(s.type||"")}${s.contents? " · "+escapeHtml(s.contents.slice(0,60)):""}</small></td><td>${strBadge(st)}</td><td>${s.sterileUntil && st==="Sterile"? new Date(s.sterileUntil+"T00:00:00").toLocaleDateString() : "—"}</td><td>${n}</td>
+      <td style="white-space:nowrap;">${st==="Used"||st==="Expired"||st==="Quarantine"? `<button class="btn btn-outline btn-sm" data-setreproc="${s.id}">Send for reprocessing</button> `:""}<button class="btn btn-outline btn-sm" data-setedit="${s.id}">Edit</button></td></tr>`; }).join("") || `<tr><td colspan="6" class="ais-empty">No instrument sets yet. Add each kit you autoclave (e.g. "Extraction kit 1", "RCT kit 2").</td></tr>`}
+    </tbody></table></div>`;
+  document.getElementById("strNewSet").onclick = ()=> openSetForm(null, d);
+  body.querySelectorAll("[data-setedit]").forEach(b=> b.onclick = ()=> openSetForm(b.dataset.setedit, d));
+  body.querySelectorAll("[data-setreproc]").forEach(b=> b.onclick = async ()=>{ const s = d.sets.find(x=>x.id===b.dataset.setreproc); s.status = "Needs processing"; s.updatedAt = nowIso(); await dbPut("instrumentSets", s); renderSteril(); });
+  document.getElementById("strShelf").onclick = async ()=>{
+    const v = parseInt(prompt("Sterile shelf life of a wrapped set (days)", d.cfg.shelfDays)||"");
+    if(!v || v<1) return;
+    const all = await dbGetAll("settings"); const s = all[0]; if(!s) return;
+    s.steril = Object.assign({}, d.cfg, {shelfDays: v}); await dbPut("settings", s); renderSteril();
+  };
+};
+async function openSetForm(id, d){
+  let s = id? d.sets.find(x=>x.id===id) : null;
+  const isNew = !s;
+  if(!s){ const n = d.sets.length+1; s = { id: uid("iset"), code: "SET-"+String(n).padStart(3,"0"), name:"", type: STR_SET_TYPES[0], contents:"", status:"Needs processing", createdAt: nowIso() }; }
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>${isNew? "Add" : "Edit"} Instrument Set</h2>
+    <div class="field-row"><div class="field"><label>Code (write this on the pouch / cassette)</label><input id="isCode" value="${escapeAttr(s.code)}"></div>
+      <div class="field"><label>Type</label><select id="isType">${STR_SET_TYPES.map(t=>`<option ${t===s.type?'selected':''}>${t}</option>`).join("")}</select></div></div>
+    <div class="field"><label>Name</label><input id="isName" value="${escapeAttr(s.name)}" placeholder="e.g. Extraction kit 1"></div>
+    <div class="field"><label>Contents</label><textarea id="isCont" rows="3" placeholder="e.g. Mirror, probe, tweezer, forceps 150/151, elevator">${escapeHtml(s.contents||"")}</textarea></div>
+    <button class="btn btn-primary btn-block" id="isSave">Save set</button>
+    ${!isNew? `<button class="btn btn-outline btn-block" id="isArch" style="margin-top:8px;">Retire this set</button>`:""}
+  `);
+  document.getElementById("isSave").onclick = async ()=>{
+    const name = document.getElementById("isName").value.trim(); if(!name){ showToast("Enter a name"); return; }
+    Object.assign(s, { code: document.getElementById("isCode").value.trim(), name, type: document.getElementById("isType").value, contents: document.getElementById("isCont").value.trim(), updatedAt: nowIso() });
+    await dbPut("instrumentSets", s); showSuccessTick("Set saved", s.code); closeSheet(); renderSteril();
+  };
+  const ar = document.getElementById("isArch"); if(ar) ar.onclick = async ()=>{ if(!confirm("Retire "+s.name+"? Its history stays in the records.")) return; s.archived = true; s.updatedAt = nowIso(); await dbPut("instrumentSets", s); closeSheet(); renderSteril(); };
+}
+async function openUseSetSheet(prePatient){
+  const d = await strLoad();
+  const ready = d.sets.filter(s=> !s.archived && strSetStatus(s)==="Sterile");
+  let patient = prePatient||null;
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>Use Sterile Set on Patient</h2>
+    <div id="usPt"></div>
+    <div class="field" style="margin-top:10px;"><label>Sterile set(s) opened for this patient</label>
+      <div class="str-setpick">${ready.length? ready.map(s=>`<label class="str-chip"><input type="checkbox" value="${s.id}"> ${escapeHtml(s.code||"")} · ${escapeHtml(s.name)} <small>till ${new Date(s.sterileUntil+"T00:00:00").toLocaleDateString(undefined,{day:"numeric",month:"short"})}</small></label>`).join("") : `<small style="color:#b42318;">No sterile sets available — log an autoclave cycle first.</small>`}</div></div>
+    <div class="field"><label>Procedure (optional)</label><input id="usProc" placeholder="e.g. Extraction 38"></div>
+    <button class="btn btn-primary btn-block" id="usSave" ${ready.length?'':'disabled'}>Record</button>`);
+  aisPatientPicker("usPt", (p)=> patient = p, "Choose patient");
+  if(prePatient) setTimeout(()=>{ const slot = document.getElementById("usPt"); if(slot) slot.innerHTML = `<div class="ais-picked"><b>${escapeHtml(prePatient.name)}</b></div>`; }, 0);
+  document.getElementById("usSave").onclick = async ()=>{
+    const ids = [...document.querySelectorAll(".str-setpick input:checked")].map(x=>x.value);
+    if(!patient){ showToast("Choose the patient"); return; }
+    if(!ids.length){ showToast("Tick at least one set"); return; }
+    for(const id of ids){
+      const s = d.sets.find(x=>x.id===id);
+      await dbPut("setUsage", { id: uid("use"), setId: s.id, setCode: s.code||"", setName: s.name, cycleId: s.lastCycleId||"", patientId: patient.id, patientName: patient.name, procedure: document.getElementById("usProc").value.trim(), date: nowIso(), by: (typeof fbCurrentUserEmail!=="undefined" && fbCurrentUserEmail)||"" });
+      s.status = "Used"; s.updatedAt = nowIso(); await dbPut("instrumentSets", s);
+    }
+    logActivity(`Sterile set(s) used for ${patient.name}`, {patientId: patient.id});
+    showSuccessTick("Recorded", ids.length+" set(s) · "+patient.name);
+    closeSheet(); if(currentPage==="steril") renderSteril();
+  };
+}
+STR_RENDER["Usage & Trace"] = async (body)=>{
+  const d = await strLoad();
+  const cyc = {}; d.cycles.forEach(c=> cyc[c.id] = c);
+  const failed = d.cycles.filter(c=> c.result==="Fail");
+  const recall = []; failed.forEach(c=> d.usage.filter(u=> u.cycleId===c.id).forEach(u=> recall.push({u, c})));
+  body.innerHTML = `
+    <div class="ais-actions"><button class="btn btn-primary btn-sm" id="strUseSet">${icon('user',14)} Use a set on a patient</button>
+      <input id="strTraceQ" class="ais-select" style="min-width:220px;" placeholder="Trace: patient name, set code or cycle no."></div>
+    ${recall.length? `<div class="ais-warnbox"><b>Patients exposed to sets from failed cycles</b>${recall.map(r=>`<div>${escapeHtml(r.u.patientName)} — ${escapeHtml(r.u.setCode||r.u.setName)} on ${new Date(r.u.date).toLocaleDateString()} (cycle ${escapeHtml(r.c.autoclave)} #${escapeHtml(String(r.c.cycleNo))})</div>`).join("")}</div>` : ""}
+    <div class="ais-table-wrap" style="max-height:600px;"><table class="ais-table"><thead><tr><th>Date</th><th>Patient</th><th>Set</th><th>Cycle</th><th>Procedure</th></tr></thead><tbody id="strUseBody"></tbody></table></div>`;
+  const draw = ()=>{
+    const q = normalizeStr(document.getElementById("strTraceQ").value||"").trim();
+    const rows = d.usage.filter(u=>{ if(!q) return true; const c = cyc[u.cycleId]||{}; return normalizeStr(u.patientName).includes(q) || normalizeStr(u.setCode).includes(q) || normalizeStr(u.setName).includes(q) || String(c.cycleNo||"")===q; }).slice(0,500);
+    document.getElementById("strUseBody").innerHTML = rows.map(u=>{ const c = cyc[u.cycleId]; return `<tr><td>${new Date(u.date).toLocaleString()}</td><td><b>${escapeHtml(u.patientName)}</b></td><td>${escapeHtml(u.setCode||"")} · ${escapeHtml(u.setName||"")}</td><td>${c? escapeHtml(c.autoclave)+" #"+escapeHtml(String(c.cycleNo))+" "+strBadge(c.result||"Pass") : "—"}</td><td><small>${escapeHtml(u.procedure||"")}</small></td></tr>`; }).join("") || `<tr><td colspan="5" class="ais-empty">No set usage recorded yet.</td></tr>`;
+  };
+  draw();
+  document.getElementById("strTraceQ").oninput = draw;
+  document.getElementById("strUseSet").onclick = ()=> openUseSetSheet();
+};
+STR_RENDER.Report = async (body)=>{
+  const d = await strLoad();
+  const months = [...new Set(d.cycles.map(c=> (c.dateTime||"").slice(0,7)))].filter(Boolean).sort().reverse();
+  const cur = toDateKey(new Date()).slice(0,7); if(!months.includes(cur)) months.unshift(cur);
+  body.innerHTML = `<div class="ais-card"><div class="field"><label>Month</label><select id="strRm">${months.map(m=>`<option value="${m}">${new Date(m+"-01T00:00:00").toLocaleDateString(undefined,{month:"long",year:"numeric"})}</option>`).join("")}</select></div>
+    <div id="strRs"></div>
+    <div style="display:flex;gap:8px;margin-top:10px;"><button class="btn btn-outline" style="flex:1;" id="strRx">Export Excel</button><button class="btn btn-primary" style="flex:1;" id="strRp">${icon('print',15)} Print register</button></div></div>`;
+  const rowsFor = (m)=> d.cycles.filter(c=> (c.dateTime||"").slice(0,7)===m).slice().reverse();
+  const setName = {}; d.sets.forEach(s=> setName[s.id] = (s.code? s.code+" ":"")+s.name);
+  const cols = ["Date","Time","Autoclave","Cycle no.","Program","Temp °C","Pressure bar","Hold min","Chemical indicator","Biological indicator","Result","Sets / pouches","Operator","Notes"];
+  const toRows = (list)=> list.map(c=>{ const dt = new Date(c.dateTime); return [dt.toLocaleDateString(), dt.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}), c.autoclave, c.cycleNo, c.program, c.temp, c.pressure, c.holdMin, c.ci, c.bi, c.result||"Pass", (c.setIds||[]).map(id=>setName[id]||"").join(", ")+(c.pouches? (c.setIds||[]).length? " + "+c.pouches+" pouches" : c.pouches+" pouches" : ""), c.operator, c.notes]; });
+  const sum = ()=>{ const m = document.getElementById("strRm").value; const l = rowsFor(m); document.getElementById("strRs").innerHTML = `<div class="ais-kpis" style="margin-top:8px;"><div class="ais-kpi"><b>${l.length}</b><span>Cycles</span></div><div class="ais-kpi" style="--k:#b42318;"><b>${l.filter(c=>c.result==="Fail").length}</b><span>Failed</span></div><div class="ais-kpi"><b>${l.filter(c=>c.bi==="Pass"||c.bi==="Fail").length}</b><span>Spore tests</span></div><div class="ais-kpi"><b>${l.filter(c=>/Bowie/.test(c.program||"")).length}</b><span>Bowie-Dick tests</span></div></div>`; };
+  sum(); document.getElementById("strRm").onchange = sum;
+  document.getElementById("strRx").onclick = ()=>{ const m = document.getElementById("strRm").value; downloadXlsx("sterilization-register-"+m, [{name:"Cycles "+m, columns: cols, rows: toRows(rowsFor(m))}]); };
+  document.getElementById("strRp").onclick = async ()=>{
+    const m = document.getElementById("strRm").value; const l = rowsFor(m);
+    const clinics = await dbGetAll("clinics"); const clinic = clinics.find(x=>x.isDefault) || clinics[0] || {};
+    printDocument({ title:"Sterilization Register", clinic, docDate: new Date(m+"-01T00:00:00").toLocaleDateString(undefined,{month:"long",year:"numeric"}),
+      bodyHtml: `<h3 style="margin:0 0 8px;">Autoclave Sterilization Register — ${new Date(m+"-01T00:00:00").toLocaleDateString(undefined,{month:"long",year:"numeric"})}</h3>
+        <p style="font-size:11px;margin:0 0 8px;">${l.length} cycles · ${l.filter(c=>c.result==="Fail").length} failed · ${l.filter(c=>c.bi==="Pass"||c.bi==="Fail").length} biological indicator tests</p>
+        <table style="width:100%;border-collapse:collapse;font-size:9.5px;"><thead><tr>${cols.slice(0,13).map(h=>`<th style="border:1px solid #999;padding:3px;text-align:left;">${h}</th>`).join("")}</tr></thead>
+        <tbody>${toRows(l).map(r=>`<tr>${r.slice(0,13).map(v=>`<td style="border:1px solid #bbb;padding:3px;">${escapeHtml(String(v??""))}</td>`).join("")}</tr>`).join("")}</tbody></table>
+        <div style="display:flex;justify-content:space-between;margin-top:30px;font-size:11px;"><div style="border-top:1px solid #333;padding-top:3px;width:40%;">Checked by (Infection control in-charge)</div><div style="border-top:1px solid #333;padding-top:3px;width:30%;">Date</div></div>`,
+      signHtml:"" });
+  };
+};
+
+// =====================================================================
+// EXCEL EXPORT — real .xlsx files (multiple sheets, numbers kept as
+// numbers, sensible column widths). Falls back to CSV if the Excel
+// library couldn't load.
+// =====================================================================
+function downloadXlsx(filenameBase, sheets){
+  if(typeof XLSX==="undefined"){ const s = sheets[0]; return downloadCSV(filenameBase, s.columns, s.rows); }
+  const wb = XLSX.utils.book_new();
+  const used = new Set();
+  sheets.forEach((s, i)=>{
+    const rows = (s.rows||[]).map(r=> r.map(v=> (typeof v==="string" && v!=="" && /^-?\d+(\.\d+)?$/.test(v.replace(/,/g,"")) && !/^0\d/.test(v)) ? Number(v.replace(/,/g,"")) : (v==null? "" : v)));
+    const ws = XLSX.utils.aoa_to_sheet([s.columns||[]].concat(rows));
+    ws["!cols"] = (s.columns||[]).map((c, ci)=> ({ wch: Math.min(48, Math.max(String(c).length, ...rows.slice(0,300).map(r=> String(r[ci]??"").length)) + 2) }));
+    let name = String(s.name||("Sheet"+(i+1))).replace(/[\\\/\?\*\[\]:]/g," ").slice(0,31) || ("Sheet"+(i+1));
+    while(used.has(name)) name = name.slice(0,28)+"_"+i;
+    used.add(name);
+    XLSX.utils.book_append_sheet(wb, ws, name);
+  });
+  XLSX.writeFile(wb, "healing-touch-"+filenameBase.replace(/[^\w\- ]+/g,"").replace(/\s+/g,"-")+".xlsx");
+  try{ logActivity("Exported to Excel: "+filenameBase); }catch(e){}
+  showToast("Excel file downloaded");
+}
+
+// =====================================================================
+// AUDIT TRAIL (Admin → Audit Trail). Every save and delete anywhere in the
+// PMS is recorded automatically by the data layer (who, when, which record,
+// what changed: old → new). Read straight from the server by date range.
+// =====================================================================
+const AUDIT_STORE_LABELS = { patients:"Patient", appointments:"Appointment", invoices:"Invoice", payments:"Receipt", treatmentPlans:"Treatment plan", prescriptions:"Prescription", examinations:"Examination", labCases:"Lab case", paymentsDue:"Payment to be made", refunds:"Refund", coupons:"Coupon", users:"Doctor", staffUsers:"Staff login", settings:"Settings", clinics:"Clinic", inventoryItems:"Inventory item", financeTransactions:"Finance entry", insuranceClaims:"Insurance claim", reminders:"Reminder", commitments:"Commitment", consents:"Consent", xrays:"X-ray", patientDocuments:"Document", sterilCycles:"Autoclave cycle", instrumentSets:"Instrument set", setUsage:"Set usage", campaigns:"Campaign", crmAutomations:"Automation", loyaltyLedger:"Loyalty points", pharmacySales:"Pharmacy sale", pharmacyProducts:"Pharmacy product" };
+let auditState = { from: "", to: "", user:"", store:"", action:"", q:"" };
+async function renderAudit(){
+  const main = document.getElementById("main");
+  if(!currentUserIsAdmin){ main.innerHTML = `<div class="page"><div class="empty-card">Only the admin account can view the audit trail.</div></div>`; return; }
+  if(!auditState.from){ const f = new Date(); f.setDate(f.getDate()-6); auditState.from = toDateKey(f); auditState.to = toDateKey(new Date()); }
+  main.innerHTML = `<div class="page ais-page">
+    <div class="ais-hero" style="background:linear-gradient(135deg,color-mix(in srgb,#334155 12%,transparent),color-mix(in srgb,var(--green) 8%,transparent));"><div class="ais-hero-ico" style="background:#334155;">${icon('reports',22)}</div><div><h2 style="margin:0;">Audit Trail</h2>
+      <p style="margin:2px 0 0;color:var(--grey);font-size:13px;">Every record added, changed or deleted — by whom, when, and exactly what changed.</p></div></div>
+    <div class="ais-card"><div class="field-row"><div class="field"><label>From</label><input type="date" id="auFrom" value="${auditState.from}"></div><div class="field"><label>To</label><input type="date" id="auTo" value="${auditState.to}"></div></div>
+      <button class="btn btn-primary btn-block" id="auLoad">Load</button></div>
+    <div id="auBody"></div></div>`;
+  document.getElementById("auLoad").onclick = ()=>{ auditState.from = document.getElementById("auFrom").value; auditState.to = document.getElementById("auTo").value; auditLoadAndDraw(); };
+  auditLoadAndDraw();
+}
+let auditRows = [];
+async function auditLoadAndDraw(){
+  const body = document.getElementById("auBody");
+  body.innerHTML = `<div class="ais-loading"><span class="ai-spin"></span> Loading…</div>`;
+  try{
+    const from = new Date(auditState.from+"T00:00:00").toISOString(), to = new Date(auditState.to+"T23:59:59.999").toISOString();
+    auditRows = window.__fbAuditQuery ? await window.__fbAuditQuery(from, to) : [];
+  }catch(e){ body.innerHTML = `<div class="ais-err">Couldn't load the audit trail: ${escapeHtml(e.message||String(e))}</div>`; return; }
+  const users = [...new Set(auditRows.map(r=>r.user).filter(Boolean))].sort();
+  const stores = [...new Set(auditRows.map(r=>r.store).filter(Boolean))].sort();
+  body.innerHTML = `
+    <div class="ais-actions"><select id="auUser" class="ais-select"><option value="">All users</option>${users.map(u=>`<option ${u===auditState.user?'selected':''}>${escapeHtml(u)}</option>`).join("")}</select>
+      <select id="auStore" class="ais-select"><option value="">All records</option>${stores.map(s=>`<option value="${s}" ${s===auditState.store?'selected':''}>${escapeHtml(AUDIT_STORE_LABELS[s]||s)}</option>`).join("")}</select>
+      <select id="auAct" class="ais-select"><option value="">All actions</option>${["create","update","delete","save"].map(a=>`<option ${a===auditState.action?'selected':''}>${a}</option>`).join("")}</select>
+      <input id="auQ" class="ais-select" placeholder="Search name / field / value…" value="${escapeAttr(auditState.q)}">
+      <button class="btn btn-outline btn-sm" id="auXlsx">Export Excel</button></div>
+    <div id="auSum" style="font-size:12px;color:var(--grey);margin:-4px 0 8px;"></div>
+    <div class="ais-table-wrap" style="max-height:640px;"><table class="ais-table"><thead><tr><th>When</th><th>User</th><th>Action</th><th>Record</th><th>What changed</th></tr></thead><tbody id="auRows"></tbody></table></div>`;
+  const fmtV = (v)=> v==null || v==="" ? "—" : (typeof v==="object"? JSON.stringify(v) : String(v));
+  const filtered = ()=>{
+    const q = normalizeStr(auditState.q||"").trim();
+    return auditRows.filter(r=> (!auditState.user || r.user===auditState.user) && (!auditState.store || r.store===auditState.store) && (!auditState.action || r.action===auditState.action)
+      && (!q || normalizeStr(JSON.stringify([r.label, r.docId, r.changes, r.user])).includes(q)));
+  };
+  const draw = ()=>{
+    const list = filtered();
+    document.getElementById("auSum").textContent = `${list.length} of ${auditRows.length} entries${auditRows.length>=3000? " (showing the latest 3000 — narrow the dates to see older ones)":""}`;
+    document.getElementById("auRows").innerHTML = list.slice(0,800).map(r=>{
+      const ch = Object.entries(r.changes||{}).map(([k,v])=>[k, Array.isArray(v)? v : [v&&v.o, v&&v.n]]);
+      const act = {create:["#dcfce7","#166534","Added"], update:["#e0f2fe","#075985","Changed"], delete:["#fde7e4","#b42318","Deleted"], login:["#ede9fe","#5b21b6","Signed in"], save:["#f1f5f9","#334155","Saved"]}[r.action] || ["#f1f5f9","#334155", r.action];
+      return `<tr><td style="white-space:nowrap;">${new Date(r.at).toLocaleString()}</td><td><small>${escapeHtml(r.user||"")}</small></td><td><span class="ais-badge" style="background:${act[0]};color:${act[1]};">${escapeHtml(act[2])}</span></td>
+        <td><b>${escapeHtml(AUDIT_STORE_LABELS[r.store]||r.store||"")}</b>${r.label? "<br><small>"+escapeHtml(r.label)+"</small>":""}</td>
+        <td><small>${r.action==="delete"? `<div style="color:#b42318;">Record deleted${ch.length? " — last values kept below":""}</div>`:""}${ch.length? ch.slice(0,5).map(([k,v])=>`<div><b>${escapeHtml(k)}</b>: <span style="color:#b42318;">${escapeHtml(fmtV(v[0]).slice(0,60))}</span> → <span style="color:#166534;">${escapeHtml(fmtV(v[1]).slice(0,60))}</span></div>`).join("")+(ch.length>5? `<div>+${ch.length-5} more field(s)</div>`:"") : (r.action==="update"? "" : "")}</small></td></tr>`;
+    }).join("") || `<tr><td colspan="5" class="ais-empty">Nothing recorded in this period.</td></tr>`;
+  };
+  draw();
+  const bind = (id, key, ev)=>{ const el = document.getElementById(id); el.addEventListener(ev||"change", ()=>{ auditState[key] = el.value; draw(); }); };
+  bind("auUser","user"); bind("auStore","store"); bind("auAct","action"); bind("auQ","q","input");
+  document.getElementById("auXlsx").onclick = ()=> downloadXlsx("audit-trail-"+auditState.from+"-to-"+auditState.to, [{ name:"Audit trail", columns:["When","User","Action","Record type","Record","Record ID","Field","Old value","New value"],
+    rows: filtered().flatMap(r=>{ const ch = Object.entries(r.changes||{}).map(([k,v])=>[k, Array.isArray(v)? v : [v&&v.o, v&&v.n]]); const base = [new Date(r.at).toLocaleString(), r.user||"", r.action, AUDIT_STORE_LABELS[r.store]||r.store||"", r.label||"", r.docId||""]; return ch.length? ch.map(([k,v])=> base.concat([k, fmtV(v[0]), fmtV(v[1])])) : [base.concat(["","",""])]; }) }]);
+}
+
 function aiBtnHtml(id, label, extraStyle){
   return `<button type="button" class="ai-btn" id="${id}" style="${extraStyle||''}">${icon('sparkle',15)} ${escapeHtml(label)}</button>`;
 }
@@ -32690,10 +33110,12 @@ async function renderMore(){
         <div class="list-row" id="rowConsultants"><span class="row-ico">${icon('user',18)}</span><span class="txt">Consultants</span><span class="meta">For splitting payments</span><span class="chev">${icon('chevron',16)}</span></div>
         <div class="list-row" id="rowSettings"><span class="row-ico">${icon('settings',18)}</span><span class="txt">Settings</span><span class="meta"></span><span class="chev">${icon('chevron',16)}</span></div>
         <div class="list-row" id="rowBackup"><span class="row-ico">${icon('backup',18)}</span><span class="txt">Backup &amp; Restore</span><span class="meta"></span><span class="chev">${icon('chevron',16)}</span></div>
+        <div class="list-row" id="rowAudit"><span class="row-ico">${icon('reports',18)}</span><span class="txt">Audit Trail</span><span class="meta">Who changed what, and when</span><span class="chev">${icon('chevron',16)}</span></div>
         <div class="list-row" id="rowTrash"><span class="row-ico">${icon('trash',18)}</span><span class="txt">Trash</span><span class="meta"></span><span class="chev">${icon('chevron',16)}</span></div>
   ` : "";
   const businessRows = `
         <div class="list-row" id="rowCrm"><span class="row-ico">${icon('ticket',18)}</span><span class="txt">Loyalty &amp; CRM</span><span class="meta">Points, referrals, campaigns</span><span class="chev">${icon('chevron',16)}</span></div>
+        <div class="list-row" id="rowSteril"><span class="row-ico">${icon('shield',18)}</span><span class="txt">Sterilization</span><span class="meta">Autoclave cycles, sets, traceability</span><span class="chev">${icon('chevron',16)}</span></div>
         <div class="list-row" id="rowAiSkills"><span class="row-ico">${icon('sparkle',18)}</span><span class="txt">AI Skills</span><span class="meta">14 AI assistants for your clinic</span><span class="chev">${icon('chevron',16)}</span></div>
         ${canAccessModule("financial")? `<div class="list-row" id="rowFinancial"><span class="row-ico">${icon('wallet',18)}</span><span class="txt">Financial</span><span class="meta">Income, expenses, budgets</span><span class="chev">${icon('chevron',16)}</span></div>` : ""}
         ${canAccessModule("inventory")? `<div class="list-row" id="rowInventory"><span class="row-ico">${icon('box',18)}</span><span class="txt">Inventory</span><span class="meta">Materials, stock, alerts</span><span class="chev">${icon('chevron',16)}</span></div>` : ""}
@@ -32720,6 +33142,8 @@ async function renderMore(){
   wire("rowAdmin", ()=> goTo("admin"));
   wire("rowAiSkills", ()=>{ aisOpenKey = null; goTo("aiskills"); });
   wire("rowCrm", ()=> goTo("crm"));
+  wire("rowSteril", ()=> goTo("steril"));
+  wire("rowAudit", ()=> goTo("audit"));
   wire("rowClinics", openClinicsSheet);
   wire("rowDoctors", openDoctorsSheet);
   wire("rowConsultants", openConsultantsSheet);
