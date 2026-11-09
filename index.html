@@ -25906,7 +25906,7 @@ let insTab = "Claims";
 let insFilter = { status:"open", insurer:"", q:"" };
 function insBadge(st){ const c = INS_COLORS[st] || ["#f1f5f9","#334155"]; return `<span class="ais-badge" style="background:${c[0]};color:${c[1]};">${escapeHtml(st||"Pending")}</span>`; }
 function insAgeDays(c){ const end = c.status==="Reimbursed" && c.reimbursedDate ? new Date(c.reimbursedDate) : new Date(); return Math.max(0, Math.round((end - new Date(c.claimDate||c.createdAt||Date.now()))/86400000)); }
-function insInsurerName(c){ return String(c.insurer||"").split(/[,·|]/)[0].trim() || "Not specified"; }
+function insInsurerName(c){ const n = String(c.insurer||"").split(/[,·|]/)[0].trim().replace(/\s+/g," "); return n ? n.toLowerCase().replace(/(^|\s)\S/g, m=> m.toUpperCase()) : "Not specified"; }
 async function insLoad(){
   const [claims, patients, invoices, payments, cur] = await Promise.all([dbGetAll("insuranceClaims"), dbGetAll("patients"), dbGetAll("invoices"), dbGetAll("payments"), finCurrency()]);
   const pMap = {}; patients.forEach(p=> pMap[p.id] = p);
