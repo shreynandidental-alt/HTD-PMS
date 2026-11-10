@@ -594,6 +594,9 @@
   .xv-cap{position:absolute;left:8px;top:8px;background:rgba(0,0,0,.6);padding:3px 8px;border-radius:6px;font-size:11.5px;}
   .xv-hint{padding:6px 12px;font-size:12px;color:#a1a1aa;background:#18181b;}
   @media (max-width:700px){ .xv-panes{flex-direction:column;} }
+  .mos-links{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px;}
+  .mos-link{display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:10px;border:1px solid var(--grey-light,#e2e5e7);background:var(--white);cursor:pointer;font-size:13px;font-weight:600;color:var(--charcoal-2);text-align:left;}
+  .mos-link:hover{border-color:#db2777;background:color-mix(in srgb,#db2777 6%,var(--white));}
   .ld-pipe{display:grid;grid-template-columns:repeat(auto-fit,minmax(92px,1fr));gap:6px;}
   .ld-stage{background:var(--off-white);border-radius:10px;padding:8px;text-align:center;border-top:3px solid #0891b2;}
   .ld-stage.good{border-top-color:var(--green);} .ld-stage.bad{border-top-color:#dc2626;}
@@ -2232,6 +2235,7 @@
       <div class="nav-item" data-page="appointments"><span class="ico" data-icon="calendar"></span><span class="lbl"> Appointments</span></div>
       <div class="nav-item" data-page="clinical"><span class="ico" data-icon="tooth"></span><span class="lbl"> Clinical</span></div>
       <div class="nav-item" data-page="assist"><span class="ico" data-icon="assist"></span><span class="lbl"> Assist</span></div>
+      <div class="nav-item" data-page="mos"><span class="ico" data-icon="megaphone"></span><span class="lbl"> Marketing OS</span></div>
       <div class="nav-item" data-page="aiskills"><span class="ico" data-icon="sparkle"></span><span class="lbl"> AI Skills</span></div>
       <div class="nav-item" data-page="crm"><span class="ico" data-icon="ticket"></span><span class="lbl"> Loyalty &amp; CRM</span></div>
       <div class="sidebar-divider"></div>
@@ -3317,6 +3321,7 @@ const PAGE_RENDERERS = {
   crm: renderCrm,
   steril: renderSteril,
   insurance: renderInsurance,
+  mos: renderMarketingOS,
   tele: renderTele,
   imaging: renderImaging,
   audit: renderAudit,
@@ -26013,6 +26018,54 @@ function sheetPatientPicker(slotId, onPick, label){
   setTimeout(()=>{ try{ q.focus(); }catch(e){} }, 50);
 }
 
+
+// =====================================================================
+// MARKETING OS — the Dental Marketing OS (Cloudflare) opens in its own tab
+// (it can't be shown inside the PMS: it blocks embedding for security).
+// This page is the launcher + sync status for the PMS → OS data link
+// (/api/os-sync: booked slots and lead visit status, read-only, secured
+// with the OS_SYNC_KEY shared secret).
+// =====================================================================
+const MOS_URL = "https://clinic-whatsapp-agent.shreynandi-dental.workers.dev";
+function mosOpen(path){ const w = window.open(MOS_URL + (path||"/"), "dental-marketing-os"); if(!w) showToast("Please allow pop-ups to open the Marketing OS"); return w; }
+document.addEventListener("click", (e)=>{ const n = e.target.closest && e.target.closest('.nav-item[data-page="mos"]'); if(n) mosOpen("/"); }, true);
+const MOS_LINKS = [["/","Dashboard","reports"],["/chats","WhatsApp chats","message"],["/leads","Leads","user"],["/appointments","Appointment requests","calendar"],["/content","Content calendar","calendar"],["/studio","Creative studio","sparkle"],["/approvals","Approvals","check"],["/social","Instagram & Facebook","camera"],["/meta-ads","Meta Ads","megaphone"],["/gbp","Google Business","star"],["/website","Website & SEO","globe"],["/ads","Google Ads & budget","wallet"],["/knowledge","Clinic knowledge","note"],["/integrations","Integrations","settings"]];
+async function renderMarketingOS(){
+  const main = document.getElementById("main");
+  const [appts, patients] = await Promise.all([dbGetAll("appointments"), dbGetAll("patients")]);
+  const today = toDateKey(new Date()); const in30 = (()=>{ const d = new Date(); d.setDate(d.getDate()+30); return toDateKey(d); })();
+  const upcoming = appts.filter(a=> a.date>=today && a.date<=in30 && !["Cancelled","NoShow","No-Show"].includes(a.status)).length;
+  const monthKey = today.slice(0,7);
+  const newPts = patients.filter(p=> (p.createdAt||"").slice(0,7)===monthKey).length;
+  const srcCount = {}; patients.filter(p=> (p.createdAt||"").slice(0,7)===monthKey).forEach(p=>{ const s = (p.hearAboutUs||"Not recorded").toString().trim()||"Not recorded"; srcCount[s] = (srcCount[s]||0)+1; });
+  main.innerHTML = `<div class="page ais-page">
+    <div class="ais-hero" style="background:linear-gradient(135deg,color-mix(in srgb,#db2777 12%,transparent),color-mix(in srgb,var(--green) 10%,transparent));"><div class="ais-hero-ico" style="background:#db2777;">${icon('megaphone',22)}</div><div><h2 style="margin:0;">Marketing OS</h2>
+      <p style="margin:2px 0 0;color:var(--grey);font-size:13px;">Leads, WhatsApp AI agent, posts, Google Business and ads — opens in its own tab.</p></div>
+      <button class="btn btn-primary" id="mosOpenBtn" style="margin-left:auto;">Open Marketing OS ↗</button></div>
+    <div class="ais-card"><div class="ais-card-title">Jump straight to</div>
+      <div class="mos-links">${MOS_LINKS.map(([p,l,ic])=>`<button type="button" class="mos-link" data-mos="${p}">${icon(ic,16)}<span>${escapeHtml(l)}</span></button>`).join("")}</div></div>
+    <div class="ais-card"><div class="ais-card-title">PMS → Marketing OS sync</div>
+      <div id="mosSync" class="ais-loading"><span class="ai-spin"></span> Checking…</div></div>
+    <div class="ais-kpis">
+      <div class="ais-kpi"><b>${upcoming}</b><span>Booked appointments, next 30 days (shared with the WhatsApp AI once sync is on)</span></div>
+      <div class="ais-kpi"><b>${newPts}</b><span>New patients registered this month</span></div>
+    </div>
+    ${Object.keys(srcCount).length? `<div class="ais-card"><div class="ais-card-title">How this month's new patients heard about you</div>${Object.entries(srcCount).sort((a,b)=>b[1]-a[1]).map(([k,n])=>`<div class="ais-row"><span>${escapeHtml(k)}</span><b>${n}</b></div>`).join("")}</div>`:""}
+  </div>`;
+  document.getElementById("mosOpenBtn").onclick = ()=> mosOpen("/");
+  main.querySelectorAll("[data-mos]").forEach(b=> b.onclick = ()=> mosOpen(b.dataset.mos));
+  const box = document.getElementById("mosSync");
+  let state = "error";
+  try{ const r = await fetch("/api/os-sync", {cache:"no-store"}); state = r.status===401? "ready" : r.status===503? "nokey" : r.status===404? "missing" : "error"; }catch(e){}
+  box.className = "";
+  box.innerHTML = {
+    ready: `<div style="color:#166534;font-weight:600;">✓ Sync link is switched on in the PMS.</div><p style="font-size:12.5px;color:var(--grey);margin:4px 0 0;">The Marketing OS can now read booked slots (so the WhatsApp AI never offers a taken time) and check whether a lead has visited or is booked. In the OS, the "Healing Touch PMS" integration needs the same key and this address:</p><code style="display:block;margin-top:6px;font-size:12px;word-break:break-all;">${escapeHtml(location.origin)}/api/os-sync</code>`,
+    nokey: `<div style="color:#92400e;font-weight:600;">One step left: add the sync key in Vercel.</div><ol style="font-size:12.5px;margin:6px 0 0;padding-left:18px;line-height:1.6;"><li>Vercel → htd-pms → Settings → Environment Variables → add <b>OS_SYNC_KEY</b> = a long random password (at least 16 characters), then Redeploy.</li><li>Put the same value in the Marketing OS as its PMS key, pointing at <code>${escapeHtml(location.origin)}/api/os-sync</code>.</li></ol><p style="font-size:12px;color:var(--grey);margin:6px 0 0;">The link is read-only: the OS can see appointment slots and visit status, and can't change anything in the PMS.</p>`,
+    missing: `<div>The sync endpoint isn't deployed yet.</div>`,
+    error: `<div style="color:#b42318;">Couldn't check the sync link right now.</div>`
+  }[state];
+}
+
 // =====================================================================
 // INSURANCE & CLAIMS (sidebar → Insurance). One place for every cashless /
 // reimbursement claim: status pipeline, ageing, insurer performance, insurance
@@ -29564,6 +29617,77 @@ async function printPrescription(rx, patient, clinics){
 }
 
 // ---- Files & X-rays ----
+
+// X-ray date: the day the X-ray was taken (defaults to today, editable), so
+// old films scanned in later still file and print under the right date.
+function xrayDateFromInput(v){
+  if(!v || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return nowIso();
+  if(v===toDateKey(new Date())) return nowIso();
+  return new Date(v+"T12:00:00").toISOString();
+}
+function openEditXrayDetails(x, onDone){
+  openSheet(`<button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>X-ray details</h2>
+    <img src="${x.imageData}" style="max-width:100%;max-height:220px;display:block;margin:0 auto 12px;border-radius:8px;">
+    <div class="field-row">
+      <div class="field"><label>X-ray date</label><input type="date" id="exDate" value="${x.date? toDateKey(new Date(x.date)) : toDateKey(new Date())}" max="${toDateKey(new Date())}"></div>
+      <div class="field"><label>Category</label><select id="exCat">${XRAY_CATEGORIES.map(c=>`<option ${c===x.category?'selected':''}>${c}</option>`).join("")}</select></div>
+      <div class="field"><label>Tooth</label><input id="exTooth" value="${escapeAttr(x.tooth||"")}" placeholder="e.g. 36"></div>
+    </div>
+    <div class="field"><label>Notes</label><input id="exNotes" value="${escapeAttr(x.notes||"")}"></div>
+    <button class="btn btn-primary btn-block" id="exSave">Save</button>`);
+  document.getElementById("exSave").onclick = async ()=>{
+    const all = await dbGetAll("xrays"); const rec = all.find(r=> r.id===x.id); if(!rec){ showToast("X-ray not found"); return; }
+    const dv = document.getElementById("exDate").value;
+    const oldKey = rec.date? toDateKey(new Date(rec.date)) : "";
+    if(dv && dv!==oldKey) rec.date = new Date(dv+"T12:00:00").toISOString();
+    rec.category = document.getElementById("exCat").value; rec.tooth = document.getElementById("exTooth").value.trim(); rec.notes = document.getElementById("exNotes").value.trim(); rec.updatedAt = nowIso();
+    await dbPut("xrays", rec);
+    logActivity("X-ray details updated", {patientId: rec.patientId});
+    showSuccessTick("Saved", rec.category+" · "+new Date(rec.date).toLocaleDateString());
+    closeSheet(); if(onDone) onDone();
+  };
+}
+function openPrintXraysByDate(patient, xrays){
+  const byDay = {}; xrays.forEach(x=>{ const k = x.date? toDateKey(new Date(x.date)) : "Undated"; (byDay[k] = byDay[k] || []).push(x); });
+  const days = Object.keys(byDay).sort().reverse();
+  openSheet(`<button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
+    <h2>Print X-rays</h2>
+    <div class="field-row"><div class="field"><label>Date</label><select id="pxDay"><option value="__range">Choose a date range…</option>${days.map(k=>`<option value="${k}">${k==="Undated"? "Undated" : fromDateKey(k).toLocaleDateString(undefined,{weekday:"short",day:"numeric",month:"short",year:"numeric"})} (${byDay[k].length})</option>`).join("")}</select></div>
+      <div class="field"><label>Per row</label><select id="pxCols"><option value="2">2</option><option value="1">1 (large)</option><option value="3">3</option></select></div></div>
+    <div class="field-row" id="pxRange" style="display:none;"><div class="field"><label>From</label><input type="date" id="pxFrom"></div><div class="field"><label>To</label><input type="date" id="pxTo"></div></div>
+    <div id="pxList" class="file-grid" style="margin:8px 0 12px;"></div>
+    <button class="btn btn-primary btn-block" id="pxGo">${icon('print',15)} Print selected</button>`);
+  const sel = document.getElementById("pxDay");
+  if(days.length) sel.value = days[0];
+  const pick = ()=>{
+    let list;
+    if(sel.value==="__range"){ const f = document.getElementById("pxFrom").value, t = document.getElementById("pxTo").value; list = xrays.filter(x=>{ const k = x.date? toDateKey(new Date(x.date)) : ""; return k && (!f || k>=f) && (!t || k<=t); }); }
+    else list = byDay[sel.value] || [];
+    list = list.slice().sort((a,b)=> (a.date||"").localeCompare(b.date||""));
+    document.getElementById("pxRange").style.display = sel.value==="__range" ? "" : "none";
+    document.getElementById("pxList").innerHTML = list.map(x=>`<label class="file-thumb" style="cursor:pointer;"><img src="${x.imageData}" alt=""><div class="file-thumb-label"><input type="checkbox" value="${x.id}" checked> ${escapeHtml(x.category||"")}${x.tooth? " · "+escapeHtml(x.tooth):""} · ${x.date? new Date(x.date).toLocaleDateString() : ""}</div></label>`).join("") || `<div class="empty-card">No X-rays for this date.</div>`;
+  };
+  sel.onchange = pick; document.getElementById("pxFrom").onchange = pick; document.getElementById("pxTo").onchange = pick; pick();
+  document.getElementById("pxGo").onclick = async ()=>{
+    const ids = [...document.querySelectorAll("#pxList input:checked")].map(i=>i.value);
+    const list = xrays.filter(x=> ids.includes(x.id)).sort((a,b)=> (a.date||"").localeCompare(b.date||""));
+    if(!list.length){ showToast("Tick at least one X-ray"); return; }
+    const cols = Number(document.getElementById("pxCols").value)||2;
+    const clinics = await dbGetAll("clinics");
+    const clinic = clinics.find(c=> c.id===(list[0].clinicId||patient.preferredClinicId)) || clinics.find(c=>c.isDefault) || clinics[0] || {};
+    const ks = [...new Set(list.map(x=> x.date? toDateKey(new Date(x.date)) : ""))].filter(Boolean).sort();
+    const fmt = (k)=> fromDateKey(k).toLocaleDateString(undefined,{day:"numeric",month:"short",year:"numeric"});
+    const dateLabel = ks.length<=1 ? (ks[0]? fmt(ks[0]) : "") : fmt(ks[0])+" – "+fmt(ks[ks.length-1]);
+    const w = (100/cols - 2).toFixed(1);
+    printDocument({ title:"Radiographs", patient, clinic, docDate: dateLabel,
+      bodyHtml: `<h3 style="margin:0 0 8px;">Radiographs${dateLabel? " — "+dateLabel : ""}</h3>
+        <div style="display:flex;flex-wrap:wrap;gap:10px 2%;">${list.map(x=>`<figure style="margin:0;width:${w}%;break-inside:avoid;page-break-inside:avoid;"><img src="${x.imageData}" style="width:100%;border:1px solid #ccc;border-radius:4px;"><figcaption style="font-size:11px;color:#444;margin-top:3px;">${escapeHtml(x.category||"X-ray")}${x.tooth? " · Tooth "+escapeHtml(x.tooth):""} · ${x.date? new Date(x.date).toLocaleDateString() : ""}${x.notes? " · "+escapeHtml(x.notes):""}</figcaption></figure>`).join("")}</div>`,
+      signHtml: "" });
+    closeSheet();
+  };
+}
+
 const XRAY_CATEGORIES = ["IOPA","OPG","CBCT","Bitewing","Occlusal","Cephalogram","Pre-op","Post-op","Other"];
 const DOCUMENT_CATEGORIES = ["ID Proof","Insurance","Medical Record","Referral","Previous Prescription","Handwritten Prescription","Previous Dental Record","Consent","STL / 3D Scan File","DICOM / CBCT Raw File","Intraoral Photo","Other"];
 
@@ -29581,10 +29705,11 @@ async function renderFilesTab(body, patientId, patient){
       </div>
     `).join("")}</div>` : `<div class="empty-card" style="margin-bottom:16px;"><b>No signed consents yet</b>Use the "Consent Forms" button at the top of this patient's profile to collect one.</div>`}
 
-    <div class="section-title" style="display:flex;justify-content:space-between;align-items:center;">X-Rays ${xrays.length? `<button class="btn btn-outline btn-sm" id="btnOpenImaging" style="text-transform:none;letter-spacing:0;">${icon('tooth',14)} Arch view &amp; X-ray viewer</button>`:""}</div>
+    <div class="section-title" style="display:flex;justify-content:space-between;align-items:center;">X-Rays ${xrays.length? `<span style="display:flex;gap:6px;flex-wrap:wrap;"><button class="btn btn-outline btn-sm" id="btnPrintXrays" style="text-transform:none;letter-spacing:0;">${icon('print',14)} Print by date</button><button class="btn btn-outline btn-sm" id="btnOpenImaging" style="text-transform:none;letter-spacing:0;">${icon('tooth',14)} Arch view &amp; X-ray viewer</button></span>`:""}</div>
     <div class="field-row">
       <div class="field"><label>Category</label><select id="xrayCategorySelect">${XRAY_CATEGORIES.map(c=>`<option value="${c}">${c}</option>`).join("")}</select></div>
       <div class="field"><label>Tooth (optional)</label><input id="xrayToothInput" placeholder="e.g. 36"></div>
+      <div class="field"><label>X-ray date</label><input type="date" id="xrayDateInput" value="${toDateKey(new Date())}" max="${toDateKey(new Date())}"></div>
     </div>
     <div class="note-paste-zone" id="xrayPasteZone" tabindex="0">Click here, then paste an image (Ctrl+V)</div>
     <input type="file" accept="image/*" id="xrayFileInput" style="display:none;">
@@ -29596,7 +29721,7 @@ async function renderFilesTab(body, patientId, patient){
     ${xrays.length? `<div class="file-grid">${xrays.map(x=>`
       <div class="file-thumb" data-xray="${x.id}">
         <img src="${x.imageData}" alt="${escapeAttr(x.category)}">
-        <div class="file-thumb-label">${escapeHtml(x.category)}${x.tooth? ' · '+escapeHtml(x.tooth):''}</div>
+        <div class="file-thumb-label">${escapeHtml(x.category)}${x.tooth? ' · '+escapeHtml(x.tooth):''}<br><span style="opacity:.8;">${x.date? new Date(x.date).toLocaleDateString(undefined,{day:"numeric",month:"short",year:"numeric"}) : ""}</span></div>
       </div>
     `).join("")}</div>` : `<div class="empty-card"><b>No X-rays uploaded yet</b></div>`}
 
@@ -29613,6 +29738,8 @@ async function renderFilesTab(body, patientId, patient){
       </div>
     `).join("")}</div>` : `<div class="empty-card"><b>No documents uploaded yet</b></div>`}
   `;
+  const btnPx = document.getElementById("btnPrintXrays");
+  if(btnPx) btnPx.onclick = ()=> openPrintXraysByDate(patient, xrays);
   const btnImg = document.getElementById("btnOpenImaging");
   if(btnImg) btnImg.onclick = ()=>{ imgPatient = patient; imgTooth = null; closeSheet(); goTo("imaging"); };
   // RVG Imaging link panel (X-rays / photos sent with "Export to PMS")
@@ -29629,7 +29756,7 @@ async function renderFilesTab(body, patientId, patient){
       const dataUrl = await compressImageFile(file, 900);
       await dbAdd("xrays", {
         id: uid("xray"), patientId, category: document.getElementById("xrayCategorySelect").value,
-        tooth: document.getElementById("xrayToothInput").value.trim(), date: nowIso(), imageData: dataUrl, notes:"",
+        tooth: document.getElementById("xrayToothInput").value.trim(), date: xrayDateFromInput(document.getElementById("xrayDateInput").value), imageData: dataUrl, notes:"", uploadedAt: nowIso(),
         clinicId: currentUserRestrictedClinicId || patient.preferredClinicId || ""
       });
       logActivity("X-ray saved for "+patient.name, {patientId});
@@ -29657,7 +29784,7 @@ async function renderFilesTab(body, patientId, patient){
   body.querySelectorAll("[data-xray]").forEach(el=>{
     el.onclick = ()=>{
       const x = xrays.find(x=>x.id===el.dataset.xray);
-      if(x) openImageViewer(x.imageData, {patient, xrayId: x.id, tabBody: body, fileName: (x.category||"Xray").replace(/\s+/g,'_')+"_"+(x.tooth?("tooth"+x.tooth+"_"):"")+toDateKey(new Date(x.date))+".jpg", label: x.category||"X-ray"});
+      if(x) openImageViewer(x.imageData, {patient, xrayId: x.id, onEditXray: ()=> openEditXrayDetails(x, ()=> renderFilesTab(body, patientId, patient)), tabBody: body, fileName: (x.category||"Xray").replace(/\s+/g,'_')+"_"+(x.tooth?("tooth"+x.tooth+"_"):"")+toDateKey(new Date(x.date))+".jpg", label: x.category||"X-ray"});
     };
   });
 
@@ -29735,6 +29862,7 @@ function openImageViewer(src, shareOpts){
     ${shareOpts? `
       <div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap;justify-content:center;">
         ${shareOpts.xrayId? `<button id="imgViewerAnnotate" style="background:rgba(255,255,255,0.15);border:none;color:white;padding:10px 16px;border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:6px;font-weight:600;font-size:13px;">${icon('edit',15)} Annotate / Measure</button>` : ""}
+        ${shareOpts.onEditXray? `<button id="imgViewerEditX" style="background:rgba(255,255,255,0.15);border:none;color:white;padding:10px 16px;border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:6px;font-weight:600;font-size:13px;">${icon('calendar',15)} Edit date / details</button>` : ""}
         ${shareOpts.onPrint? `<button id="imgViewerPrint" style="background:rgba(255,255,255,0.15);border:none;color:white;padding:10px 16px;border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:6px;font-weight:600;font-size:13px;">${icon('print',15)} Print</button>` : ""}
         <button id="imgViewerWa" style="background:#25D366;border:none;color:white;padding:10px 16px;border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:6px;font-weight:600;font-size:13px;">${icon('message',15)} WhatsApp</button>
         <button id="imgViewerEmail" style="background:rgba(255,255,255,0.15);border:none;color:white;padding:10px 16px;border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:6px;font-weight:600;font-size:13px;">${icon('mail',15)} Email</button>
@@ -29746,6 +29874,9 @@ function openImageViewer(src, shareOpts){
   if(shareOpts){
     if(shareOpts.xrayId){
       wrap.querySelector("#imgViewerAnnotate").onclick = (e)=>{ e.stopPropagation(); wrap.remove(); openXrayAnnotationTool(shareOpts.xrayId, shareOpts.patient, shareOpts.tabBody); };
+    }
+    if(shareOpts.onEditXray){
+      wrap.querySelector("#imgViewerEditX").onclick = (e)=>{ e.stopPropagation(); wrap.remove(); shareOpts.onEditXray(); };
     }
     if(shareOpts.onPrint){
       wrap.querySelector("#imgViewerPrint").onclick = (e)=>{ e.stopPropagation(); shareOpts.onPrint(); };
@@ -33830,6 +33961,7 @@ async function renderMore(){
         <div class="list-row" id="rowTele"><span class="row-ico">${icon('camera',18)}</span><span class="txt">Tele-Consult</span><span class="meta">Video consultations</span><span class="chev">${icon('chevron',16)}</span></div>
         <div class="list-row" id="rowImaging"><span class="row-ico">${icon('tooth',18)}</span><span class="txt">Dental Imaging</span><span class="meta">Arch view, X-ray viewer &amp; compare</span><span class="chev">${icon('chevron',16)}</span></div>
         <div class="list-row" id="rowSteril"><span class="row-ico">${icon('shield',18)}</span><span class="txt">Sterilization</span><span class="meta">Autoclave cycles, sets, traceability</span><span class="chev">${icon('chevron',16)}</span></div>
+        <div class="list-row" id="rowMos"><span class="row-ico">${icon('megaphone',18)}</span><span class="txt">Marketing OS</span><span class="meta">Leads, WhatsApp AI, posts &amp; ads</span><span class="chev">${icon('chevron',16)}</span></div>
         <div class="list-row" id="rowAiSkills"><span class="row-ico">${icon('sparkle',18)}</span><span class="txt">AI Skills</span><span class="meta">14 AI assistants for your clinic</span><span class="chev">${icon('chevron',16)}</span></div>
         ${canAccessModule("financial")? `<div class="list-row" id="rowFinancial"><span class="row-ico">${icon('wallet',18)}</span><span class="txt">Financial</span><span class="meta">Income, expenses, budgets</span><span class="chev">${icon('chevron',16)}</span></div>` : ""}
         ${canAccessModule("inventory")? `<div class="list-row" id="rowInventory"><span class="row-ico">${icon('box',18)}</span><span class="txt">Inventory</span><span class="meta">Materials, stock, alerts</span><span class="chev">${icon('chevron',16)}</span></div>` : ""}
@@ -33858,6 +33990,7 @@ async function renderMore(){
   wire("rowCrm", ()=> goTo("crm"));
   wire("rowSteril", ()=> goTo("steril"));
   wire("rowInsurance", ()=> goTo("insurance"));
+  wire("rowMos", ()=>{ mosOpen("/"); goTo("mos"); });
   wire("rowTele", ()=> goTo("tele"));
   wire("rowImaging", ()=> goTo("imaging"));
   wire("rowAudit", ()=> goTo("audit"));
@@ -38461,6 +38594,7 @@ const ICON_PATHS = {
   image: `<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="8.5" cy="9.5" r="1.6"/><path d="M4 17l5.5-5.5 3 3L18 9.5l2 2"/>`,
   camera: `<path d="M4 8.5h3.2L8.6 6h6.8l1.4 2.5H20a1 1 0 0 1 1 1V18a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9.5a1 1 0 0 1 1-1Z"/><circle cx="12" cy="13.2" r="3.3"/>`,
   shield: `<path d="M12 3.2 19 6v6c0 4.6-3 8.2-7 9.3-4-1.1-7-4.7-7-9.3V6l7-2.8Z"/><path d="M8.7 12.1l2.2 2.2 4.4-4.6"/>`,
+  megaphone: `<path d="M3.5 10v4a1 1 0 0 0 1 1H7l6 4V5L7 9H4.5a1 1 0 0 0-1 1z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/><path d="M19 6a8.5 8.5 0 0 1 0 12"/>`,
   sparkle: `<path d="M12 3.5l1.7 4.6 4.6 1.7-4.6 1.7L12 16.1l-1.7-4.6-4.6-1.7 4.6-1.7L12 3.5Z"/><path d="M18.5 15l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7.7-1.8Z"/><path d="M5.5 15.5l.5 1.3 1.3.5-1.3.5-.5 1.3-.5-1.3-1.3-.5 1.3-.5.5-1.3Z"/>`,
   pin: `<path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11Z"/><circle cx="12" cy="10" r="2.4"/>`,
   note: `<path d="M6 3.5h9l3.5 3.5V20a.5.5 0 0 1-.5.5H6a.5.5 0 0 1-.5-.5V4a.5.5 0 0 1 .5-.5Z"/><path d="M14.5 3.5V7.5h4"/><path d="M8.5 12h7M8.5 15.5h5"/>`,
