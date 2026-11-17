@@ -19336,23 +19336,51 @@ async function openTreatmentPlanActionMenu(planId, patient, onRefresh){
   ]);
 }
 
+
+// Treatment plan cost breakdown used by the printout, the WhatsApp estimate
+// link and multi-plan prints: cost per tooth × number of teeth, the discount
+// on each treatment, any extra discount on the final total, total discount
+// and the final cost.
+function planCostBreakdown(plan){
+  const items = (plan.items||[]).map(it=>{
+    const perTooth = Number(it.fee)||0, teeth = Number(it.qty)||1, total = perTooth*teeth;
+    const disc = it.discountType==="flat" ? Math.min(total, Number(it.discount)||0) : total*((Number(it.discount)||0)/100);
+    const discLabel = !(Number(it.discount)>0) ? "" : it.discountType==="flat" ? "" : (+Number(it.discount).toFixed(2))+"%";
+    return { tooth: it.tooth||"", diagnosis: it.diagnosis||"", treatment: it.treatment||"", perTooth, teeth, total, disc, discLabel, net: total-disc, status: it.status||"" };
+  });
+  const t = computePlanTotals(plan.items||[], plan.overallDiscount, plan.overallDiscountType);
+  const overallLabel = (Number(plan.overallDiscount)>0 && plan.overallDiscountType!=="flat") ? (+Number(plan.overallDiscount).toFixed(2))+"%" : "";
+  return { items, gross: t.gross, itemDiscount: t.itemDiscount, subtotal: t.subtotal, overall: t.overallAmt, overallLabel, totalDiscount: t.discount, final: t.final };
+}
+function planCostTableHtml(plan){
+  const b = planCostBreakdown(plan);
+  const m = (n)=> "₹"+(Math.round((Number(n)||0)*100)/100).toLocaleString("en-IN");
+  const th = 'style="text-align:right;"';
+  const rows = b.items.map((it,i)=>`<tr>
+    <td>${i+1}</td><td>${escapeHtml(it.tooth)}</td>
+    <td><b>${escapeHtml(it.treatment)}</b>${it.diagnosis? `<div style="font-size:11px;color:#666;">${escapeHtml(it.diagnosis)}</div>`:""}</td>
+    <td ${th}>${m(it.perTooth)}</td><td ${th}>${it.teeth}</td><td ${th}>${m(it.total)}</td>
+    <td ${th}>${it.disc>0? "− "+m(it.disc)+(it.discLabel? `<div style="font-size:10.5px;color:#666;">(${it.discLabel})</div>`:"") : "—"}</td>
+    <td ${th}><b>${m(it.net)}</b></td></tr>`).join("");
+  const line = (k,v,style)=> `<div style="display:flex;justify-content:space-between;gap:16px;padding:3px 0;${style||""}"><span>${k}</span><span>${v}</span></div>`;
+  return `<table style="margin-top:8px;"><thead><tr><th>#</th><th>Tooth</th><th>Treatment</th><th ${th}>Cost per tooth</th><th ${th}>No. of teeth</th><th ${th}>Total cost</th><th ${th}>Discount</th><th ${th}>Amount</th></tr></thead><tbody>${rows}</tbody></table>
+    <div style="margin:12px 0 0 auto;max-width:340px;font-size:13px;">
+      ${line("Total treatment cost", m(b.gross))}
+      ${line("Discount on treatments", b.itemDiscount>0? "− "+m(b.itemDiscount) : "—")}
+      ${b.overall>0? line("Additional discount on final total"+(b.overallLabel? " ("+b.overallLabel+")":""), "− "+m(b.overall)) : ""}
+      ${line("<b>Total discount</b>", b.totalDiscount>0? "<b>− "+m(b.totalDiscount)+"</b>" : "—", "border-top:1px solid #ddd;margin-top:4px;padding-top:6px;")}
+      ${line("<b>Final total cost</b>", "<b>"+m(b.final)+"</b>", "font-size:16px;border-top:2px solid #333;margin-top:6px;padding-top:6px;")}
+    </div>`;
+}
+
 async function printSelectedTreatmentPlans(selected, patient){
   const clinics = await dbGetAll("clinics");
   const clinic = clinics.find(c=>c.id===patient.preferredClinicId);
   selected.sort((a,b)=> new Date(a.createdDate)-new Date(b.createdDate));
   const bodyHtml = `<h2 style="margin:0 0 10px;">Treatment Plans</h2>` + selected.map((plan,i)=>{
-    const totals = computePlanTotals(plan.items||[], plan.overallDiscount, plan.overallDiscountType);
-    const rows = (plan.items||[]).map(it=>`<tr>
-      <td>${escapeHtml(it.tooth||"")}</td><td>${escapeHtml(it.diagnosis||"")}</td><td>${escapeHtml(it.treatment||"")}</td><td>${it.qty}</td><td>₹${Number(it.fee||0).toLocaleString("en-IN")}</td>
-    </tr>`).join("");
     return `
       <div class="row"><b>${new Date(plan.createdDate).toLocaleDateString()}</b>${plan.title? escapeHtml(plan.title):""}${plan.doctor? " · Dr. "+escapeHtml(plan.doctor):""}</div>
-      <table style="margin-top:6px;"><thead><tr><th>Tooth</th><th>Diagnosis</th><th>Treatment</th><th>Qty</th><th>Fee</th></tr></thead><tbody>${rows}</tbody></table>
-      <div style="margin-top:8px;text-align:right;font-size:13px;">
-        <div>Gross: ${totals.grossStr}</div><div>Item Discounts: ${totals.itemDiscountStr}</div>
-        ${totals.overallAmt>0? `<div>Overall Discount: ${totals.overallAmtStr}</div>`:""}
-        <div style="font-size:15px;font-weight:bold;margin-top:4px;">Final Total: ${totals.finalTotalStr}</div>
-      </div>
+      ${planCostTableHtml(plan)}
       ${i<selected.length-1? `<div style="border-top:1px solid #eee;margin:14px 0;"></div>`:""}
     `;
   }).join("");
@@ -19365,22 +19393,9 @@ async function printTreatmentPlanStandalone(plan, patient, clinic){
     const clinics = await dbGetAll("clinics");
     clinic = clinics.find(c=>c.id===plan.clinicId) || clinics.find(c=>c.id===patient.preferredClinicId);
   }
-  const totals = computePlanTotals(plan.items||[], plan.overallDiscount, plan.overallDiscountType);
-  const rows = (plan.items||[]).map(it=>`<tr>
-    <td>${escapeHtml(it.tooth||"")}</td>
-    <td>${escapeHtml(it.diagnosis||"")}</td>
-    <td>${escapeHtml(it.treatment||"")}</td>
-    <td>${it.qty}</td>
-    <td>₹${Number(it.fee||0).toLocaleString("en-IN")}</td>
-  </tr>`).join("");
   const bodyHtml = `
     <div class="row"><b>Doctor</b>Dr. ${escapeHtml(plan.doctor||"—")}</div>
-    <table style="margin-top:10px;"><thead><tr><th>Tooth</th><th>Diagnosis</th><th>Treatment</th><th>Qty</th><th>Fee</th></tr></thead><tbody>${rows}</tbody></table>
-    <div style="margin-top:14px;text-align:right;font-size:13px;">
-      <div>Gross: ${totals.grossStr}</div><div>Item Discounts: ${totals.itemDiscountStr}</div>
-      ${totals.overallAmt>0? `<div>Overall Discount: ${totals.overallAmtStr}</div>`:""}
-      <div style="font-size:16px;font-weight:bold;margin-top:6px;">Final Total: ${totals.finalTotalStr}</div>
-    </div>
+    ${planCostTableHtml(plan)}
     ${plan.patientExplanation? `<div style="margin-top:18px;"><b style="font-size:13.5px;">About Your Treatment</b><div style="font-size:13px;line-height:1.65;white-space:pre-wrap;margin-top:4px;">${escapeHtml(plan.patientExplanation)}</div></div>` : ""}
   `;
   const signHtml = await buildSignBlock(plan.doctor);
@@ -32856,12 +32871,8 @@ async function publishTreatmentPlanLink(plan, patient){
       patientName: (title+" "+patient.name).trim(), patientCode: patient.code||"",
       planDate: plan.createdDate||nowIso(), planTitle: plan.title||"", doctor: plan.doctor||"",
       currency: cur||"₹",
-      items: (plan.items||[]).map(it=>{
-        const g = (Number(it.fee)||0)*(Number(it.qty)||1);
-        const d = it.discountType==="flat" ? Math.min(g, Number(it.discount)||0) : g*((Number(it.discount)||0)/100);
-        return { tooth: it.tooth||"", diagnosis: it.diagnosis||"", treatment: it.treatment||"", qty: Number(it.qty)||1, fee: Number(it.fee)||0, discount: d, net: g-d, status: it.status||"" };
-      }),
-      gross: totals.gross, discount: totals.discount, total: totals.final,
+      items: planCostBreakdown(plan).items.map(it=>({ tooth: it.tooth, diagnosis: it.diagnosis, treatment: it.treatment, qty: it.teeth, fee: it.perTooth, lineTotal: it.total, discount: it.disc, discountLabel: it.discLabel, net: it.net, status: it.status })),
+      gross: totals.gross, itemDiscount: totals.itemDiscount, overallDiscount: totals.overallAmt, overallDiscountLabel: planCostBreakdown(plan).overallLabel, discount: totals.discount, total: totals.final,
       notes: plan.notes||"",
       explanation: plan.patientExplanation||"",
       createdAt: nowIso(), updatedAt: nowIso()
@@ -34384,6 +34395,7 @@ let pharmacyView = "Stock";
 let pharmacySaleItemsDraft = [];
 let pharmacyStockPage = 1;
 let pharmacyBillsPage = 1;
+let pharmacyStockQuery = "", pharmacyBillsQuery = "";
 let editingPharmacySaleId = null;
 let pharmacySalePatient = null;
 
@@ -34425,22 +34437,31 @@ function pharmacyProductRowHtml(p, cur){
 
 async function renderPharmacyStock(body){
   const cur = await finCurrency();
-  const products = (await dbGetAll("pharmacyProducts")).sort((a,b)=> (a.name||"").localeCompare(b.name||""));
+  const allProducts = (await dbGetAll("pharmacyProducts")).sort((a,b)=> (a.name||"").localeCompare(b.name||""));
+  const q = normalizeStr(pharmacyStockQuery||"").trim();
+  const products = q ? allProducts.filter(p=> normalizeStr([p.name, p.brand, p.category, p.composition, p.batch, p.batchNo, p.manufacturer].filter(Boolean).join(" ")).includes(q)) : allProducts;
   const lowStock = products.filter(p=> (Number(p.stock)||0) <= (Number(p.lowStockThreshold)||0));
   const totalPages = Math.max(1, Math.ceil(products.length/PAGE_SIZE));
   if(pharmacyStockPage>totalPages) pharmacyStockPage = totalPages;
   const startIdx = (pharmacyStockPage-1)*PAGE_SIZE;
   const shownProducts = products.slice(startIdx, startIdx+PAGE_SIZE);
+  const hadFocus = document.activeElement && document.activeElement.id==="phStockSearch";
   body.innerHTML = `
-    <button class="btn btn-primary btn-block" id="btnNewProduct" style="margin-bottom:14px;">+ Add Product</button>
+    <button class="btn btn-primary btn-block" id="btnNewProduct" style="margin-bottom:10px;">+ Add Product</button>
+    <div class="field" style="margin-bottom:12px;"><input id="phStockSearch" type="search" placeholder="Search items by name…" value="${escapeAttr(pharmacyStockQuery)}" autocomplete="off"></div>
+    ${q? `<div style="font-size:12.5px;color:var(--grey);margin:-6px 0 10px;">${products.length} of ${allProducts.length} item(s) match “${escapeHtml(pharmacyStockQuery)}”</div>`:""}
     ${lowStock.length? `
       <div class="section-title">Low Stock</div>
       <div class="list-card" style="margin-bottom:14px;">${lowStock.map(p=>pharmacyProductRowHtml(p,cur)).join("")}</div>
     `:""}
     <div class="section-title">All Products</div>
-    ${products.length? `<div class="list-card">${shownProducts.map(p=>pharmacyProductRowHtml(p,cur)).join("")}</div>${paginationBarHtml("pharmacyStock", products.length, pharmacyStockPage)}` : `<div class="empty-card"><b>No products yet</b>Add toothpaste, mouthwash, and other dental pharmacy items to start tracking stock.</div>`}
+    ${products.length? `<div class="list-card">${shownProducts.map(p=>pharmacyProductRowHtml(p,cur)).join("")}</div>${paginationBarHtml("pharmacyStock", products.length, pharmacyStockPage)}` : q? `<div class="empty-card"><b>No items match “${escapeHtml(pharmacyStockQuery)}”</b></div>` : `<div class="empty-card"><b>No products yet</b>Add toothpaste, mouthwash, and other dental pharmacy items to start tracking stock.</div>`}
   `;
   document.getElementById("btnNewProduct").onclick = ()=> openPharmacyProductForm(null);
+  const stSearch = document.getElementById("phStockSearch");
+  let stT = null;
+  stSearch.addEventListener("input", ()=>{ clearTimeout(stT); stT = setTimeout(()=>{ pharmacyStockQuery = stSearch.value; pharmacyStockPage = 1; renderPharmacyStock(body); }, 250); });
+  if(hadFocus){ stSearch.focus(); const n = stSearch.value.length; try{ stSearch.setSelectionRange(n, n); }catch(e){} }
   body.querySelectorAll("[data-product]").forEach(el=> el.onclick = ()=> openPharmacyProductForm(el.dataset.product));
   wirePaginationBar("pharmacyStock", products.length, pharmacyStockPage, PAGE_SIZE, (newPage)=>{ pharmacyStockPage = newPage; renderPharmacyStock(body); });
 }
@@ -34586,13 +34607,20 @@ async function openPharmacyProductForm(id){
 
 async function renderPharmacyBills(body){
   const cur = await finCurrency();
-  const sales = (await dbGetAll("pharmacySales")).sort((a,b)=> new Date(b.date||0)-new Date(a.date||0));
+  const allSales = (await dbGetAll("pharmacySales")).sort((a,b)=> new Date(b.date||0)-new Date(a.date||0));
+  const q = normalizeStr(pharmacyBillsQuery||"").trim();
+  let pMobile = {};
+  if(q){ (await dbGetAll("patients")).forEach(p=> pMobile[p.id] = (p.mobile||"")+" "+(p.whatsappNumber||"")); }
+  const sales = q ? allSales.filter(s=> normalizeStr([s.patientName||"Walk-in", s.billNumber, pMobile[s.patientId]||"", (s.items||[]).map(i=>i.name).join(" ")].join(" ")).includes(q)) : allSales;
   const totalPages = Math.max(1, Math.ceil(sales.length/PAGE_SIZE));
   if(pharmacyBillsPage>totalPages) pharmacyBillsPage = totalPages;
   const startIdx = (pharmacyBillsPage-1)*PAGE_SIZE;
   const shownSales = sales.slice(startIdx, startIdx+PAGE_SIZE);
+  const hadFocus = document.activeElement && document.activeElement.id==="phBillSearch";
   body.innerHTML = `
-    <button class="btn btn-primary btn-block" id="btnNewSale" style="margin-bottom:14px;">+ Dispense / New Bill</button>
+    <button class="btn btn-primary btn-block" id="btnNewSale" style="margin-bottom:10px;">+ Dispense / New Bill</button>
+    <div class="field" style="margin-bottom:12px;"><input id="phBillSearch" type="search" placeholder="Search bills by patient name, mobile, bill no. or item…" value="${escapeAttr(pharmacyBillsQuery)}" autocomplete="off"></div>
+    ${q? `<div style="font-size:12.5px;color:var(--grey);margin:-6px 0 10px;">${sales.length} bill(s) found · total ${finMoney(sales.reduce((t,s)=>t+(Number(s.totalAmount)||0),0),cur)}</div>`:""}
     ${sales.length? `<div class="list-card">${shownSales.map(s=>`
       <div class="clinic-row" data-sale="${s.id}" style="cursor:pointer;">
         <div><div class="name">${escapeHtml(s.billNumber||"—")} · ${escapeHtml(s.patientName||"Walk-in")}</div><div class="addr">${new Date(s.date).toLocaleDateString()} · ${(s.items||[]).length} item(s)</div></div>
@@ -34601,9 +34629,13 @@ async function renderPharmacyBills(body){
           <button class="qmenu-btn" data-salemenu="${s.id}" style="transform:none;">${icon('settings',15)}</button>
         </div>
       </div>
-    `).join("")}</div>${paginationBarHtml("pharmacyBills", sales.length, pharmacyBillsPage)}` : `<div class="empty-card"><b>No bills yet</b>Dispense products to a patient to generate your first pharmacy bill.</div>`}
+    `).join("")}</div>${paginationBarHtml("pharmacyBills", sales.length, pharmacyBillsPage)}` : q? `<div class="empty-card"><b>No bills match “${escapeHtml(pharmacyBillsQuery)}”</b></div>` : `<div class="empty-card"><b>No bills yet</b>Dispense products to a patient to generate your first pharmacy bill.</div>`}
   `;
   document.getElementById("btnNewSale").onclick = ()=> openPharmacySaleForm();
+  const blSearch = document.getElementById("phBillSearch");
+  let blT = null;
+  blSearch.addEventListener("input", ()=>{ clearTimeout(blT); blT = setTimeout(()=>{ pharmacyBillsQuery = blSearch.value; pharmacyBillsPage = 1; renderPharmacyBills(body); }, 250); });
+  if(hadFocus){ blSearch.focus(); const n = blSearch.value.length; try{ blSearch.setSelectionRange(n, n); }catch(e){} }
   body.querySelectorAll("[data-salemenu]").forEach(btn=>{
     btn.addEventListener("click",(ev)=>{
       ev.stopPropagation();
