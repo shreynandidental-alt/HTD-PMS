@@ -7559,20 +7559,37 @@ function apptWhatsAppMessage(appt){
       return null;
   }
 }
-function sendAppointmentWhatsApp(appt, patient){
+// Appointment confirmation template by clinic (variables: 1 patient name,
+// 2 date, 3 time, 4 doctor):
+//   Sector 45      -> appointment_confirmed
+//   Sector 23      -> appointment_confirmation_hw
+//   Bubbles Dental -> bubbles_appointment
+function apptConfirmationTemplate(clinic){
+  const n = String((clinic && clinic.name) || "").toLowerCase();
+  if(n.includes("bubble")) return "bubbles_appointment";
+  if(/\b23\b|palam/.test(n)) return "appointment_confirmation_hw";
+  return "appointment_confirmed";
+}
+function apptDoctorText(appt, clinic){
+  const d = String(appt.doctor||"").replace(/^dr\.?\s*/i,"").trim();
+  if(d) return "Dr. "+d;
+  return /bubble/i.test((clinic && clinic.name)||"") ? "Bubbles Dental team" : "Healing Touch Dental team";
+}
+async function sendAppointmentWhatsApp(appt, patient){
   const message = apptWhatsAppMessage(appt);
   if(!message) return;
   const number = patient && (patient.whatsappNumber||patient.mobile);
   const titleMap = {Cancelled:"Cancellation Notice", Rescheduled:"Reschedule Notice", NoShow:"Missed Appointment"};
   // Each status now uses its own correct, approved template:
-  //   appointment_confirmation_hw - Scheduled/Confirmed (Name/Date/Time)
+  //   Scheduled/Confirmed - clinic's own template (Name/Date/Time/Doctor), see apptConfirmationTemplate
   //   appointment_rescheduled     - Rescheduled (Name/New date/New time)
   //   appointment_cancelled       - Cancelled (Name/Date/Time)
   //   appointment_missed          - NoShow (Name)
   const dateStr = appt.date ? fromDateKey(appt.date).toLocaleDateString(undefined,{weekday:'long', day:'numeric', month:'long'}) : "";
   const timeStr = formatTime(appt.startTime);
+  const apptClinic = (await dbGetAll("clinics")).find(c=> c.id===appt.clinicId) || null;
   const templateFields =
-    (appt.status==="Scheduled" || appt.status==="Confirmed") ? { templateName: "appointment_confirmation_hw", templateParams: [appt.patientName||"", dateStr, timeStr] } :
+    (appt.status==="Scheduled" || appt.status==="Confirmed") ? { templateName: apptConfirmationTemplate(apptClinic), templateParams: [appt.patientName||"", dateStr, timeStr, apptDoctorText(appt, apptClinic)] } :
     appt.status==="Rescheduled" ? { templateName: "appointment_rescheduled", templateParams: [appt.patientName||"", dateStr, timeStr] } :
     appt.status==="Cancelled" ? { templateName: "appointment_cancelled", templateParams: [appt.patientName||"", dateStr, timeStr] } :
     appt.status==="NoShow" ? { templateName: "appointment_missed", templateParams: [appt.patientName||""] } :
@@ -9836,7 +9853,7 @@ async function sendLabJobCardWhatsApp(lc){
     message: labCaseSummaryText(lc),
     patientId: lc.patientId, recipientType: "Lab",
     templateName: "lab_case",
-    templateParams: [lc.patientName||"Patient", labCasePatientPromisedDateText(lc), lc.shade||"Not specified", lc.caseType||"Lab work"],
+    templateParams: [lc.patientName||"Patient", labCasePatientPromisedDateText(lc), lc.shade||"Not specified", lc.caseType||"Lab work", labCaseInstructionsText(lc)],
     onSent: ()=> logActivity("Sent job card to "+(lc.labName||"lab")+" for "+(lc.patientName||""), {patientId: lc.patientId})
   });
 }
@@ -10297,7 +10314,7 @@ async function openLabCaseActionMenu(caseId){
       toName: lc.labName, toNumber: lc.labContact,
       message: labCaseSummaryText(lc),
       templateName: "lab_case",
-      templateParams: [lc.patientName||"Patient", labCasePatientPromisedDateText(lc), lc.shade||"Not specified", lc.caseType||"Lab work"]
+      templateParams: [lc.patientName||"Patient", labCasePatientPromisedDateText(lc), lc.shade||"Not specified", lc.caseType||"Lab work", labCaseInstructionsText(lc)]
     });
   };
   document.getElementById("lcmEmail").onclick = async ()=>{
@@ -10335,6 +10352,7 @@ function labCaseSummaryText(lc){
     lc.tooth? `Tooth: ${lc.tooth}` : null,
     lc.caseType? `Work: ${lc.caseType}` : null,
     lc.shade? `Shade: ${lc.shade}` : null,
+    lc.instructions? `Instructions: ${lc.instructions}` : null,
     lc.status? `Status: ${lc.status}` : null,
     lc.dateSent? `Date Sent: ${new Date(lc.dateSent).toLocaleDateString()}` : null,
     lc.labPromisedDate? `Needed By: ${new Date(lc.labPromisedDate).toLocaleDateString()}` : null,
@@ -10353,6 +10371,7 @@ async function printLabCase(lc){
     <div class="row"><b>Work / Case Type</b>${escapeHtml(lc.caseType||"—")}</div>
     ${lc.tooth? `<div class="row"><b>Tooth</b>${escapeHtml(lc.tooth)}</div>`:""}
     ${lc.shade? `<div class="row"><b>Shade</b>${escapeHtml(lc.shade)}</div>`:""}
+    ${lc.instructions? `<div class="row"><b>Instructions</b>${escapeHtml(lc.instructions).replace(/\n/g,"<br>")}</div>`:""}
     <div class="row"><b>Status</b>${escapeHtml(lc.status||"—")}</div>
     ${lc.dateSent? `<div class="row"><b>Date Sent</b>${new Date(lc.dateSent).toLocaleDateString()}</div>`:""}
     ${lc.labPromisedDate? `<div class="row"><b>Lab Promised Date</b>${new Date(lc.labPromisedDate).toLocaleDateString()}</div>`:""}
@@ -10473,6 +10492,7 @@ async function openLabCaseForm(id, prefillPatient){
     <div class="field"><label>Case Type / Work Done</label>
       <select id="lfCaseType">${caseTypeOpts.map(t=>`<option value="${escapeAttr(t)}" ${lc.caseType===t?'selected':''}>${escapeHtml(t)}</option>`).join("")}</select>
     </div>
+    <div class="field"><label>Description / Job Instructions for the Lab</label><textarea id="lfInstructions" rows="3" placeholder="e.g. Monolithic zirconia, light occlusal contact, match shade to 21, send die back with trial">${escapeHtml(lc.instructions||"")}</textarea></div>
     <div class="field"><label>Lab</label>
       <select id="lfLab">
         <option value="">— Type a new lab name below —</option>
@@ -10588,6 +10608,7 @@ async function openLabCaseForm(id, prefillPatient){
       deliveryDate: document.getElementById("lfDelivery").value,
       status: document.getElementById("lfStatus").value,
       notes: document.getElementById("lfNotes").value.trim(),
+      instructions: (document.getElementById("lfInstructions")||{value:lc.instructions||""}).value.trim(),
       warrantyAttachments: labWarrantyAttachments,
       updatedAt: nowIso()
     });
@@ -10680,6 +10701,7 @@ function sendNewLabCaseWhatsApp(lc){
     lc.tooth? `Tooth: ${lc.tooth}` : null,
     lc.caseType? `Work: ${lc.caseType}` : null,
     lc.shade? `Shade: ${lc.shade}` : null,
+    lc.instructions? `Instructions: ${lc.instructions}` : null,
     lc.dateSent? `Date Sent: ${new Date(lc.dateSent).toLocaleDateString()}` : null,
     lc.labPromisedDate? `Needed By: ${new Date(lc.labPromisedDate).toLocaleDateString()}` : null,
     lc.notes? `Notes: ${lc.notes}` : null,
@@ -10691,7 +10713,7 @@ function sendNewLabCaseWhatsApp(lc){
     message: lines.join("\n"),
     patientId: lc.patientId, recipientType: "Lab",
     templateName: "lab_case",
-    templateParams: [lc.patientName||"Patient", labCasePatientPromisedDateText(lc), lc.shade||"Not specified", lc.caseType||"Lab work"]
+    templateParams: [lc.patientName||"Patient", labCasePatientPromisedDateText(lc), lc.shade||"Not specified", lc.caseType||"Lab work", labCaseInstructionsText(lc)]
   });
   if(currentPage==="assist") renderAssistBody();
   else if(currentPage==="labcases") renderLabCases();
@@ -11373,6 +11395,15 @@ class Dialog360Provider extends PlaceholderCommProvider { constructor(){ super("
 // stored in Settings/Firestore and never touches the browser, so there is
 // nothing here for _getConfig() to read except the one non-secret setting
 // (default country code) that's safe to keep client-side.
+// {{5}} of the "lab_case" template: the job instructions for the lab.
+// WhatsApp doesn't allow line breaks / tabs inside a template variable and
+// rejects an empty one, so lines are joined with " · " and a blank
+// description becomes "No special instructions".
+function labCaseInstructionsText(lc){
+  const t = String((lc && lc.instructions) || "").split(/\r?\n/).map(x=> x.replace(/\t/g," ").replace(/ {2,}/g," ").trim()).filter(Boolean).join(" · ");
+  if(!t) return "No special instructions";
+  return t.length>700 ? t.slice(0,697)+"…" : t;
+}
 // {{2}} of the "lab_case" template: the date promised to the patient.
 // Falls back to the lab's promised date, then "To be confirmed", because
 // Interakt rejects a template whose variable is empty.
@@ -28835,6 +28866,20 @@ async function computeRemainingInvoiceableAmount(item, patientId){
   return { itemNet, alreadyInvoiced, remaining: Math.max(0, itemNet-alreadyInvoiced) };
 }
 
+// One invoice line for a treatment. When nothing of it has been billed yet,
+// the line carries the treatment's own cost × teeth and its discount, so the
+// invoice (and its print) shows Tot. Cost / Discount / Net like the treatment
+// plan. A part-billed treatment is billed at whatever is still left.
+function invoiceLineForTreatment(item, remaining){
+  const desc = (item.treatment||"Treatment")+(item.tooth?" (Tooth "+item.tooth+")":"");
+  const qty = Number(item.qty)||1, fee = Number(item.fee)||0, gross = fee*qty;
+  const disc = item.discountType==="flat" ? Math.min(gross, Number(item.discount)||0) : gross*((Number(item.discount)||0)/100);
+  const net = gross - disc;
+  if(disc>0 && Math.abs((Number(remaining)||0) - net) < 0.01){
+    return { id: uid("invitem"), sourceItemId: item.id, description: desc, qty, unitPrice: fee, discount: Math.round(disc*100)/100, discountType: "flat" };
+  }
+  return { id: uid("invitem"), sourceItemId: item.id, description: desc, qty: 1, unitPrice: remaining, discount: 0, discountType: "flat" };
+}
 // Builds invoice lines for one treatment item or a list of them (a
 // multi-treatment entry), each at whatever is still left to invoice.
 async function invoiceLinesForTreatmentItems(itemOrItems, patientId){
@@ -28843,11 +28888,7 @@ async function invoiceLinesForTreatmentItems(itemOrItems, patientId){
   for(const item of list){
     const { remaining } = await computeRemainingInvoiceableAmount(item, patientId);
     if(remaining<=0) continue;
-    lines.push({
-      id: uid("invitem"), sourceItemId: item.id,
-      description: (item.treatment||"Treatment")+(item.tooth?" (Tooth "+item.tooth+")":""),
-      qty: 1, unitPrice: remaining, discount: 0, discountType: "flat"
-    });
+    lines.push(invoiceLineForTreatment(item, remaining));
   }
   return lines;
 }
@@ -32165,11 +32206,7 @@ async function openInvoiceForm(invoiceId, patient, prefillItems){
     };
   }
   if(!invoiceId && prefillItems && prefillItems.length){
-    invoiceItemsDraft = prefillItems.map(w=>({
-      id: uid("invitem"), sourceItemId: w.item.id,
-      description: (w.item.treatment||"Treatment")+(w.item.tooth?" (Tooth "+w.item.tooth+")":""),
-      qty: 1, unitPrice: w.remaining, discount: 0, discountType: "flat"
-    }));
+    invoiceItemsDraft = prefillItems.map(w=> invoiceLineForTreatment(w.item, w.remaining));
   }else{
     invoiceItemsDraft = (inv.items||[]).map(it=>Object.assign({}, it));
   }
@@ -32289,11 +32326,7 @@ function renderInvoiceFormSheet(inv, clinics, isEdit, patient, cur){
   document.getElementById("btnLoadFromPlan").onclick = async ()=>{
     await openSelectTreatmentToInvoiceSheet(patient, (chosen)=>{
       chosen.forEach(({item, remaining})=>{
-        invoiceItemsDraft.push({
-          id: uid("invitem"), sourceItemId: item.id,
-          description: (item.treatment||"Treatment")+(item.tooth?" (Tooth "+item.tooth+")":""),
-          qty: 1, unitPrice: remaining, discount: 0, discountType: "flat"
-        });
+        invoiceItemsDraft.push(invoiceLineForTreatment(item, remaining));
       });
       renderInvItems();
       updateTotals();
