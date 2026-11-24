@@ -7959,10 +7959,10 @@ async function resolveOnlineApptReminder(reminderId, mode){
   if(!r){ showToast("Reminder not found"); return; }
   const booking = r.caseId ? (await dbGetAll("onlineBookings")).find(b=>b.id===r.caseId) : null;
   if(mode==="convert"){
-    if(booking) await prefillAppointmentFromOnlineBooking(booking);
+    if(booking){ await markOnlineBookingBooked(booking); await prefillAppointmentFromOnlineBooking(booking); }
     else showToast("This request no longer exists");
   }
-  if(booking) await dbDelete("onlineBookings", booking.id).catch(()=>{});
+  if(booking && mode==="delete") await dbDelete("onlineBookings", booking.id).catch(()=>{});
   await dbDelete("reminders", r.id).catch(()=>{});
   if(mode==="delete") showToast("Request deleted");
   if(currentPage==="home") renderHome();
@@ -11546,7 +11546,8 @@ async function dedupeOnlineBookings(){
   const notifiedIds = new Set(existingNotifs.filter(n=>n.type==="online_booking" && n.relatedId).map(n=>n.relatedId));
   const groups = {};
   for(const b of all){
-    const key = (b.phone||"")+"|"+(b.date||"")+"|"+(b.reason||"")+"|"+(b.clinicLocation||"");
+    if(b.duplicateOf) continue;
+    const key = (b.phone||"")+"|"+(b.date||"")+"|"+(b.time||"")+"|"+(b.reason||"")+"|"+(b.clinicLocation||"");
     (groups[key] = groups[key]||[]).push(b);
   }
   let removedAny = false;
@@ -11556,8 +11557,11 @@ async function dedupeOnlineBookings(){
     group.sort((a,b)=> new Date(a.createdAt||0)-new Date(b.createdAt||0));
     const keep = group.find(b=>notifiedIds.has(b.id)) || group[0];
     for(const d of group){
-      if(d.id===keep.id) continue;
-      await dbDelete("onlineBookings", d.id).catch(()=>{});
+      if(d.id===keep.id || d.duplicateOf===keep.id) continue;
+      // Kept on file (never auto-deleted) — just marked as a repeat of the
+      // same submission so it isn't listed or notified twice.
+      d.duplicateOf = keep.id;
+      await dbPut("onlineBookings", d).catch(()=>{});
       removedAny = true;
     }
   }
@@ -11577,7 +11581,7 @@ let sessionPoppedBookingNotifIds = new Set();
 // junk like "OPXpxRRrDkijYcZJDbsmIrdy" with impossible dates. These never
 // raise a notification: they're flagged as spam, kept out of the
 // Online Appointments list (viewable under "Blocked as spam", with a
-// "Not spam" button) and deleted automatically after 7 days.
+// "Not spam" button). They are only ever deleted by hand.
 function bookingSpamReasons(b){
   const reasons = [];
   const name = String(b.name||"").trim();
@@ -11644,8 +11648,6 @@ async function checkForNewOnlineBookings(){
       continue;
     }
     spamIds.add(b.id);
-    const ageDays = (Date.now() - new Date(b.createdAt||Date.now()).getTime())/86400000;
-    if(ageDays > 7){ await window.__fb.delete("onlineBookings", b.id).catch(()=>{}); continue; }
     if(!b.spam || !b.processed){
       b.spam = true; b.processed = true; b.spamReasons = bookingSpamReasons(b);
       await dbPut("onlineBookings", b).catch(()=>{});
@@ -11662,6 +11664,7 @@ async function checkForNewOnlineBookings(){
     refreshNotificationBell();
   }
   for(const b of allBookings){
+    if(b.duplicateOf) continue;
     if(alreadyNotifiedIds.has(b.id)){
       if(!b.processed){ b.processed = true; await dbPut("onlineBookings", b).catch(()=>{}); }
       continue;
@@ -11711,7 +11714,7 @@ function showNewBookingPopup(bookings){
         <span style="color:var(--green);">${icon('calendar',20)}</span>
         <h2 style="margin:0;font-size:17px;">New Appointment Request${bookings.length>1?'s':''}!</h2>
       </div>
-      <p style="margin:6px 0 14px;color:var(--grey);">Requested through your website${bookings.length>1?' — '+bookings.length+' new':''}.</p>
+      <p style="margin:6px 0 14px;color:var(--grey);">Requested through ${bookings.every(b=>/whatsapp/i.test(b.source||""))?"WhatsApp":bookings.some(b=>/whatsapp/i.test(b.source||""))?"your website / WhatsApp":"your website"}${bookings.length>1?' — '+bookings.length+' new':''}. All requests stay saved in Settings › Online Appointments.</p>
       <div id="nbCardsZone">${bookings.map(b=>newBookingCardHtml(b)).join("")}</div>
       <button class="btn btn-primary btn-block" id="btnNbClose" style="margin-top:6px;">Close</button>
     </div>
@@ -11762,8 +11765,7 @@ function wireNewBookingPopupCards(wrap, bookings){
       if(!b) return;
       if(action==="add"){
         wrap.remove();
-        await dbDelete("onlineBookings", b.id).catch(()=>{});
-        await markOnlineBookingNotificationRead(b.id);
+        await markOnlineBookingBooked(b);
         await prefillAppointmentFromOnlineBooking(b);
       }else if(action==="read"){
         await markOnlineBookingNotificationRead(b.id);
@@ -11789,6 +11791,22 @@ function wireNewBookingPopupCards(wrap, bookings){
       }
     });
   });
+}
+
+// Online requests are never deleted automatically. Converting one into an
+// appointment just marks it "Booked" so it stays in Settings > Online
+// Appointments; only the Delete button removes a request.
+async function markOnlineBookingBooked(b){
+  try{
+    const fresh = (await dbGetAll("onlineBookings")).find(x=>x.id===b.id) || b;
+    fresh.handled = "Booked"; fresh.handledAt = nowIso(); 
+    await dbPut("onlineBookings", fresh);
+  }catch(e){ console.error("markOnlineBookingBooked", e); }
+  await markOnlineBookingNotificationRead(b.id);
+}
+function onlineBookingSourceLabel(b){
+  if(b.source) return b.source;
+  return b.time ? "Website booking" : "Website request";
 }
 
 async function prefillAppointmentFromOnlineBooking(b){
@@ -12226,13 +12244,18 @@ async function openRequestApptButtonSheet(){
 // two don't get tangled together.
 async function openOnlineAppointmentsListSheet(){
   await dedupeOnlineBookings().catch(()=>{});
-  const allReq = (await dbGetAll("onlineBookings")).filter(b=>!b.time).sort((a,b)=> new Date(b.createdAt||0)-new Date(a.createdAt||0));
+  const allReq = (await dbGetAll("onlineBookings")).filter(b=>!b.duplicateOf).sort((a,b)=> new Date(b.createdAt||0)-new Date(a.createdAt||0));
   const spamReq = allReq.filter(b=> isSpamBooking(b));
   const requests = allReq.filter(b=> !isSpamBooking(b));
   openSheet(`
     <button class="sheet-close" onclick="closeSheetOrReturn()">${icon('close',18)}</button>
     <h2>Online Appointments</h2>
-    <p style="margin-bottom:8px;">Every appointment request submitted through your website's Request Appointment button/form.</p>
+    <p style="margin-bottom:8px;">Every appointment request from your websites (Healing Touch &amp; Bubbles Dental) and from WhatsApp. Requests stay here until you delete them — nothing is removed automatically.</p>
+    ${requests.length? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;font-size:12.5px;">
+      <span class="status-pill" style="background:var(--green-mist,#E4F2ED);color:var(--green);">${requests.filter(b=>!b.handled).length} new</span>
+      <span class="status-pill" style="background:var(--grey-light);color:var(--charcoal-2);">${requests.filter(b=>b.handled).length} booked</span>
+      <span class="status-pill" style="background:var(--grey-light);color:var(--charcoal-2);">${requests.filter(b=>/whatsapp/i.test(b.source||"")).length} from WhatsApp</span>
+    </div>`:""}
     ${requests.length? `
       <p style="margin:0 0 10px;color:var(--grey);font-size:12px;">Swipe a card left to delete it.</p>
       <button class="btn btn-block" id="btnOaDeleteAll" style="margin-bottom:10px;color:var(--red);border:1px solid var(--red);background:none;">${icon('trash',15)} Delete All</button>
@@ -12253,7 +12276,7 @@ async function openOnlineAppointmentsListSheet(){
     </div>
     ${spamReq.length? `
       <details style="margin-top:14px;">
-        <summary style="font-size:13px;color:var(--grey);cursor:pointer;">Blocked as spam (${spamReq.length}) — bot submissions, deleted automatically after 7 days</summary>
+        <summary style="font-size:13px;color:var(--grey);cursor:pointer;">Blocked as spam (${spamReq.length}) — bot submissions (delete by hand below)</summary>
         <div style="margin-top:8px;">
           ${spamReq.map(b=>`
             <div class="note-card" style="margin-bottom:8px;opacity:.85;">
@@ -12287,7 +12310,7 @@ async function openOnlineAppointmentsListSheet(){
       // Re-read fresh rather than trusting the list captured when this
       // screen opened, so anything that's arrived since (a new website
       // submission, for instance) gets caught too.
-      const current = (await dbGetAll("onlineBookings")).filter(b=>!b.time && !isSpamBooking(b));
+      const current = (await dbGetAll("onlineBookings")).filter(b=>!b.duplicateOf && !isSpamBooking(b));
       if(!current.length){ showToast("Nothing to delete"); return; }
       if(!confirm(`Delete all ${current.length} appointment request${current.length>1?'s':''}? This can't be undone.`)) return;
       let failCount = 0;
@@ -12314,11 +12337,15 @@ function onlineApptCardHtml(b){
         <div class="note-head"><b>${escapeHtml(b.name||"Unknown")}${b.age? " · Age "+escapeHtml(String(b.age)):""}${b.source==="Bubbles Dental"? ` <span class="status-pill" style="background:#FDE7F0;color:#D6457E;margin-left:4px;">Bubbles Dental</span>`:""}</b>${b.processed? `<span class="status-pill">Reviewed</span>`:`<span class="status-pill" style="background:var(--amber-bg);color:var(--amber);">New</span>`}</div>
         <div class="note-meta">${escapeHtml(b.phone||"No phone")}${b.email?" · "+escapeHtml(b.email):""}</div>
         ${b.clinicLocation? `<div class="note-meta" style="margin-top:2px;">${escapeHtml(b.clinicLocation)}</div>`:""}
-        <div class="note-meta" style="margin-top:2px;">Preferred date: ${b.date? new Date(b.date).toLocaleDateString():"Not specified"}</div>
+        <div class="note-meta" style="margin-top:2px;">${b.time?"Requested slot":"Preferred date"}: ${b.date? new Date(b.date).toLocaleDateString():"Not specified"}${b.time? " at "+escapeHtml(String(b.time)):""}</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;">
+          <span class="status-pill" style="background:${/whatsapp/i.test(b.source||"")?"#E0F3EF":"var(--grey-light)"};color:${/whatsapp/i.test(b.source||"")?"#128C7E":"var(--charcoal-2)"};">${escapeHtml(onlineBookingSourceLabel(b))}</span>
+          ${b.handled? `<span class="status-pill" style="background:var(--green);color:#fff;">${icon('check',11)} ${escapeHtml(b.handled)}${b.handledAt? " · "+new Date(b.handledAt).toLocaleDateString():""}</span>` : `<span class="status-pill" style="background:#FFF4E0;color:#9A6B22;">New</span>`}
+        </div>
         ${b.reason? `<div class="note-meta" style="margin-top:2px;">${b.source==="Bubbles Dental"?"Service":"Reason"}: ${escapeHtml(b.reason)}</div>`:""}
         <div class="note-meta" style="margin-top:2px;color:var(--grey);">Submitted ${b.createdAt? new Date(b.createdAt).toLocaleString():""}</div>
         <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;">
-          <button class="btn btn-outline btn-sm" data-oaadd="${b.id}">${icon('check',13)} Add Appointment</button>
+          <button class="btn btn-outline btn-sm" data-oaadd="${b.id}">${icon('check',13)} ${b.handled?"Add Again":"Add Appointment"}</button>
           <button class="btn btn-outline btn-sm" data-oacall="${b.id}">${icon('phone',13)} Call</button>
           <button class="btn btn-outline btn-sm" data-oawa="${b.id}">${icon('message',13)} WhatsApp</button>
           <button class="btn btn-outline btn-sm" data-oadelete="${b.id}" style="color:var(--red);border-color:var(--red);">${icon('trash',13)} Delete</button>
@@ -12423,7 +12450,7 @@ function wireOnlineApptCardActions(requests){
     btn.onclick = async ()=>{
       const b = requests.find(x=>x.id===btn.dataset.oaadd);
       if(!b) return;
-      await deleteOnlineBookingVerified(b.id);
+      await markOnlineBookingBooked(b);
       closeSheet();
       await prefillAppointmentFromOnlineBooking(b);
     };
@@ -15733,6 +15760,7 @@ const REPORT_DEFS = [
   {id:"outstanding", section:"Financial", title:"Outstanding Report", icon:"wallet", custom:true},
   {id:"workReport", section:"Patient Reports", title:"Work Report", icon:"user", custom:true},
   {id:"consultantBilling", section:"Financial", title:"Consultant Billing", icon:"wallet", custom:true},
+  {id:"treatmentReport", section:"Financial", title:"Treatment Report", icon:"tooth", custom:true},
   {id:"revenueAnalysis", section:"Financial", title:"Revenue Analysis", icon:"wallet"},
   {id:"ledger", section:"Financial", title:"Ledger", icon:"reports", custom:true},
   {id:"clinicDataAnalysis", section:"Financial", title:"Clinic Data Analysis", icon:"reports", custom:true},
@@ -16732,6 +16760,166 @@ async function openClinicDataAnalysisReport(){
   await runReport();
 }
 
+// ---- Treatment Report ----
+// Every treatment that has been Started or Completed, with its charges
+// (cost per tooth × teeth, discount, net), the patient and the date, and the
+// grand total. Filters: duration, clinic and doctor. Clinic copies with the
+// same name (e.g. "HTD | Sector 45" and "HTD – Sector 45") count as one.
+function treatmentReportClinicKey(name){
+  return String(name||"").toLowerCase().replace(/healing\s*touch\s*dental/g,"").replace(/exclusive.*$/,"").replace(/[^a-z0-9]/g,"");
+}
+function treatmentReportClinicLabel(name){
+  return String(name||"").replace(/^Healing Touch Dental\s*[–|\-]\s*/i,"").replace(/\s*\|\s*Exclusive.*$/i,"").trim() || name;
+}
+async function openTreatmentReport(){
+  const main = document.getElementById("main");
+  const [allPlans, patients, clinics, users] = await Promise.all([dbGetAll("treatmentPlans"), dbGetAll("patients"), dbGetAll("clinics"), dbGetAll("users")]);
+  const cur = await finCurrency();
+  const patientsById = {}; patients.forEach(p=> patientsById[p.id]=p);
+  const clinicsById = {}; clinics.forEach(c=> clinicsById[c.id]=c);
+  const clinicOpts = [];
+  clinics.filter(c=>!c.archived).forEach(c=>{
+    const key = treatmentReportClinicKey(c.name);
+    if(key && !clinicOpts.some(o=>o.key===key)) clinicOpts.push({ key, label: treatmentReportClinicLabel(c.name) });
+  });
+  const doctorNames = [];
+  const addDoc = (n)=>{ const t = String(n||"").trim(); if(t && !doctorNames.some(x=> normalizeStr(x)===normalizeStr(t))) doctorNames.push(t); };
+  users.forEach(u=> addDoc(u.name));
+  allPlans.forEach(pl=>{ addDoc(pl.doctor); (pl.items||[]).forEach(it=> addDoc(it.performedBy)); });
+  doctorNames.sort((a,b)=> a.localeCompare(b));
+  const st = { preset:"thisMonth", from:"", to:"", clinic:"ALL", doctor:"ALL", status:"BOTH", q:"" };
+
+  main.innerHTML = `
+    <div class="page">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+        <button class="icon-btn" id="trRepBack" style="background:var(--off-white);color:var(--charcoal-2);transform:rotate(180deg);">${icon('chevron',16)}</button>
+        <h2 class="brand-serif" style="margin:0;font-size:19px;flex:1;">Treatment Report</h2>
+        ${reportExportButtonsHtml()}
+      </div>
+      <div class="filter-row" id="trPresets">
+        ${[["thisMonth","This Month"],["lastMonth","Last Month"],["thisYear","This Year"],["lastYear","Last Year"],["custom","Custom"]].map(([v,l])=>`<div class="filter-chip ${v===st.preset?"active":""}" data-trpreset="${v}">${l}</div>`).join("")}
+      </div>
+      <div class="field-row" id="trCustom" style="display:none;">
+        <div class="field"><label>From</label><input type="date" id="trFrom"></div>
+        <div class="field"><label>To</label><input type="date" id="trTo"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Clinic</label>
+          <select id="trClinic"><option value="ALL">All Clinics</option>${clinicOpts.map(o=>`<option value="${escapeAttr(o.key)}">${escapeHtml(o.label)}</option>`).join("")}</select>
+        </div>
+        <div class="field"><label>Doctor</label>
+          <select id="trDoctor"><option value="ALL">All Doctors</option>${doctorNames.map(d=>`<option value="${escapeAttr(d)}">${escapeHtml(/^dr\.?\s/i.test(d)? d : "Dr. "+d)}</option>`).join("")}</select>
+        </div>
+        <div class="field"><label>Status</label>
+          <select id="trStatus"><option value="BOTH">Started &amp; Completed</option><option value="Completed">Completed only</option><option value="Started">Started only</option></select>
+        </div>
+      </div>
+      <div class="search-bar" style="margin-bottom:10px;">
+        <span class="icon-btn" style="background:none;color:var(--grey);">${icon('search',18)}</span>
+        <input id="trSearch" placeholder="Search patient, treatment, tooth...">
+      </div>
+      <div id="trSummary"></div>
+      <div id="trResults"></div>
+    </div>`;
+  document.getElementById("trRepBack").onclick = renderReports;
+
+  function range(){ return st.preset==="custom" ? {from: st.from, to: st.to} : cbDatePresetRange(st.preset); }
+  function rangeLabel(){ const r = range(); const f = (k)=> k? new Date(k+"T00:00:00").toLocaleDateString() : "…"; return f(r.from)+" – "+f(r.to); }
+  function collect(){
+    const r = range();
+    const nq = normalizeStr(st.q);
+    const rows = [];
+    allPlans.forEach(pl=>{
+      (pl.items||[]).forEach(it=>{
+        if(it.status!=="Started" && it.status!=="Completed") return;
+        if(st.status!=="BOTH" && it.status!==st.status) return;
+        const d = it.treatmentDate || pl.createdDate;
+        const dateKey = d? toDateKey(new Date(d)) : "";
+        if(r.from && (!dateKey || dateKey<r.from)) return;
+        if(r.to && (!dateKey || dateKey>r.to)) return;
+        const patient = patientsById[pl.patientId];
+        const clinicId = it.clinicId || pl.clinicId || (patient && patient.preferredClinicId) || "";
+        const clinic = clinicsById[clinicId];
+        if(st.clinic!=="ALL" && (!clinic || treatmentReportClinicKey(clinic.name)!==st.clinic)) return;
+        const doctor = it.performedBy || pl.doctor || "";
+        if(st.doctor!=="ALL" && normalizeStr(doctor)!==normalizeStr(st.doctor)) return;
+        const a = treatmentLineAmounts(it);
+        const row = { date: dateKey, patientId: pl.patientId, patient: patient? patient.name : "Unknown", mobile: patient? (patient.mobile||"") : "",
+          tooth: it.tooth||"", treatment: it.treatment||"", doctor, clinic: clinic? treatmentReportClinicLabel(clinic.name) : "", status: it.status,
+          perTooth: a.perTooth, teeth: a.teeth, total: a.total, disc: a.disc, net: a.net };
+        if(nq && ![row.patient,row.mobile,row.treatment,row.tooth,row.doctor].some(v=> normalizeStr(String(v)).includes(nq))) return;
+        rows.push(row);
+      });
+    });
+    rows.sort((x,y)=> (y.date||"").localeCompare(x.date||"") || x.patient.localeCompare(y.patient));
+    const tot = rows.reduce((t,r)=>{ t.total+=r.total; t.disc+=r.disc; t.net+=r.net; return t; }, {total:0, disc:0, net:0});
+    return { rows, tot, patients: new Set(rows.map(r=>r.patientId)).size };
+  }
+  function render(){
+    const { rows, tot, patients: pc } = collect();
+    const m = (n)=> finMoney(Math.round(n*100)/100, cur);
+    document.getElementById("trSummary").innerHTML = `
+      <div class="stat-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin:4px 0 12px;">
+        <div class="stat-card"><div class="num" style="font-size:20px;">${rows.length}</div><div class="label">Treatments</div></div>
+        <div class="stat-card"><div class="num" style="font-size:20px;">${pc}</div><div class="label">Patients</div></div>
+        <div class="stat-card"><div class="num" style="font-size:20px;">${m(tot.total)}</div><div class="label">Total cost</div></div>
+        <div class="stat-card"><div class="num" style="font-size:20px;">${tot.disc>0? "− "+m(tot.disc) : m(0)}</div><div class="label">Discounts</div></div>
+        <div class="stat-card" style="border:1.5px solid var(--green);"><div class="num" style="font-size:20px;color:var(--green);">${m(tot.net)}</div><div class="label">Final treatment charges</div></div>
+      </div>
+      <p style="margin:0 0 8px;font-size:12px;color:var(--grey);">${escapeHtml(rangeLabel())} · ${st.clinic==="ALL"?"All clinics":escapeHtml((clinicOpts.find(o=>o.key===st.clinic)||{}).label||"")} · ${st.doctor==="ALL"?"All doctors":escapeHtml(st.doctor)}</p>`;
+    const th = 'style="text-align:right;white-space:nowrap;"';
+    document.getElementById("trResults").innerHTML = rows.length ? `
+      <div style="overflow-x:auto;background:#fff;border-radius:12px;border:1px solid var(--grey-light);">
+        <table class="report-table" style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:900px;">
+          <thead><tr style="background:var(--off-white);text-align:left;">
+            <th style="padding:8px;">Date</th><th style="padding:8px;">Patient</th><th style="padding:8px;">Tooth No.</th><th style="padding:8px;">Treatment</th><th style="padding:8px;">Doctor</th><th style="padding:8px;">Clinic</th><th style="padding:8px;">Status</th>
+            <th ${th}>Cost/tooth</th><th ${th}>Teeth</th><th ${th}>Total</th><th ${th}>Discount</th><th ${th}>Net charge</th></tr></thead>
+          <tbody>${rows.map(r=>`<tr style="border-top:1px solid var(--grey-light);cursor:pointer;" data-trpatient="${escapeAttr(r.patientId)}">
+            <td style="padding:7px 8px;white-space:nowrap;">${r.date? new Date(r.date+"T00:00:00").toLocaleDateString():""}</td>
+            <td style="padding:7px 8px;"><b>${escapeHtml(r.patient)}</b></td>
+            <td style="padding:7px 8px;">${escapeHtml(r.tooth||"—")}</td>
+            <td style="padding:7px 8px;">${escapeHtml(r.treatment)}</td>
+            <td style="padding:7px 8px;">${escapeHtml(r.doctor||"—")}</td>
+            <td style="padding:7px 8px;">${escapeHtml(r.clinic||"—")}</td>
+            <td style="padding:7px 8px;"><span class="status-pill" style="${r.status==="Completed"?"background:var(--green);color:#fff;":"background:#FFF4E0;color:#9A6B22;"}">${r.status==="Started"?"Started":"Completed"}</span></td>
+            <td style="padding:7px 8px;text-align:right;">${m(r.perTooth)}</td>
+            <td style="padding:7px 8px;text-align:right;">${r.teeth}</td>
+            <td style="padding:7px 8px;text-align:right;">${m(r.total)}</td>
+            <td style="padding:7px 8px;text-align:right;white-space:nowrap;">${r.disc>0? "− "+m(r.disc):"—"}</td>
+            <td style="padding:7px 8px;text-align:right;"><b>${m(r.net)}</b></td></tr>`).join("")}</tbody>
+          <tfoot><tr style="border-top:2px solid var(--charcoal);font-weight:700;">
+            <td style="padding:9px 8px;" colspan="9">Total (${rows.length} treatments)</td>
+            <td style="padding:9px 8px;text-align:right;white-space:nowrap;">${m(tot.total)}</td>
+            <td style="padding:9px 8px;text-align:right;white-space:nowrap;">${tot.disc>0? "− "+m(tot.disc):"—"}</td>
+            <td style="padding:9px 8px;text-align:right;color:var(--green);">${m(tot.net)}</td></tr></tfoot>
+        </table>
+      </div>` : `<div class="empty-card"><b>No treatments found</b>Try another duration, clinic or doctor.</div>`;
+    document.querySelectorAll("[data-trpatient]").forEach(el=> el.onclick = ()=> openPatientProfile(el.dataset.trpatient));
+  }
+  wireReportExportButtons(async ()=>{
+    const { rows, tot } = collect();
+    const n = (x)=> Math.round(x*100)/100;
+    const out = rows.map(r=>[ r.date? new Date(r.date+"T00:00:00").toLocaleDateString():"", r.patient, r.tooth, r.treatment, r.doctor, r.clinic, r.status, n(r.perTooth), r.teeth, n(r.total), n(r.disc), n(r.net) ]);
+    if(out.length) out.push(["", "TOTAL", "", rows.length+" treatments", "", "", "", "", "", n(tot.total), n(tot.disc), n(tot.net)]);
+    return { title: "Treatment Report", headers: ["Date","Patient","Tooth No.","Treatment","Doctor","Clinic","Status","Cost per tooth","No. of teeth","Total cost","Discount","Net charge"], rows: out,
+      summaryLines: [rangeLabel(), st.clinic==="ALL"?"All clinics":((clinicOpts.find(o=>o.key===st.clinic)||{}).label||""), st.doctor==="ALL"?"All doctors":st.doctor, "Final treatment charges: "+finMoney(n(tot.net), cur)] };
+  });
+  document.querySelectorAll("[data-trpreset]").forEach(ch=> ch.onclick = ()=>{
+    st.preset = ch.dataset.trpreset;
+    document.querySelectorAll("[data-trpreset]").forEach(c=> c.classList.toggle("active", c===ch));
+    document.getElementById("trCustom").style.display = st.preset==="custom" ? "" : "none";
+    if(st.preset==="custom" && !st.from){ const r = cbDatePresetRange("thisMonth"); st.from=r.from; st.to=r.to; document.getElementById("trFrom").value=st.from; document.getElementById("trTo").value=st.to; }
+    render();
+  });
+  document.getElementById("trFrom").onchange = (e)=>{ st.from = e.target.value; render(); };
+  document.getElementById("trTo").onchange = (e)=>{ st.to = e.target.value; render(); };
+  document.getElementById("trClinic").onchange = (e)=>{ st.clinic = e.target.value; render(); };
+  document.getElementById("trDoctor").onchange = (e)=>{ st.doctor = e.target.value; render(); };
+  document.getElementById("trStatus").onchange = (e)=>{ st.status = e.target.value; render(); };
+  document.getElementById("trSearch").oninput = (e)=>{ st.q = e.target.value; render(); };
+  render();
+}
+
 async function openWorkReport(){
   let selectedTreatments = new Set();
   let doctorFilter = "ALL";
@@ -17334,6 +17522,7 @@ async function renderReports(){
       else if(def && def.custom && def.id==="collection") openCollectionReport();
       else if(def && def.custom && def.id==="outstanding") openOutstandingReport();
       else if(def && def.custom && def.id==="workReport") openWorkReport();
+      else if(def && def.custom && def.id==="treatmentReport") openTreatmentReport();
       else if(def && def.custom && def.id==="clinicDataAnalysis") openClinicDataAnalysisReport();
       else if(def && def.custom && def.id==="clinicDataAnalysis") openClinicDataAnalysisReport();
       else openReportDetail(el.dataset.report);
@@ -19372,6 +19561,80 @@ async function openTreatmentPlanActionMenu(planId, patient, onRefresh){
 // link and multi-plan prints: cost per tooth × number of teeth, the discount
 // on each treatment, any extra discount on the final total, total discount
 // and the final cost.
+// ---- Treatment Done cost table (shared by every treatment / OPD print) ----
+// Each row shows tooth numbers, cost per tooth, number of teeth, total cost,
+// the treatment's own discount and the net amount; underneath, the totals
+// with the treatment discounts, the final (overall) discount and the
+// final amount. Rows: {date, tooth, treatment, status, fee, qty, discount,
+// discountType, notes}. opts.overall = final discount amount (already in ₹).
+function treatmentLineAmounts(it){
+  const perTooth = Number(it.fee)||0, teeth = Math.max(1, Number(it.qty)||1), total = perTooth*teeth;
+  const disc = it.discountType==="flat" ? Math.min(total, Number(it.discount)||0) : total*((Number(it.discount)||0)/100);
+  const discLabel = (Number(it.discount)>0 && it.discountType!=="flat") ? (+Number(it.discount).toFixed(2))+"%" : "";
+  return { perTooth, teeth, total, disc, discLabel, net: total-disc };
+}
+function treatmentCostTableHtml(rows, opts){
+  opts = opts || {};
+  const cur = opts.cur;
+  const m = (n)=> (typeof finMoney==="function" && cur!==undefined) ? finMoney(Math.round((Number(n)||0)*100)/100, cur) : "₹"+(Math.round((Number(n)||0)*100)/100).toLocaleString("en-IN");
+  const showDate = opts.showDate!==false, showStatus = opts.showStatus!==false;
+  const showNotes = opts.showNotes!==false && rows.some(r=> r.notes);
+  const r = 'style="text-align:right;white-space:nowrap;"';
+  let gross=0, itemDisc=0;
+  const body = rows.map((it,i)=>{
+    const a = treatmentLineAmounts(it); gross += a.total; itemDisc += a.disc;
+    const status = it.status==="Started" ? "In Progress" : (it.status||"Completed");
+    return `<tr>
+      <td>${i+1}</td>
+      ${showDate? `<td style="white-space:nowrap;">${it.date? new Date(it.date).toLocaleDateString():""}</td>`:""}
+      <td>${escapeHtml(it.tooth||"—")}</td>
+      <td><b>${escapeHtml(it.treatment||"")}</b>${showStatus? `<div style="font-size:10.5px;color:#666;">${escapeHtml(status)}</div>`:""}</td>
+      <td ${r}>${m(a.perTooth)}</td>
+      <td ${r}>${a.teeth}</td>
+      <td ${r}>${m(a.total)}</td>
+      <td ${r}>${a.disc>0? "− "+m(a.disc)+(a.discLabel? `<div style="font-size:10.5px;color:#666;">(${a.discLabel})</div>`:"") : "—"}</td>
+      <td ${r}><b>${m(a.total-a.disc)}</b></td>
+      ${showNotes? `<td style="font-size:11.5px;">${escapeHtml(it.notes||"")}</td>`:""}
+    </tr>`;
+  }).join("");
+  const subtotal = gross-itemDisc;
+  const overall = Math.min(subtotal, Math.max(0, Number(opts.overall)||0));
+  const totalDisc = itemDisc+overall, final = subtotal-overall;
+  const line = (k,v,style)=> `<div style="display:flex;justify-content:space-between;gap:16px;padding:3px 0;${style||""}"><span>${k}</span><span>${v}</span></div>`;
+  return `<table style="margin-top:6px;font-size:12px;"><thead><tr><th>#</th>${showDate?"<th>Date</th>":""}<th>Tooth No.</th><th>Treatment</th><th ${r}>Cost per tooth</th><th ${r}>No. of teeth</th><th ${r}>Total cost</th><th ${r}>Discount</th><th ${r}>Net</th>${showNotes?"<th>Notes</th>":""}</tr></thead><tbody>${body}</tbody></table>
+    <div style="margin:10px 0 0 auto;max-width:340px;font-size:13px;">
+      ${line("Total treatment cost", m(gross))}
+      ${line("Discount on treatments", itemDisc>0? "− "+m(itemDisc) : "—")}
+      ${overall>0? line("Final discount"+(opts.overallLabel? " ("+escapeHtml(opts.overallLabel)+")":""), "− "+m(overall)) : ""}
+      ${line("<b>Total discount</b>", totalDisc>0? "<b>− "+m(totalDisc)+"</b>" : "—", "border-top:1px solid #ddd;margin-top:4px;padding-top:6px;")}
+      ${line("<b>Final amount</b>", "<b>"+m(final)+"</b>", "font-size:15px;border-top:2px solid #333;margin-top:6px;padding-top:6px;")}
+    </div>`;
+}
+// The final (overall) discount belongs to the whole treatment plan. When a
+// print covers only some of a plan's treatments, each one carries its share
+// of that discount, in proportion to its net amount.
+function treatmentOverallShare(items, plans){
+  let share = 0;
+  const byId = {};
+  (plans||[]).forEach(pl=> (pl.items||[]).forEach(it=>{ byId[it.id] = pl; }));
+  const totalsCache = {};
+  items.forEach(it=>{
+    const pl = (it.id && byId[it.id]) || null;
+    if(!pl || !(Number(pl.overallDiscount)>0)) return;
+    const t = totalsCache[pl.id] || (totalsCache[pl.id] = computePlanTotals(pl.items||[], pl.overallDiscount, pl.overallDiscountType));
+    if(!(t.subtotal>0) || !(t.overallAmt>0)) return;
+    share += t.overallAmt * (treatmentLineAmounts(it).net / t.subtotal);
+  });
+  return Math.round(share*100)/100;
+}
+function treatmentRowsFromItems(items){
+  return items.map(it=>({ id: it.id, date: it.treatmentDate||it.planDate||it.date||"", tooth: it.tooth||"", treatment: it.treatment||"", status: it.status||"", fee: it.fee, qty: it.qty, discount: it.discount, discountType: it.discountType, notes: it.notes||"" }));
+}
+async function treatmentDoneSectionHtml(items, cur, opts){
+  const plans = await dbGetAll("treatmentPlans").catch(()=>[]);
+  return treatmentCostTableHtml(treatmentRowsFromItems(items), Object.assign({ cur, overall: treatmentOverallShare(items, plans) }, opts||{}));
+}
+
 function planCostBreakdown(plan){
   const items = (plan.items||[]).map(it=>{
     const perTooth = Number(it.fee)||0, teeth = Number(it.qty)||1, total = perTooth*teeth;
@@ -28040,6 +28303,153 @@ async function wireChiefComplaintChips(wrapId, textareaId){
   await render();
 }
 
+// ---- Quick tooth-wise examination (tap teeth, then a finding) ----
+const EXAM_TOOTH_FINDINGS = [
+  "Caries","Deep caries","Proximal caries","Secondary caries","Root caries","Fractured","Cusp fracture","Root stump",
+  "Missing","Mobility Gr I","Mobility Gr II","Mobility Gr III","Tender on percussion","Sensitive to cold",
+  "Periapical abscess","Sinus tract","Impacted","Partially erupted","Over-retained deciduous","Restored",
+  "Defective restoration","RCT done","Crown present","Attrition","Abrasion","Erosion","Discoloured",
+  "Food lodgement","Gingival recession","Pericoronitis"
+];
+const EXAM_GENERAL_FINDINGS = [
+  "Generalised calculus","Generalised stains","Bleeding on probing","Gingivitis","Periodontitis","Halitosis",
+  "Generalised attrition","Crowding","Spacing","Deep bite","Open bite","Crossbite","Poor oral hygiene","Fair oral hygiene","Good oral hygiene"
+];
+const EXAM_ADULT_TEETH = { upper:[18,17,16,15,14,13,12,11,21,22,23,24,25,26,27,28], lower:[48,47,46,45,44,43,42,41,31,32,33,34,35,36,37,38] };
+const EXAM_CHILD_TEETH = { upper:[55,54,53,52,51,61,62,63,64,65], lower:[85,84,83,82,81,71,72,73,74,75] };
+function examFindingsText(findings){
+  return (findings||[]).map(f=> (f.teeth && f.teeth.length) ? f.teeth.join(", ")+" – "+f.finding : f.finding).join("; ");
+}
+function examQuickTeethHtml(){
+  return `
+  <style>
+    .qtx-box{border:1px solid var(--grey-light);border-radius:12px;padding:10px;background:var(--off-white);}
+    .qtx-top{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px;}
+    .qtx-row{display:grid;grid-template-columns:repeat(16,minmax(0,1fr));gap:3px;}
+    .qtx-row.child{grid-template-columns:repeat(10,minmax(0,1fr));}
+    .qtx-row + .qtx-row{margin-top:3px;padding-top:4px;border-top:2px solid var(--charcoal-2);}
+    .qtx-t{position:relative;border:1px solid var(--grey-light);background:var(--white);border-radius:7px;padding:7px 0;font-size:12px;font-weight:700;text-align:center;cursor:pointer;color:var(--charcoal-2);user-select:none;}
+    .qtx-t:nth-child(8){margin-right:4px}.qtx-row.child .qtx-t:nth-child(8){margin-right:0}.qtx-row.child .qtx-t:nth-child(5){margin-right:4px}
+    .qtx-t.sel{background:var(--green);border-color:var(--green);color:#fff;}
+    .qtx-t.has::after{content:"";position:absolute;top:3px;right:3px;width:6px;height:6px;border-radius:50%;background:#E5484D;}
+    .qtx-t.sel.has::after{background:#fff;}
+    .qtx-sub{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--grey);margin:10px 0 5px;}
+    .qtx-list{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
+    .qtx-item{display:inline-flex;align-items:center;gap:6px;background:var(--white);border:1px solid var(--green);color:var(--charcoal-2);border-radius:999px;padding:5px 6px 5px 11px;font-size:12.5px;}
+    .qtx-item b{color:var(--green);}
+    .qtx-item button{border:0;background:var(--grey-light);border-radius:50%;width:20px;height:20px;cursor:pointer;line-height:20px;padding:0;color:var(--charcoal-2);}
+    @media (max-width:560px){ .qtx-t{font-size:10.5px;padding:6px 0;} }
+  </style>
+  <div class="field">
+    <label>Quick Tooth Findings <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--grey);">— tap tooth/teeth, then tap a finding</span></label>
+    <div class="qtx-box">
+      <div class="qtx-top">
+        <span class="filter-chip active" data-qtxset="adult">Permanent</span>
+        <span class="filter-chip" data-qtxset="child">Deciduous</span>
+        <span style="flex:1"></span>
+        <span class="filter-chip" id="qtxClearSel">Clear selection</span>
+      </div>
+      <div id="qtxChart"></div>
+      <div class="qtx-sub">Tooth findings</div>
+      <div class="chip-wrap" id="qtxToothChips">${EXAM_TOOTH_FINDINGS.map(f=>`<span class="filter-chip" data-qtxf="${escapeAttr(f)}">${escapeHtml(f)}</span>`).join("")}</div>
+      <div class="qtx-sub">Whole mouth (no tooth needed)</div>
+      <div class="chip-wrap" id="qtxGenChips">${EXAM_GENERAL_FINDINGS.map(f=>`<span class="filter-chip" data-qtxg="${escapeAttr(f)}">${escapeHtml(f)}</span>`).join("")}</div>
+      <div class="qtx-list" id="qtxList"></div>
+    </div>
+  </div>`;
+}
+// Wires the quick chart. Findings are kept on the exam (toothFindings) and
+// written into the Observations box as one line, which is replaced (not
+// duplicated) every time a finding is added or removed.
+function wireExamQuickTeeth(exam, obsId){
+  let findings = JSON.parse(JSON.stringify(exam.toothFindings||[]));
+  let set = "adult";
+  const sel = new Set();
+  const obs = document.getElementById(obsId);
+  let lastText = examFindingsText(findings);
+  function syncObs(){
+    const t = examFindingsText(findings);
+    const cur = obs.value;
+    if(lastText && cur.includes(lastText)) obs.value = cur.replace(lastText, t);
+    else if(t) obs.value = cur.trim() ? cur.trim()+"\n"+t : t;
+    obs.value = obs.value.replace(/\n{2,}/g,"\n").replace(/^\n|\n$/g,"");
+    lastText = t;
+  }
+  function teethWithFindings(){ const s = new Set(); findings.forEach(f=> (f.teeth||[]).forEach(t=> s.add(t))); return s; }
+  function drawChart(){
+    const T = set==="adult" ? EXAM_ADULT_TEETH : EXAM_CHILD_TEETH;
+    const has = teethWithFindings();
+    const btn = (n)=> `<div class="qtx-t ${sel.has(n)?"sel":""} ${has.has(n)?"has":""}" data-qtxt="${n}" title="Tooth ${n}">${n}</div>`;
+    document.getElementById("qtxChart").innerHTML = `<div class="qtx-row ${set==="child"?"child":""}">${T.upper.map(btn).join("")}</div><div class="qtx-row ${set==="child"?"child":""}">${T.lower.map(btn).join("")}</div>`;
+    document.querySelectorAll("[data-qtxt]").forEach(el=> el.onclick = ()=>{ const n = Number(el.dataset.qtxt); sel.has(n)? sel.delete(n) : sel.add(n); drawChart(); });
+  }
+  function drawList(){
+    document.getElementById("qtxList").innerHTML = findings.map((f,i)=>`<span class="qtx-item">${f.teeth&&f.teeth.length? `<b>${f.teeth.join(", ")}</b>`:""}${escapeHtml(f.finding)}<button type="button" data-qtxdel="${i}" title="Remove">×</button></span>`).join("");
+    document.querySelectorAll("[data-qtxdel]").forEach(b=> b.onclick = ()=>{ findings.splice(Number(b.dataset.qtxdel),1); drawList(); drawChart(); syncObs(); });
+  }
+  function add(finding, teeth){
+    const ex = findings.find(f=> f.finding===finding && (!!(f.teeth&&f.teeth.length))===(teeth.length>0));
+    if(ex){ ex.teeth = Array.from(new Set((ex.teeth||[]).concat(teeth))).sort((a,b)=>a-b); }
+    else findings.push({ finding, teeth: teeth.slice().sort((a,b)=>a-b) });
+    drawList(); drawChart(); syncObs();
+  }
+  document.querySelectorAll("[data-qtxset]").forEach(c=> c.onclick = ()=>{ set = c.dataset.qtxset; document.querySelectorAll("[data-qtxset]").forEach(x=> x.classList.toggle("active", x===c)); drawChart(); });
+  document.getElementById("qtxClearSel").onclick = ()=>{ sel.clear(); drawChart(); };
+  document.querySelectorAll("[data-qtxf]").forEach(c=> c.onclick = ()=>{
+    if(!sel.size){ showToast("Tap the tooth/teeth on the chart first"); return; }
+    add(c.dataset.qtxf, Array.from(sel)); sel.clear(); drawChart();
+  });
+  document.querySelectorAll("[data-qtxg]").forEach(c=> c.onclick = ()=> add(c.dataset.qtxg, []));
+  drawChart(); drawList();
+  return { get: ()=> findings.slice() };
+}
+// AI diagnosis from the chief complaint + examination (decision support).
+async function openExamAiDiagnosisSheet(patient, getInput, ids){
+  const input = getInput();
+  if(!input.chiefComplaint && !input.observations && !(input.toothFindings||[]).length){ showToast("Add the chief complaint and examination findings first"); return; }
+  openSheet(`
+    <button class="sheet-close" onclick="closeSheet()">${icon('close',18)}</button>
+    <h2>${icon('sparkle',18)} AI Diagnosis</h2>
+    <p style="margin-bottom:8px;">Based on the chief complaint and examination entered. Suggestions only — the treating dentist decides.</p>
+    <div id="aiDxOut"><div class="empty-card">Analysing findings…</div></div>
+  `);
+  try{
+    const r = await aiRequest("exam_diagnosis", Object.assign({ patient: await aiPatientBasics(patient) }, input));
+    const list = (a)=> (a||[]).filter(x=> x && String(x).trim());
+    const conf = { high:"var(--green)", medium:"#9A6B22", low:"var(--grey)" };
+    const dx = (r.diagnoses||[]).filter(d=> d && d.diagnosis);
+    const html = `
+      ${dx.length? dx.map(d=>`<div class="note-card" style="margin-bottom:8px;">
+        <div class="note-head"><b>${d.teeth? escapeHtml(String(d.teeth))+" – ":""}${escapeHtml(String(d.diagnosis))}</b><span class="status-pill" style="background:var(--grey-light);color:${conf[String(d.confidence||"").toLowerCase()]||"var(--charcoal-2)"};">${escapeHtml(String(d.confidence||""))}</span></div>
+        ${d.reason? `<div class="note-meta">${escapeHtml(String(d.reason))}</div>`:""}
+      </div>`).join("") : `<div class="empty-card">No clear diagnosis from these findings — add more detail.</div>`}
+      ${list(r.redFlags).length? `<div class="warn-banner" style="margin:8px 0;"><b>Red flags:</b> ${list(r.redFlags).map(escapeHtml).join("; ")}</div>`:""}
+      ${list(r.differentials).length? `<div class="field"><label>Differentials</label><div style="font-size:13px;">${list(r.differentials).map(escapeHtml).join("; ")}</div></div>`:""}
+      ${list(r.investigations).length? `<div class="field"><label>Suggested investigations</label><div style="font-size:13px;">${list(r.investigations).map(escapeHtml).join("; ")}</div></div>`:""}
+      <div class="field"><label>Diagnosis to fill in (edit if needed)</label><textarea id="aiDxText" rows="3">${escapeHtml(String(r.diagnosisText || dx.map(d=> (d.teeth? d.teeth+" – ":"")+d.diagnosis).join("; ")))}</textarea></div>
+      ${list(r.investigations).length? `<label style="display:flex;gap:8px;align-items:center;font-size:13px;margin-bottom:10px;"><input type="checkbox" id="aiDxInv" checked> Also add suggested investigations</label>`:""}
+      ${typeof AI_REVIEW_NOTE!=="undefined"? AI_REVIEW_NOTE : ""}
+      <button class="btn btn-primary btn-block" id="aiDxApply" style="margin-top:10px;">${icon('check',15)} Use this Diagnosis</button>`;
+    document.getElementById("aiDxOut").innerHTML = html;
+    document.getElementById("aiDxApply").onclick = ()=>{
+      const t = document.getElementById("aiDxText").value.trim();
+      const dxEl = document.getElementById(ids.diagnosis);
+      if(t && dxEl) dxEl.value = dxEl.value.trim() ? dxEl.value.trim()+"; "+t : t;
+      const invBox = document.getElementById("aiDxInv");
+      const invEl = document.getElementById(ids.investigations);
+      if(invBox && invBox.checked && invEl){
+        const have = invEl.value.split(",").map(x=>x.trim().toLowerCase()).filter(Boolean);
+        const add = list(r.investigations).filter(x=> !have.includes(String(x).trim().toLowerCase()));
+        if(add.length) invEl.value = (invEl.value.trim()? invEl.value.trim()+", " : "")+add.join(", ");
+      }
+      closeSheet();
+      showToast("Diagnosis filled in — review and save");
+    };
+  }catch(e){
+    document.getElementById("aiDxOut").innerHTML = `<div class="empty-card"><b>Couldn't get an AI diagnosis</b>${escapeHtml(e.message||"")}</div>`;
+  }
+}
+
 async function openExaminationForm(examId, patient){
   let exam;
   if(examId){
@@ -28063,8 +28473,12 @@ async function openExaminationForm(examId, patient){
       <div class="chip-wrap" id="ccChips"></div>
       <textarea id="exChiefComplaint" rows="2" placeholder="Tap a common complaint above, or type your own...">${escapeHtml(exam.chiefComplaint)}</textarea>
     </div>
+    ${examQuickTeethHtml()}
     <div class="field"><label>Observations</label><textarea id="exObservations" rows="3">${escapeHtml(exam.observations)}</textarea></div>
-    <div class="field"><label>Diagnosis</label><textarea id="exDiagnosis" rows="2">${escapeHtml(exam.diagnosis)}</textarea></div>
+    <div class="field">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px;"><label style="margin:0;">Diagnosis</label>${aiBtnHtml("btnExAiDx","AI Diagnosis","margin:0;padding:6px 12px;font-size:12.5px;")}</div>
+      <textarea id="exDiagnosis" rows="2">${escapeHtml(exam.diagnosis)}</textarea>
+    </div>
     <div class="field">
       <label>Investigations Advised</label>
       <div class="chip-wrap" id="invChips">
@@ -28099,6 +28513,14 @@ async function openExaminationForm(examId, patient){
     };
   });
   await wireChiefComplaintChips("ccChips", "exChiefComplaint");
+  const quickTeeth = wireExamQuickTeeth(exam, "exObservations");
+  document.getElementById("btnExAiDx").onclick = ()=> openExamAiDiagnosisSheet(patient, ()=>({
+    chiefComplaint: document.getElementById("exChiefComplaint").value.trim(),
+    observations: document.getElementById("exObservations").value.trim(),
+    toothFindings: quickTeeth.get(),
+    investigations: document.getElementById("exInvestigations").value.trim(),
+    notes: document.getElementById("exNotes").value.trim()
+  }), { diagnosis:"exDiagnosis", investigations:"exInvestigations" });
   document.getElementById("btnExAiNotes").onclick = ()=> openAiNotesSheet(patient, {chiefComplaint:"exChiefComplaint", observations:"exObservations", diagnosis:"exDiagnosis", investigations:"exInvestigations", notes:"exNotes"}, "exNotes");
   const obsPresets = (await dbGetAll("observationPresets")).map(o=>o.text);
   const diagPresets = (await dbGetAll("diagnosisPresets")).map(d=>d.text);
@@ -28116,6 +28538,7 @@ async function openExaminationForm(examId, patient){
       diagnosis: document.getElementById("exDiagnosis").value.trim(),
       investigations: document.getElementById("exInvestigations").value.trim(),
       notes: document.getElementById("exNotes").value.trim(),
+      toothFindings: quickTeeth.get(),
       updatedAt: nowIso()
     });
     await dbPut("examinations", updated);
@@ -28319,9 +28742,7 @@ async function printSingleTreatmentDone(item, patient, plan, chosenSittingIds){
   const sittings = (item.sittings||[]).filter(s=>chosenSet.has(s.id)).sort((a,b)=> new Date(a.date)-new Date(b.date));
   const bodyHtml = `
     <h2 style="margin:0 0 10px;">Treatment Done</h2>
-    <table><thead><tr><th>Date</th><th>Tooth</th><th>Treatment</th><th>Status</th><th>Fee</th><th>Discount</th><th>Net</th><th>Notes</th></tr></thead><tbody>
-      <tr><td>${dt?new Date(dt).toLocaleDateString():""}</td><td>${escapeHtml(item.tooth||"")}</td><td>${escapeHtml(item.treatment||"")}</td><td>${item.status==="Started"?"In Progress":"Completed"}</td><td>${finMoney(lineGross,cur)}</td><td>${item.discount? (item.discountType==="flat"? finMoney(lineDiscount,cur) : item.discount+"% ("+finMoney(lineDiscount,cur)+")") : "—"}</td><td>${finMoney(lineNet,cur)}</td><td>${escapeHtml(item.notes||"")}</td></tr>
-    </tbody></table>
+    ${await treatmentDoneSectionHtml([Object.assign({}, item, {treatmentDate: dt})], cur)}
     ${sittings.length? `<div style="margin-top:8px;font-size:12.5px;"><b>Sittings:</b>
       <ul style="margin:4px 0 0;padding-left:18px;">${sittings.map(s=>`<li style="margin-bottom:2px;"><b>${s.date? new Date(s.date).toLocaleDateString():""}</b> — ${escapeHtml(s.note||"")}</li>`).join("")}</ul>
     </div>` : ""}
@@ -28816,18 +29237,9 @@ async function printTreatmentWithPresets(itemOrItems, plan, patient, prescriptio
   const cur = await finCurrency();
   const itemList = Array.isArray(itemOrItems) ? itemOrItems : [itemOrItems];
   const item = itemList[0];
-  const rowsHtml = itemList.map(it=>{
-    const dt = it.treatmentDate || plan.createdDate;
-    const lineGross = (Number(it.fee)||0)*(Number(it.qty)||1);
-    const lineDiscount = it.discountType==="flat" ? Math.min(lineGross,Number(it.discount)||0) : lineGross*((Number(it.discount)||0)/100);
-    const lineNet = lineGross-lineDiscount;
-    return `<tr><td>${dt?new Date(dt).toLocaleDateString():""}</td><td>${escapeHtml(it.tooth||"")}</td><td>${escapeHtml(it.treatment||"")}</td><td>${it.status==="Started"?"In Progress":"Completed"}</td><td>${finMoney(lineGross,cur)}</td><td>${it.discount? (it.discountType==="flat"? finMoney(lineDiscount,cur) : it.discount+"% ("+finMoney(lineDiscount,cur)+")") : "—"}</td><td>${finMoney(lineNet,cur)}</td><td>${escapeHtml(it.notes||"")}</td></tr>`;
-  }).join("");
   let bodyHtml = `
     <h2 style="margin:0 0 10px;">Treatment Done</h2>
-    <table><thead><tr><th>Date</th><th>Tooth</th><th>Treatment</th><th>Status</th><th>Fee</th><th>Discount</th><th>Net</th><th>Notes</th></tr></thead><tbody>
-      ${rowsHtml}
-    </tbody></table>
+    ${await treatmentDoneSectionHtml(itemList.map(it=> Object.assign({}, it, {treatmentDate: it.treatmentDate||plan.createdDate})), cur)}
   `;
   if(prescription && (prescription.items||[]).length){
     bodyHtml += `
@@ -31903,19 +32315,12 @@ async function printQuickOpdSummary(patient, clinic, r){
 
   if(r.billing && r.billing.rows.length){
     const b = r.billing;
-    const itemRows = b.rows.map(row=>{
-      const qty = (row.toothMultiply && row.toothCount>1) ? row.toothCount : 1;
-      const gross = (Number(row.fee)||0)*qty;
-      return `<tr><td>${escapeHtml(row.treatment)}</td><td>${row.tooth? escapeHtml(row.tooth):"—"}</td><td>${qty}</td><td>${finMoney(gross,cur)}</td></tr>`;
-    }).join("");
-    let summaryRows = `<tr><td style="font-weight:700;">Combined Total</td><td>${finMoney(b.grossTotal,cur)}</td></tr>`;
-    if(b.discountAmt>0) summaryRows += `<tr><td style="font-weight:700;">Discount</td><td>${finMoney(b.discountAmt,cur)}</td></tr>`;
-    summaryRows += `<tr><td style="font-weight:700;">Net Total</td><td style="font-weight:700;">${finMoney(b.net,cur)}</td></tr>`;
-    if(b.payment) summaryRows += `<tr><td style="font-weight:700;">Paid (${escapeHtml(b.mode)}) — Receipt ${escapeHtml(b.payment.receiptNumber)}</td><td>${finMoney(b.payment.amount,cur)}</td></tr>`;
+    const costRows = b.rows.map(row=>({ tooth: row.tooth||"", treatment: row.treatment||"", fee: row.fee, qty: (row.toothMultiply && row.toothCount>1) ? row.toothCount : 1, discount: 0, status: "Completed" }));
+    const paidHtml = b.payment? `<div style="margin:6px 0 0 auto;max-width:340px;font-size:13px;display:flex;justify-content:space-between;gap:16px;"><span>Paid (${escapeHtml(b.mode)}) — Receipt ${escapeHtml(b.payment.receiptNumber)}</span><span>${finMoney(b.payment.amount,cur)}</span></div>` : "";
     sections.push(`
       <h3>Treatment Done &amp; Charges</h3>
-      <table><thead><tr><th>Treatment</th><th>Tooth</th><th>Qty</th><th>Fee</th></tr></thead><tbody>${itemRows}</tbody></table>
-      <table style="margin-top:8px;">${summaryRows}</table>
+      ${treatmentCostTableHtml(costRows, { cur, overall: b.discountAmt, showDate:false, showStatus:false })}
+      ${paidHtml}
     `);
   }
 
@@ -33376,15 +33781,7 @@ async function printPatientSummary(patient, opts){
   }
   if(sec.treatmentDone && doneItems.length){
     bodyHtml += `<h2 style="margin:22px 0 8px;">Treatment Done</h2>`;
-    bodyHtml += `<table><thead><tr><th>Date</th><th>Tooth</th><th>Treatment</th><th>Status</th><th>Fee</th><th>Discount</th><th>Net</th><th>Notes</th></tr></thead><tbody>
-      ${doneItems.map(it=>{
-        const dt = it.treatmentDate||it.planDate;
-        const lineGross = (Number(it.fee)||0)*(Number(it.qty)||1);
-        const lineDiscount = it.discountType==="flat" ? Math.min(lineGross,Number(it.discount)||0) : lineGross*((Number(it.discount)||0)/100);
-        const lineNet = lineGross-lineDiscount;
-        return `<tr><td>${dt?new Date(dt).toLocaleDateString():""}</td><td>${escapeHtml(it.tooth||"")}</td><td>${escapeHtml(it.treatment||"")}</td><td>${it.status==="Started"?"In Progress":"Completed"}</td><td>${finMoney(lineGross,cur)}</td><td>${it.discount? (it.discountType==="flat"? finMoney(lineDiscount,cur) : it.discount+"% ("+finMoney(lineDiscount,cur)+")") : "—"}</td><td>${finMoney(lineNet,cur)}</td><td>${escapeHtml(it.notes||"")}</td></tr>`;
-      }).join("")}
-    </tbody></table>
+    bodyHtml += `${await treatmentDoneSectionHtml(doneItems, cur)}
     ${doneItems.filter(it=>(it.sittings||[]).some(s=>inSummaryRange(s.date,from,to))).map(it=>{
       const itsSittings = (it.sittings||[]).filter(s=>inSummaryRange(s.date,from,to)).sort((a,b)=>new Date(a.date)-new Date(b.date));
       return `<div style="margin-top:8px;font-size:12.5px;"><b>${escapeHtml(it.treatment||"Treatment")}${it.tooth?" (Tooth "+escapeHtml(it.tooth)+")":""} — Sittings:</b>
@@ -33493,6 +33890,7 @@ async function printOpdPrescription(patient, opts){
     if(it.status==="Started" || it.status==="Completed") treatedItems.push(Object.assign({}, it, {planDoctor: pl.doctor}));
   }));
   if(ranged) treatedItems = treatedItems.filter(it=> inSummaryRange(it.treatmentDate, from, to));
+  const treatedSectionHtml = treatedItems.length ? await treatmentDoneSectionHtml(treatedItems, await finCurrency()) : "";
 
   const bodyHtml = `
     <div class="row"><b>Doctor Incharge</b>${doctorIncharge? "Dr. "+escapeHtml(doctorIncharge) : "—"}</div>
@@ -33512,9 +33910,7 @@ async function printOpdPrescription(patient, opts){
 
     ${treatedItems.length? `
     <h2 style="margin:22px 0 8px;">Treatment Done</h2>
-    <table><thead><tr><th>Date</th><th>Treatment</th><th>Tooth</th><th>Status</th></tr></thead><tbody>
-      ${treatedItems.map(it=>`<tr><td>${(it.treatmentDate)? new Date(it.treatmentDate).toLocaleDateString():""}</td><td>${escapeHtml(it.treatment||"")}</td><td>${escapeHtml(it.tooth||"")}</td><td>${it.status==="Started"?"In Progress":escapeHtml(it.status||"")}</td></tr>`).join("")}
-    </tbody></table>
+    ${treatedSectionHtml}
     ${treatedItems.filter(it=>(it.sittings||[]).length).map(it=>`
       <div style="margin-top:8px;font-size:12.5px;"><b>${escapeHtml(it.treatment||"")} — Sittings:</b>
         <ul style="margin:4px 0 0;padding-left:18px;">${(it.sittings||[]).slice().sort((a,b)=>new Date(a.date)-new Date(b.date)).map(s=>`<li style="margin-bottom:2px;"><b>${s.date? new Date(s.date).toLocaleDateString():""}</b> — ${escapeHtml(s.note||"")}</li>`).join("")}</ul>
@@ -33813,15 +34209,7 @@ async function printSelectedTreatmentsDone(selected, patient){
   const cur = await finCurrency();
   selected.sort((a,b)=> new Date(a.treatmentDate||a.planDate||0)-new Date(b.treatmentDate||b.planDate||0));
   const bodyHtml = `<h2 style="margin:0 0 10px;">Treatment Done</h2>
-    <table><thead><tr><th>Date</th><th>Tooth</th><th>Treatment</th><th>Status</th><th>Fee</th><th>Discount</th><th>Net</th><th>Notes</th></tr></thead><tbody>
-      ${selected.map(it=>{
-        const dt = it.treatmentDate||it.planDate;
-        const lineGross = (Number(it.fee)||0)*(Number(it.qty)||1);
-        const lineDiscount = it.discountType==="flat" ? Math.min(lineGross,Number(it.discount)||0) : lineGross*((Number(it.discount)||0)/100);
-        const lineNet = lineGross-lineDiscount;
-        return `<tr><td>${dt?new Date(dt).toLocaleDateString():""}</td><td>${escapeHtml(it.tooth||"")}</td><td>${escapeHtml(it.treatment||"")}</td><td>${it.status==="Started"?"In Progress":"Completed"}</td><td>${finMoney(lineGross,cur)}</td><td>${it.discount? (it.discountType==="flat"? finMoney(lineDiscount,cur) : it.discount+"% ("+finMoney(lineDiscount,cur)+")") : "—"}</td><td>${finMoney(lineNet,cur)}</td><td>${escapeHtml(it.notes||"")}</td></tr>`;
-      }).join("")}
-    </tbody></table>
+    ${await treatmentDoneSectionHtml(selected, cur)}
     ${selected.filter(it=>(it.sittings||[]).length).map(it=>`
       <div style="margin-top:8px;font-size:12.5px;"><b>${escapeHtml(it.treatment||"Treatment")}${it.tooth?" (Tooth "+escapeHtml(it.tooth)+")":""} — Sittings:</b>
         <ul style="margin:4px 0 0;padding-left:18px;">${(it.sittings||[]).slice().sort((a,b)=>new Date(a.date)-new Date(b.date)).map(s=>`<li style="margin-bottom:2px;"><b>${s.date? new Date(s.date).toLocaleDateString():""}</b> — ${escapeHtml(s.note||"")}</li>`).join("")}</ul>
