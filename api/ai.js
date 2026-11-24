@@ -41,7 +41,7 @@ const cfToken = () => String(process.env.CF_AI_TOKEN || "").trim().replace(/^["'
 const cfReady = () => !!(cfToken() && CF_ACCOUNT);
 const claudeReady = () => !!process.env.ANTHROPIC_API_KEY;
 // Tasks where accuracy matters most go to Claude in "mix" mode.
-const CLINICAL_TASKS = new Set(["clinical_notes", "patient_summary", "rx_check"]);
+const CLINICAL_TASKS = new Set(["clinical_notes", "patient_summary", "rx_check", "exam_diagnosis"]);
 
 function pickProvider(requested, task) {
   const cf = cfReady(), cl = claudeReady();
@@ -123,6 +123,23 @@ Rules:
 ${JSON_ONLY}
 Shape: {"chiefComplaint":"","observations":"","diagnosis":"","investigations":"","treatmentAdvised":"","notes":""}`,
     user: (i) => `Patient: ${JSON.stringify(i.patient || {})}\n\nDentist's notes:\n${i.text || ""}`
+  },
+
+  exam_diagnosis: {
+    max: 1800,
+    system: `You are a diagnostic decision-support assistant for dentists at ${CLINIC}.
+From the patient's chief complaint, clinical examination findings (FDI tooth numbers) and any investigations, suggest the most likely provisional diagnosis for each problem.
+Rules:
+- Use only the findings given. Never invent symptoms, test results or radiographic findings. If key information is missing, say which test would confirm it.
+- Use FDI two-digit tooth numbering and standard dental diagnostic terminology (e.g. "Symptomatic irreversible pulpitis", "Chronic apical periodontitis", "Chronic generalised gingivitis", "Dental caries (Class I, enamel/dentine)").
+- Group by tooth or problem. Give a confidence (high, medium, low) and a one-line reason that cites the findings.
+- List sensible differentials and confirmatory investigations (IOPA, OPG, pulp vitality / cold test, CBCT, perio charting) only where they would change the diagnosis.
+- Flag red flags that need urgent attention or referral (e.g. spreading swelling, non-healing ulcer > 2 weeks, paraesthesia).
+- This is decision support for the treating dentist, not a final diagnosis. Do not prescribe drugs.
+- diagnosisText: one concise line suitable for the Diagnosis field of the case sheet, e.g. "36 – Symptomatic irreversible pulpitis; 46 – Root stump (non-restorable); Chronic generalised gingivitis".
+${JSON_ONLY}
+Shape: {"diagnoses":[{"teeth":"","diagnosis":"","confidence":"high|medium|low","reason":""}],"differentials":[""],"investigations":[""],"redFlags":[""],"diagnosisText":""}`,
+    user: (i) => `Patient: ${JSON.stringify(i.patient || {})}\nChief complaint: ${i.chiefComplaint || ""}\nTooth-wise findings: ${JSON.stringify(i.toothFindings || [])}\nObservations: ${i.observations || ""}\nInvestigations / results: ${i.investigations || ""}\nDentist's notes: ${i.notes || ""}`
   },
 
   patient_summary: {
