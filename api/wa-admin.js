@@ -3,6 +3,10 @@
 //
 //   action "info"              read-only: phone numbers + template counts of
 //                              both WhatsApp accounts
+//   action "apps"              read-only: which Meta app the token belongs to
+//                              and which apps receive 7827913595's webhooks
+//   action "subscribe"         connects the HTD PMS Messaging app to
+//                              7827913595's account (HT Buddy inbox)
 //   action "migrate_templates" copies every approved template from the old
 //                              account into the new one, using Meta's
 //                              Migrate Message Templates API. Originals stay.
@@ -90,6 +94,18 @@ export default async function handler(req, res) {
         source: { waba: SOURCE_WABA, phones: pick(sp), templates: st },
         dest: { waba: DEST_WABA, phones: pick(dp), templates: dt },
       });
+    }
+    if (action === "apps") {
+      const [me, subs] = await Promise.all([graph("app?fields=id,name"), graph(`${DEST_WABA}/subscribed_apps`)]);
+      return res.status(200).json({ tokenApp: me.data, subscribed: subs.ok ? subs.data.data : subs.data });
+    }
+    if (action === "subscribe") {
+      const me = await graph("app?fields=id,name");
+      const want = (process.env.HTB_APP_ID || "1669239164868137").trim();
+      if (!me.ok || me.data.id !== want) return res.status(400).json({ error: "The saved WhatsApp token belongs to " + ((me.data && me.data.name) || "another app") + ", not HTD PMS Messaging", tokenApp: me.data });
+      const r = await graph(`${DEST_WABA}/subscribed_apps`, { method: "POST" });
+      const subs = await graph(`${DEST_WABA}/subscribed_apps`);
+      return res.status(r.ok ? 200 : 400).json({ ok: r.ok, result: r.data, subscribed: subs.data && subs.data.data });
     }
     if (action === "migrate_templates") {
       const r = await graph(`${DEST_WABA}/migrate_message_templates`, { method: "POST", body: { source_waba_id: SOURCE_WABA, page_number: 0 } });
