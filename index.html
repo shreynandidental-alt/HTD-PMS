@@ -26393,6 +26393,7 @@ async function renderHtBuddy(){
       .htb-b{max-width:72%;padding:7px 10px 5px;border-radius:10px;font-size:14px;line-height:1.4;box-shadow:0 1px 1px rgba(0,0,0,.08);word-wrap:break-word;color:#111}
       .htb-b.in{background:#fff;align-self:flex-start;border-top-left-radius:2px}
       .htb-b.out{background:#D9FDD3;align-self:flex-end;border-top-right-radius:2px}
+      .htb-b.out.ai{background:#EDE7FB}
       .htb-b .meta{font-size:10.5px;color:#667781;text-align:right;margin-top:2px;display:flex;gap:4px;justify-content:flex-end;align-items:center}
       .htb-b .tpl{font-size:11px;color:#128C7E;font-weight:700;margin-bottom:2px}
       .htb-b a{color:#027EB5}
@@ -26515,8 +26516,9 @@ async function htbLoadMessages(scroll){
       body = (htbMediaCache[m.mediaId] && m.type==="image") ? `<img src="${htbMediaCache[m.mediaId]}" data-htbimg="${m.mediaId}">` : `<span class="htb-media" data-htbmedia="${escapeAttr(m.mediaId)}" data-type="${escapeAttr(m.type)}" data-fn="${escapeAttr(m.filename||"")}">${escapeHtml(lbl)}</span>`;
       if(m.caption) body += `<div style="margin-top:4px;">${htbLinkify(m.caption)}</div>`;
     } else body = htbLinkify(m.text||"");
-    const by = m.dir==="out" && m.by ? `<span title="${escapeAttr(m.by)}">${escapeHtml(m.by.split("@")[0])}</span>·` : "";
-    return `${dayHtml}<div class="htb-b ${m.dir==="out"?"out":"in"}">${body}<div class="meta">${by}${new Date(m.ts).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"})} ${htbStatusTick(m)}</div>${m.status==="failed" && m.error? `<div style="font-size:11px;color:#b42318;">${escapeHtml(m.error)}</div>`:""}</div>`;
+    const isAi = m.dir==="out" && (m.by==="ai" || m.by==="bot");
+    const by = isAi ? `<span title="Automatic reply by the HT Buddy AI chatbot" style="color:#7c3aed;font-weight:700;">🤖 AI</span>·` : (m.dir==="out" && m.by ? `<span title="${escapeAttr(m.by)}">${escapeHtml(m.by.split("@")[0])}${m.source==="marketing-os"?" (Marketing OS)":""}</span>·` : "");
+    return `${dayHtml}<div class="htb-b ${m.dir==="out"?"out":"in"}${isAi?" ai":""}">${body}<div class="meta">${by}${new Date(m.ts).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"})} ${htbStatusTick(m)}</div>${m.status==="failed" && m.error? `<div style="font-size:11px;color:#b42318;">${escapeHtml(m.error)}</div>`:""}</div>`;
   }).join("") : `<div class="htb-day">No messages yet. Send a template to start the conversation.</div>`;
   box.querySelectorAll("[data-htbmedia]").forEach(el=> el.onclick = ()=> htbLoadMedia(el));
   box.querySelectorAll("[data-htbimg]").forEach(el=> el.onclick = ()=> htbShowImage(el.src));
